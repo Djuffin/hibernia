@@ -1,14 +1,8 @@
 use super::sps;
 
 use nom::{
-    bits::complete::*,
-    multi::many0_count,
-    multi::count,
-    error::make_error,
-    error::ErrorKind,
-    Err,
-    error::Error,
-    IResult
+    bits::complete::*, error::make_error, error::Error, error::ErrorKind, multi::count,
+    multi::many0_count, Err, IResult,
 };
 type BitInput<'a> = (&'a [u8], usize);
 
@@ -132,7 +126,6 @@ fn parse_vui(input: BitInput) -> IResult<BitInput, sps::VuiParameters> {
         read_value!(input, result.fixed_frame_rate_flag, bool);
     }}
 
-
     let (input, nal_hrd_parameters_present) = bool(input)?;
     if (nal_hrd_parameters_present) {
         unimplemented!();
@@ -159,7 +152,6 @@ fn parse_vui(input: BitInput) -> IResult<BitInput, sps::VuiParameters> {
 
     Ok((input, result))
 }
-
 
 fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
     let mut result = sps::SequenceParameterSet::default();
@@ -201,8 +193,7 @@ fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
         0 => {
             read_value!(input, result.log2_max_pic_order_cnt_lsb_minus4, ue, 8);
             input
-
-        },
+        }
         1 => {
             read_value!(input, result.offset_for_non_ref_pic, se);
             read_value!(input, result.offset_for_top_to_bottom_field, se);
@@ -212,8 +203,8 @@ fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
             result.offset_for_ref_frame = offsets;
 
             input
-        },
-        _ => input
+        }
+        _ => input,
     };
 
     read_value!(input, result.max_num_ref_frames, ue, 8);
@@ -248,57 +239,55 @@ fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
 
 #[cfg(test)]
 mod tests {
-use super::*;
+    use super::*;
 
-#[test]
-pub fn test_ue() {
- assert_eq!(0, ue(8, (&[0b10000000], 0)).unwrap().1);
- assert_eq!(1, ue(8, (&[0b01000000], 0)).unwrap().1);
- assert_eq!(2, ue(8, (&[0b01100000], 0)).unwrap().1);
- assert_eq!(3, ue(8, (&[0b00100000], 0)).unwrap().1);
- assert_eq!(4, ue(8, (&[0b00101000], 0)).unwrap().1);
- assert_eq!(5, ue(8, (&[0b00110000], 0)).unwrap().1);
- assert_eq!(6, ue(8, (&[0b00111000], 0)).unwrap().1);
- assert_eq!(7, ue(8, (&[0b00010000], 0)).unwrap().1);
- assert_eq!(8, ue(8, (&[0b00010010], 0)).unwrap().1);
- assert_eq!(9, ue(8, (&[0b00010100], 0)).unwrap().1);
-}
+    #[test]
+    pub fn test_ue() {
+        assert_eq!(0, ue(8, (&[0b10000000], 0)).unwrap().1);
+        assert_eq!(1, ue(8, (&[0b01000000], 0)).unwrap().1);
+        assert_eq!(2, ue(8, (&[0b01100000], 0)).unwrap().1);
+        assert_eq!(3, ue(8, (&[0b00100000], 0)).unwrap().1);
+        assert_eq!(4, ue(8, (&[0b00101000], 0)).unwrap().1);
+        assert_eq!(5, ue(8, (&[0b00110000], 0)).unwrap().1);
+        assert_eq!(6, ue(8, (&[0b00111000], 0)).unwrap().1);
+        assert_eq!(7, ue(8, (&[0b00010000], 0)).unwrap().1);
+        assert_eq!(8, ue(8, (&[0b00010010], 0)).unwrap().1);
+        assert_eq!(9, ue(8, (&[0b00010100], 0)).unwrap().1);
+    }
 
-#[test]
-pub fn test_se() {
- assert_eq!(0, se((&[0b10000000], 0)).unwrap().1);
- assert_eq!(1, se((&[0b01000000], 0)).unwrap().1);
- assert_eq!(-1, se((&[0b01100000], 0)).unwrap().1);
- assert_eq!(2, se((&[0b00100000], 0)).unwrap().1);
- assert_eq!(-2, se((&[0b00101000], 0)).unwrap().1);
- assert_eq!(3, se((&[0b00110000], 0)).unwrap().1);
- assert_eq!(-3, se((&[0b00111000], 0)).unwrap().1);
- assert_eq!(4, se((&[0b00010000], 0)).unwrap().1);
- assert_eq!(-4, se((&[0b00010010], 0)).unwrap().1);
- assert_eq!(5, se((&[0b00010100], 0)).unwrap().1);
-}
+    #[test]
+    pub fn test_se() {
+        assert_eq!(0, se((&[0b10000000], 0)).unwrap().1);
+        assert_eq!(1, se((&[0b01000000], 0)).unwrap().1);
+        assert_eq!(-1, se((&[0b01100000], 0)).unwrap().1);
+        assert_eq!(2, se((&[0b00100000], 0)).unwrap().1);
+        assert_eq!(-2, se((&[0b00101000], 0)).unwrap().1);
+        assert_eq!(3, se((&[0b00110000], 0)).unwrap().1);
+        assert_eq!(-3, se((&[0b00111000], 0)).unwrap().1);
+        assert_eq!(4, se((&[0b00010000], 0)).unwrap().1);
+        assert_eq!(-4, se((&[0b00010010], 0)).unwrap().1);
+        assert_eq!(5, se((&[0b00010100], 0)).unwrap().1);
+    }
 
-fn parse_sps_test(data: &[u8]) -> sps::SequenceParameterSet {
-    parse_sps((data, 0)).expect("SPS parsing failed").1
-}
+    fn parse_sps_test(data: &[u8]) -> sps::SequenceParameterSet {
+        parse_sps((data, 0)).expect("SPS parsing failed").1
+    }
 
-#[test]
-pub fn test_sps1() {
-    let data = [
-        0x64, 0x00, 0x0c, 0xac, 0x3b, 0x50, 0xb0,
-        0x4b, 0x42, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00,
-        0x00, 0x03, 0x00, 0x3d, 0x08,
-    ];
-    let sps = parse_sps_test(&data);
-    assert_eq!(sps.profile_idc, sps::ProfileIdc(100), "profile");
-    assert_eq!(sps.constraint_set0_flag, false);
-    assert_eq!(sps.constraint_set1_flag, false);
-    assert_eq!(sps.constraint_set2_flag, false);
-    assert_eq!(sps.constraint_set3_flag, false);
-    assert_eq!(sps.constraint_set4_flag, false);
-    assert_eq!(sps.constraint_set5_flag, false);
-    assert_eq!(sps.level_idc, 12, "level");
-    assert_eq!(sps.seq_parameter_set_id, 0, "sps id");
-}
-
+    #[test]
+    pub fn test_sps1() {
+        let data = [
+            0x64, 0x00, 0x0c, 0xac, 0x3b, 0x50, 0xb0, 0x4b, 0x42, 0x00, 0x00, 0x03, 0x00, 0x02,
+            0x00, 0x00, 0x03, 0x00, 0x3d, 0x08,
+        ];
+        let sps = parse_sps_test(&data);
+        assert_eq!(sps.profile_idc, sps::ProfileIdc(100), "profile");
+        assert_eq!(sps.constraint_set0_flag, false);
+        assert_eq!(sps.constraint_set1_flag, false);
+        assert_eq!(sps.constraint_set2_flag, false);
+        assert_eq!(sps.constraint_set3_flag, false);
+        assert_eq!(sps.constraint_set4_flag, false);
+        assert_eq!(sps.constraint_set5_flag, false);
+        assert_eq!(sps.level_idc, 12, "level");
+        assert_eq!(sps.seq_parameter_set_id, 0, "sps id");
+    }
 }

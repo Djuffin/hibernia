@@ -83,7 +83,6 @@ pub struct SequenceParameterSet {
     pub offset_for_top_to_bottom_field: i32,
     pub offset_for_ref_frame: Vec<i32>,
 
-
     pub max_num_ref_frames: u8,
     pub gaps_in_frame_num_value_allowed_flag: bool,
     pub pic_width_in_mbs_minus1: u16,

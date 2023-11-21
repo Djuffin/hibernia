@@ -88,15 +88,15 @@ pub struct SequenceParameterSet {
     pub gaps_in_frame_num_value_allowed_flag: bool,
     pub pic_width_in_mbs_minus1: u16,
     pub pic_height_in_map_units_minus1: u16,
-    pub frame_mbs_flags: bool,
+    pub frame_mbs_only_flag: bool,
     pub mb_adaptive_frame_field_flag: bool,
     pub direct_8x8_inference_flag: bool,
 
     pub frame_cropping_flag: bool,
-    pub frame_crop_left_offset: u8,
-    pub frame_crop_right_offset: u8,
-    pub frame_crop_top_offset: u8,
-    pub frame_crop_bottom_offset: u8,
+    pub frame_crop_left_offset: u32,
+    pub frame_crop_right_offset: u32,
+    pub frame_crop_top_offset: u32,
+    pub frame_crop_bottom_offset: u32,
 
     pub vui_parameters: Option<VuiParameters>,
 }

@@ -1,28 +1,32 @@
 use super::sps;
 
 use nom::{
-    bits::complete::*, error::make_error, error::Error, error::ErrorKind, multi::count,
+    bits::complete::*, multi::count,
+     error::{context, convert_error, ErrorKind, Error, ParseError,VerboseError, VerboseErrorKind },
     multi::many0_count, Err, IResult,
 };
 type BitInput<'a> = (&'a [u8], usize);
+type ParseResult<'a, T> = IResult<BitInput<'a>, T, VerboseError<BitInput<'a>>>;
 
-fn u(n: usize, i: BitInput) -> IResult<BitInput, u32> {
+
+//impl Parser<BitInput<'a>, Output = u32, Error = VerboseError<BitInput<'a>>
+fn u(n: usize, i: BitInput) -> ParseResult<u32> {
     take(n)(i)
 }
 
-fn ue(n: usize, i: BitInput) -> IResult<BitInput, u32> {
+fn ue(n: usize, i: BitInput) -> ParseResult<u32> {
     // Parsing process for Exp-Golomb codes. Section 9.1
     let (i, zero_bits) = many0_count(tag(0, 1u8))(i)?;
     let (i, _) = tag(1, 1u8)(i)?;
     let (i, x) = u(zero_bits, i)?;
     let result = (1u32 << zero_bits) - 1 + x;
     if (zero_bits >= n || result as u64 >= 1u64 << n) {
-        return Err(Err::Error(Error::new(i, ErrorKind::Verify)));
+        return Err(Err::Error(VerboseError::from_error_kind(i, ErrorKind::Verify)));
     }
     Ok((i, result))
 }
 
-fn se(i: BitInput) -> IResult<BitInput, i32> {
+fn se(i: BitInput) -> ParseResult<i32> {
     // Mapping process for signed Exp-Golomb codes Section 9.1.1
     let (i, value) = ue(32, i)?;
     let result: i32;
@@ -84,7 +88,22 @@ macro_rules! if_flag {
     };
 }
 
-fn parse_vui(input: BitInput) -> IResult<BitInput, sps::VuiParameters> {
+fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
+    // 1-bit at the end
+    let (input, _) =
+        context("rbsp_trailing_bits_sentinel", tag(0b1, 1u8))(input)?;
+    let bit_position = input.1;
+
+    // alignment with 0-bits till next byte
+    if (bit_position % 8 != 0) {
+        let zero_bits_count = 8 - (bit_position % 8);
+        context("rbsp_trailing_bits_padding", tag(0, zero_bits_count))(input)?;
+    }
+
+    Ok((input, ()))
+}
+
+fn parse_vui(input: BitInput) -> ParseResult<sps::VuiParameters> {
     let mut result = sps::VuiParameters::default();
 
     read_value!(input, result.aspect_ratio_info_present_flag, bool);
@@ -153,7 +172,7 @@ fn parse_vui(input: BitInput) -> IResult<BitInput, sps::VuiParameters> {
     Ok((input, result))
 }
 
-fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
+fn parse_sps(input: BitInput) -> ParseResult<sps::SequenceParameterSet> {
     let mut result = sps::SequenceParameterSet::default();
 
     let (input, profile_idc) = u(8, input)?;
@@ -166,7 +185,7 @@ fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
     read_value!(input, result.constraint_set4_flag, bool);
     read_value!(input, result.constraint_set5_flag, bool);
 
-    let (input, _) = tag(0x00, 2u8)(input)?; // two reserver zero bits
+    let (input, _) = tag(0b00, 2u8)(input)?; // two reserver zero bits
 
     read_value!(input, result.level_idc, u, 8);
     read_value!(input, result.seq_parameter_set_id, ue, 8);
@@ -183,7 +202,8 @@ fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
         read_value!(input, result.qpprime_y_zero_transform_bypass_flag, bool);
         read_value!(input, result.seq_scaling_matrix_present_flag, bool);
         if (result.seq_scaling_matrix_present_flag) {
-             return Err(Err::Error(Error::new(input, ErrorKind::Not)));
+            unimplemented!();
+             //return Err(Err::Error(Error::new(input, ErrorKind::Not)));
         }
     }}
 
@@ -233,6 +253,7 @@ fn parse_sps(input: BitInput) -> IResult<BitInput, sps::SequenceParameterSet> {
         let (input, vui) = parse_vui(input)?;
         result.vui_parameters = Some(vui);
     }}
+    rbsp_trailing_bits(input)?;
 
     Ok((input, result))
 }
@@ -276,8 +297,8 @@ mod tests {
     #[test]
     pub fn test_sps1() {
         let data = [
-            0x64, 0x00, 0x0c, 0xac, 0x3b, 0x50, 0xb0, 0x4b, 0x42, 0x00, 0x00, 0x03, 0x00, 0x02,
-            0x00, 0x00, 0x03, 0x00, 0x3d, 0x08,
+            0x64, 0x00, 0x0c, 0xac, 0x3b, 0x50, 0xb0, 0x4b, 0x42, 0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00, 0x00, 0x3d, 0x08,
         ];
         let sps = parse_sps_test(&data);
         assert_eq!(sps.profile_idc, sps::ProfileIdc(100), "profile");

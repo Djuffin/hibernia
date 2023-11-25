@@ -1,26 +1,39 @@
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SliceRect {
+    pub top_left: u32,
+    pub bottom_right: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SliceGroupChangeType {
+    #[default]
+    BoxOut,
+    RasterScan,
+    WipeOut,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SliceGroup {
     Interleaved {
         run_length_minus1: Vec<u32>,
     },
     Dispersed {
-        num_slice_groups_minus1: u32,
+        num_slice_groups_minus1: usize,
     },
-    ForegroundAndLeftover {
+    Foreground {
         rectangles: Vec<SliceRect>,
     },
     Changing {
         change_type: SliceGroupChangeType,
-        num_slice_groups_minus1: u32,
+        num_slice_groups_minus1: usize,
         slice_group_change_direction_flag: bool,
         slice_group_change_rate_minus1: u32,
     },
-    ExplicitAssignment {
-        num_slice_groups_minus1: u32,
+    Explicit {
+        num_slice_groups_minus1: usize,
         slice_group_id: Vec<u32>,
     },
 }
-
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct PicParameterSet {
@@ -28,7 +41,7 @@ pub struct PicParameterSet {
     pub seq_parameter_set_id: u8,
     pub entropy_coding_mode_flag: bool,
     pub bottom_field_pic_order_in_frame_present_flag: bool,
-    pub slice_groups: Option<SliceGroup>,
+    pub slice_group: Option<SliceGroup>,
     pub num_ref_idx_l0_default_active_minus1: u32,
     pub num_ref_idx_l1_default_active_minus1: u32,
     pub weighted_pred_flag: bool,

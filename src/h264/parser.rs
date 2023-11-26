@@ -61,136 +61,39 @@ fn se<'a>() -> impl Parser<BitInput<'a>, i32, VerboseError<BitInput<'a>>> {
 }
 
 macro_rules! read_value {
-    ($input:ident, $dest:expr, u, 2) => {
+    ($input:ident, $dest:expr, u, $bits:expr) => {
         let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, u(2)).parse($input)?;
+        let (i, value) = context(context_str, u($bits)).parse($input)?;
         $input = i;
-        println!(
-            "u2 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value as u8;
-    };
-    ($input:ident, $dest:expr, u, 3) => {
-        let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, u(3)).parse($input)?;
-        $input = i;
-        println!(
-            "u3 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value as u8;
-    };
-    ($input:ident, $dest:expr, u, 8) => {
-        let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, u(8)).parse($input)?;
-        $input = i;
-        println!(
-            "u8 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value as u8;
-    };
-    ($input:ident, $dest:expr, u, 16) => {
-        let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, u(16)).parse($input)?;
-        $input = i;
-        println!(
-            "u16 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value as u16;
-    };
-    ($input:ident, $dest:expr, u, 32) => {
-        let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, u(32)).parse($input)?;
-        $input = i;
-        println!(
-            "u32 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value;
+        println!("u({}) {} = {}", $bits, context_str, value);
+        $dest = value.try_into().unwrap();
     };
     ($input:ident, $dest:expr, ue) => {
         let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
         let (i, value) = context(context_str, ue(32)).parse($input)?;
         $input = i;
-        println!(
-            "u {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
+        println!("ue {} = {}", context_str, value);
         $dest = value as usize;
     };
-    ($input:ident, $dest:expr, ue, 8) => {
+    ($input:ident, $dest:expr, ue, $bits:expr) => {
         let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, ue(8)).parse($input)?;
+        let (i, value) = context(context_str, ue($bits)).parse($input)?;
         $input = i;
-        println!(
-            "ue8 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value as u8;
-    };
-    ($input:ident, $dest:expr, ue, 16) => {
-        let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, ue(16)).parse($input)?;
-        $input = i;
-        println!(
-            "ue16 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value as u16;
-    };
-    ($input:ident, $dest:expr, ue, 32) => {
-        let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
-        let (i, value) = context(context_str, ue(32)).parse($input)?;
-        $input = i;
-        println!(
-            "ue32 {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
-        $dest = value as u32;
+        println!("ue({}) {} = {}", $bits, context_str, value);
+        $dest = value.try_into().unwrap();
     };
     ($input:ident, $dest:expr, se) => {
         let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
         let (i, value) = context(context_str, se()).parse($input)?;
         $input = i;
-        println!(
-            "se {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
+        println!("se {} = {}", context_str, value);
         $dest = value;
     };
     ($input:ident, $dest:expr, bool) => {
         let context_str = stringify!($dest);
-        let offset = $input.1;
-        let byte_value = $input.0[0];
         let (i, value) = context(context_str, bool).parse($input)?;
         $input = i;
-        println!(
-            "flag {:?}[{:?}]: {:?} = {:?}",
-            byte_value, offset, context_str, value
-        );
+        println!("flag {} = {}", context_str, value);
         $dest = value;
     };
 }
@@ -455,10 +358,7 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
                 let slice_group_id_bits = 1 + num_slice_groups_minus1.ilog2() as usize;
                 let mut slice_group_ids = vec![0u32; num_slice_groups_minus1 + 1];
                 for i in 0..=num_slice_groups_minus1 {
-                    let (ipt, value) =
-                        context("slice_group_ids", u(slice_group_id_bits)).parse(input)?;
-                    slice_group_ids[i] = value;
-                    input = ipt;
+                    read_value!(input, slice_group_ids[i], u, slice_group_id_bits);
                 }
 
                 Some(SliceGroup::Explicit {
@@ -563,9 +463,7 @@ pub fn parse_slice_header<'a, 'b>(
     }
 
     let bits_in_frame_num = (sps.log2_max_frame_num_minus4 + 4) as usize;
-    let (i, frame_num) = context("frame_num", u(bits_in_frame_num)).parse(input)?;
-    input = i;
-    header.frame_num = frame_num as u16;
+    read_value!(input, header.frame_num, u, bits_in_frame_num);
 
     let mut field_pic_flag = false;
     read_value!(input, field_pic_flag, bool);

@@ -4,17 +4,29 @@ use super::sps;
 use super::pps::{
     PicParameterSet, PicParameterSetExtra, SliceGroup, SliceGroupChangeType, SliceRect,
 };
+use super::slice::{ColourPlane, SliceHeader, SliceType};
 use super::sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
+use super::DecoderContext;
 
 use nom::{
     bits::complete::*,
-    error::{context, convert_error, Error, ErrorKind, ParseError, VerboseError, VerboseErrorKind},
+    error::{
+        context, convert_error, ContextError, Error, ErrorKind, ParseError, VerboseError,
+        VerboseErrorKind,
+    },
     multi::count,
     multi::many0_count,
     Err, IResult, Parser,
 };
 type BitInput<'a> = (&'a [u8], usize);
 type ParseResult<'a, T> = IResult<BitInput<'a>, T, VerboseError<BitInput<'a>>>;
+
+fn make_error<'a>(input: BitInput<'a>, message: &'static str) -> Err<VerboseError<BitInput<'a>>> {
+    let error = VerboseError::from_error_kind(input, ErrorKind::Verify);
+    Err::Error(ContextError::<BitInput<'a>>::add_context(
+        input, message, error,
+    ))
+}
 
 fn u<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>> {
     take(n)
@@ -28,10 +40,7 @@ fn ue<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>
         let (i, x) = u(zero_bits).parse(i)?;
         let result = (1u32 << zero_bits) - 1 + x;
         if (zero_bits >= n || result as u64 >= 1u64 << n) {
-            return Err(Err::Error(VerboseError::from_error_kind(
-                i,
-                ErrorKind::Verify,
-            )));
+            return Err(make_error(i, "Value is too large to fit the variable"));
         }
         Ok((i, result))
     }
@@ -280,9 +289,6 @@ fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
     if (vcl_hrd_parameters_present) {
         unimplemented!();
     }
-    //read_value!(input, vui.nal_hrd_parameters, Option<HdrParameters>);
-    //read_value!(input, vui.vcl_hrd_parameters, Option<HdrParameters>);
-    //read_value!(input, vui.low_delay_hrd_flag, bool);
 
     read_value!(input, vui.pic_struct_present_flag, bool);
     read_value!(input, vui.bitstream_restriction_flag, bool);
@@ -519,6 +525,59 @@ pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
     Ok((input, pps))
 }
 
+// Section 7.3.3 Slice header syntax
+pub fn parse_slice_header<'a, 'b>(
+    ctx: &'a DecoderContext,
+    i: BitInput<'b>,
+) -> ParseResult<'b, SliceHeader> {
+    let mut header = SliceHeader::default();
+    let mut input = i;
+    read_value!(input, header.first_mb_in_slice, ue, 32);
+    let mut slice_type = 0u8;
+    read_value!(input, slice_type, ue, 8);
+    header.slice_type = SliceType(slice_type);
+    read_value!(input, header.pic_parameter_set_id, ue, 8);
+
+    let pps = match ctx.get_pps(header.pic_parameter_set_id) {
+        Some(pps) => pps,
+        None => {
+            return Err(make_error(input, "PPS is missing in context"));
+        }
+    };
+    let sps = match ctx.get_sps(pps.seq_parameter_set_id) {
+        Some(sps) => sps,
+        None => {
+            return Err(make_error(input, "SPS is missing in context"));
+        }
+    };
+
+    if (sps.separate_colour_plane_flag) {
+        let mut colour_plane_id: u8 = 0;
+        read_value!(input, colour_plane_id, u, 2);
+        header.colour_plane = match colour_plane_id {
+            0 => Some(ColourPlane::Y),
+            1 => Some(ColourPlane::Cb),
+            2 => Some(ColourPlane::Cr),
+            _ => None,
+        };
+    }
+
+    let bits_in_frame_num = (sps.log2_max_frame_num_minus4 + 4) as usize;
+    let (i, frame_num) = context("frame_num", u(bits_in_frame_num)).parse(input)?;
+    input = i;
+    header.frame_num = frame_num as u16;
+
+    let mut field_pic_flag = false;
+    read_value!(input, field_pic_flag, bool);
+    if field_pic_flag {
+        let mut bottom_field_flag = false;
+        read_value!(input, bottom_field_flag, bool);
+        header.bottom_field_flag = Some(bottom_field_flag);
+    }
+
+    Ok((input, header))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,6 +618,30 @@ mod tests {
     fn parse_pps_test(data: &[u8]) -> pps::PicParameterSet {
         let pps = parse_pps((data, 0)).expect("PPS parsing failed").1;
         pps
+    }
+
+    #[test]
+    pub fn test_slice() {
+        let sps_data = [
+            0x42, 0xC0, 0x14, 0x8C, 0x8D, 0x42, 0x12, 0x4D, 0x41, 0x81, 0x81, 0x81, 0xE1, 0x10,
+            0x8D, 0x40,
+        ];
+        let sps = parse_sps_test(&sps_data);
+
+        let pps_data = [0xCE, 0x3C, 0x80];
+        let pps = parse_pps_test(&pps_data);
+        let mut ctx = DecoderContext::default();
+        ctx.put_sps(sps);
+        ctx.put_pps(pps);
+
+        let slice_data = [
+            0xB8, 0x00, 0x04, 0x00, 0x00, 0x09, 0xFF, 0xFF, 0xF8, 0x7A, 0x28, 0x00, 0x08, 0x24,
+            0x79, 0x31, 0x72, 0x72, 0x75, 0x8B, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA,
+            0xF0,
+        ];
+        let header = parse_slice_header(&ctx, (&slice_data, 0))
+            .expect("PPS parsing failed")
+            .1;
     }
 
     #[test]
@@ -612,6 +695,7 @@ mod tests {
             sps.pic_height_in_map_units_minus1, 3,
             "pic_width_in_mbs_minus1"
         );
+        assert_eq!(sps.max_num_ref_frames, 1);
         let vui = sps.vui_parameters.expect("vui is missing");
         assert_eq!(vui.video_signal_type_present_flag, true);
         assert_eq!(vui.video_format, 5);

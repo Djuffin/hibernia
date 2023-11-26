@@ -1,7 +1,9 @@
 use super::pps;
 use super::sps;
 
-use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
+use super::pps::{
+    PicParameterSet, PicParameterSetExtra, SliceGroup, SliceGroupChangeType, SliceRect,
+};
 use super::sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
 
 use nom::{
@@ -184,6 +186,7 @@ macro_rules! read_value {
     };
 }
 
+// Section 7.4.1
 fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
     // 1-bit at the end
     let (input, _) = context("rbsp_trailing_bits_sentinel", tag(1, 1u8))(input)?;
@@ -200,6 +203,26 @@ fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
     };
 
     Ok((input, ()))
+}
+
+// Section 7.2
+fn more_rbsp_data(input: BitInput) -> bool {
+    let (data, index) = input;
+    if data.len() == 0 {
+        return false;
+    }
+
+    if rbsp_trailing_bits(input).is_err() {
+        return true;
+    }
+
+    for i in 1..data.len() {
+        if data[i] != 0 {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
@@ -276,7 +299,8 @@ fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
     Ok((input, vui))
 }
 
-fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
+// 7.3.2.1.1 Sequence parameter set data syntax
+pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
     let mut input = i;
 
@@ -443,7 +467,22 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
     Ok((input, slice_group))
 }
 
-fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
+fn parse_pps_extra(i: BitInput) -> ParseResult<PicParameterSetExtra> {
+    let mut pps_extra = PicParameterSetExtra::default();
+    let mut input = i;
+
+    read_value!(input, pps_extra.transform_8x8_mode_flag, bool);
+    let mut pic_scaling_matrix_present_flag = false;
+    read_value!(input, pic_scaling_matrix_present_flag, bool);
+    if (pic_scaling_matrix_present_flag) {
+        unimplemented!();
+    }
+    read_value!(input, pps_extra.second_chroma_qp_index_offset, se);
+    Ok((input, pps_extra))
+}
+
+// Section 7.3.2.2 Picture parameter set RBSP syntax
+pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
     let mut pps = PicParameterSet::default();
     let mut input = i;
 
@@ -471,7 +510,12 @@ fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
     read_value!(input, pps.constrained_intra_pred_flag, bool);
     read_value!(input, pps.redundant_pic_cnt_present_flag, bool);
 
-    //rbsp_trailing_bits(input)?;
+    if (more_rbsp_data(input)) {
+        let (i, pps_extra) = parse_pps_extra(input)?;
+        input = i;
+        pps.extension = Some(pps_extra);
+    }
+    rbsp_trailing_bits(input)?;
     Ok((input, pps))
 }
 
@@ -540,10 +584,66 @@ mod tests {
     }
 
     #[test]
+    pub fn test_sps2() {
+        let data = [
+            0x42, 0xC0, 0x14, 0x8C, 0x8D, 0x42, 0x12, 0x4D, 0x41, 0x81, 0x81, 0x81, 0xE1, 0x10,
+            0x8D, 0x40,
+        ];
+        let sps = parse_sps_test(&data);
+        assert_eq!(sps.profile_idc, sps::ProfileIdc(66), "profile");
+        assert_eq!(sps.constraint_set0_flag, true);
+        assert_eq!(sps.constraint_set1_flag, true);
+        assert_eq!(sps.constraint_set2_flag, false);
+        assert_eq!(sps.constraint_set3_flag, false);
+        assert_eq!(sps.constraint_set4_flag, false);
+        assert_eq!(sps.constraint_set5_flag, false);
+        assert_eq!(sps.level_idc, 20, "level");
+        assert_eq!(sps.seq_parameter_set_id, 0, "seq_parameter_set_id");
+        assert_eq!(
+            sps.log2_max_pic_order_cnt_lsb_minus4, 12,
+            "log2_max_pic_order_cnt_lsb_minus4"
+        );
+        assert_eq!(
+            sps.log2_max_frame_num_minus4, 11,
+            "log2_max_frame_num_minus4"
+        );
+        assert_eq!(sps.pic_width_in_mbs_minus1, 3, "pic_width_in_mbs_minus1");
+        assert_eq!(
+            sps.pic_height_in_map_units_minus1, 3,
+            "pic_width_in_mbs_minus1"
+        );
+        let vui = sps.vui_parameters.expect("vui is missing");
+        assert_eq!(vui.video_signal_type_present_flag, true);
+        assert_eq!(vui.video_format, 5);
+
+        assert_eq!(vui.colour_primaries, 6);
+        assert_eq!(vui.transfer_characteristics, 6);
+        assert_eq!(vui.log2_max_mv_length_horizontal, 16);
+        assert_eq!(vui.log2_max_mv_length_vertical, 16);
+        assert_eq!(vui.max_dec_frame_buffering, 1);
+        assert_eq!(vui.motion_vectors_over_pic_boundaries_flag, true);
+        assert_eq!(vui.bitstream_restriction_flag, true);
+    }
+
+    #[test]
     pub fn test_pps1() {
         let data = [0xE8, 0x43, 0x8F, 0x13, 0x21, 0x30];
         let pps = parse_pps_test(&data);
         assert_eq!(pps.pic_parameter_set_id, 0, "pic_parameter_set_id");
         assert_eq!(pps.seq_parameter_set_id, 0, "seq_parameter_set_id");
+        assert_eq!(pps.extension.is_some(), true);
+    }
+
+    #[test]
+    pub fn test_pps2() {
+        let data = [0xCE, 0x3C, 0x80];
+        let pps = parse_pps_test(&data);
+        assert_eq!(pps.pic_parameter_set_id, 0, "pic_parameter_set_id");
+        assert_eq!(pps.seq_parameter_set_id, 0, "seq_parameter_set_id");
+        assert_eq!(pps.pic_init_qp_minus26, 0);
+        assert_eq!(pps.pic_init_qs_minus26, 0);
+        assert_eq!(pps.deblocking_filter_control_present_flag, true);
+        assert_eq!(pps.entropy_coding_mode_flag, false);
+        assert_eq!(pps.extension.is_some(), false);
     }
 }

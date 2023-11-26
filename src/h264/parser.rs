@@ -520,14 +520,45 @@ mod tests {
 
     #[test]
     pub fn test_slice() {
-        let sps_data = [
-            0x42, 0xC0, 0x14, 0x8C, 0x8D, 0x42, 0x12, 0x4D, 0x41, 0x81, 0x81, 0x81, 0xE1, 0x10,
-            0x8D, 0x40,
-        ];
-        let sps = parse_sps_test(&sps_data);
+        let sps = SequenceParameterSet {
+            profile_idc: ProfileIdc(66),
+            constraint_set0_flag: true,
+            constraint_set1_flag: true,
+            level_idc: 20,
+            seq_parameter_set_id: 0,
+            chroma_format_idc: 0,
+            separate_colour_plane_flag: false,
+            log2_max_frame_num_minus4: 11,
+            log2_max_pic_order_cnt_lsb_minus4: 12,
+            max_num_ref_frames: 1,
+            pic_width_in_mbs_minus1: 3,
+            pic_height_in_map_units_minus1: 3,
+            frame_mbs_only_flag: true,
+            vui_parameters: Some(VuiParameters {
+                video_signal_type_present_flag: true,
+                video_format: 5,
+                colour_description_present_flag: true,
+                colour_primaries: 6,
+                transfer_characteristics: 6,
+                matrix_coefficients: 6,
+                bitstream_restriction_flag: true,
+                motion_vectors_over_pic_boundaries_flag: true,
+                log2_max_mv_length_horizontal: 16,
+                log2_max_mv_length_vertical: 16,
+                max_num_reorder_frames: 0,
+                max_dec_frame_buffering: 1,
+                ..VuiParameters::default()
+            }),
+            ..SequenceParameterSet::default()
+        };
 
-        let pps_data = [0xCE, 0x3C, 0x80];
-        let pps = parse_pps_test(&pps_data);
+        let pps = PicParameterSet {
+            pic_parameter_set_id: 0,
+            seq_parameter_set_id: 0,
+            entropy_coding_mode_flag: false,
+            deblocking_filter_control_present_flag: true,
+            ..PicParameterSet::default()
+        };
         let mut ctx = DecoderContext::default();
         ctx.put_sps(sps);
         ctx.put_pps(pps);
@@ -538,8 +569,11 @@ mod tests {
             0xF0,
         ];
         let header = parse_slice_header(&ctx, (&slice_data, 0))
-            .expect("PPS parsing failed")
+            .expect("Slice parsing failed")
             .1;
+        assert_eq!(header.slice_type, SliceType(2));
+        assert_eq!(header.frame_num, 0);
+        assert_eq!(header.pic_parameter_set_id, 0);
     }
 
     #[test]

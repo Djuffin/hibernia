@@ -46,6 +46,10 @@ pub struct PicParameterSetExtra {
 pub struct PicParameterSet {
     pub pic_parameter_set_id: u8,
     pub seq_parameter_set_id: u8,
+
+    // This flag selects the entropy decoding method to be applied for the syntax elements.
+    // false: Exp-Golomb coded, see section 9.1 or CAVLC, see section 9.2.
+    // true: CABAC coded, see section 9.3. (Only available in profiles Main and higher)
     pub entropy_coding_mode_flag: bool,
     pub bottom_field_pic_order_in_frame_present_flag: bool,
     pub slice_group: Option<SliceGroup>,

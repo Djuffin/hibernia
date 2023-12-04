@@ -1,4 +1,3 @@
-#![allow(clippy::needless_range_loop)]
 use super::pps;
 use super::slice;
 use super::sps;
@@ -308,16 +307,16 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
                 for i in 0..=num_slice_groups_minus1 {
                     read_value!(input, run_length_minus1[i], ue, 32);
                 }
-                Some(SliceGroup::Interleaved { run_length_minus1: run_length_minus1 })
+                Some(SliceGroup::Interleaved { run_length_minus1 })
             }
-            1 => Some(SliceGroup::Dispersed { num_slice_groups_minus1: num_slice_groups_minus1 }),
+            1 => Some(SliceGroup::Dispersed { num_slice_groups_minus1 }),
             2 => {
                 let mut rectangles = vec![SliceRect::default(); num_slice_groups_minus1 + 1];
                 for i in 0..=num_slice_groups_minus1 {
                     read_value!(input, rectangles[i].top_left, ue, 32);
                     read_value!(input, rectangles[i].bottom_right, ue, 32);
                 }
-                Some(SliceGroup::Foreground { rectangles: rectangles })
+                Some(SliceGroup::Foreground { rectangles })
             }
             3..=5 => {
                 let change_type = match slice_group_map_type {
@@ -334,10 +333,10 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
                 read_value!(input, slice_group_change_rate_minus1, ue, 32);
 
                 Some(SliceGroup::Changing {
-                    change_type: change_type,
-                    num_slice_groups_minus1: num_slice_groups_minus1,
-                    slice_group_change_direction_flag: slice_group_change_direction_flag,
-                    slice_group_change_rate_minus1: slice_group_change_rate_minus1,
+                    change_type,
+                    num_slice_groups_minus1,
+                    slice_group_change_direction_flag,
+                    slice_group_change_rate_minus1,
                 })
             }
             6 => {
@@ -351,7 +350,7 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
                 }
 
                 Some(SliceGroup::Explicit {
-                    num_slice_groups_minus1: num_slice_groups_minus1,
+                    num_slice_groups_minus1,
                     slice_group_id: slice_group_ids,
                 })
             }
@@ -514,8 +513,8 @@ pub fn parse_slice_data<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, V
     let mut input = i;
     let mut blocks = Vec::<Macroblock>::new();
 
-    assert_eq!(slice.pps.entropy_coding_mode_flag, false, "entropy coding is not implemented yet");
-    assert_eq!(slice.MbaffFrameFlag(), false, "interlaced video is not implemented yet");
+    assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
+    assert!(!slice.MbaffFrameFlag(), "interlaced video is not implemented yet");
     if slice.pps.entropy_coding_mode_flag {
         // cabac_alignment_one_bit
         let (i, _) = align_till_next_byte(input, true)?;
@@ -655,12 +654,12 @@ mod tests {
         ];
         let sps = parse_sps_test(&data);
         assert_eq!(sps.profile_idc, sps::ProfileIdc(100), "profile");
-        assert_eq!(sps.constraint_set0_flag, false);
-        assert_eq!(sps.constraint_set1_flag, false);
-        assert_eq!(sps.constraint_set2_flag, false);
-        assert_eq!(sps.constraint_set3_flag, false);
-        assert_eq!(sps.constraint_set4_flag, false);
-        assert_eq!(sps.constraint_set5_flag, false);
+        assert!(!sps.constraint_set0_flag);
+        assert!(!sps.constraint_set1_flag);
+        assert!(!sps.constraint_set2_flag);
+        assert!(!sps.constraint_set3_flag);
+        assert!(!sps.constraint_set4_flag);
+        assert!(!sps.constraint_set5_flag);
         assert_eq!(sps.level_idc, 10, "level");
         assert_eq!(sps.pic_width_in_mbs_minus1, 3, "pic_width_in_mbs_minus1");
         assert_eq!(sps.pic_height_in_map_units_minus1, 3, "pic_width_in_mbs_minus1");
@@ -674,12 +673,12 @@ mod tests {
         ];
         let sps = parse_sps_test(&data);
         assert_eq!(sps.profile_idc, sps::ProfileIdc(66), "profile");
-        assert_eq!(sps.constraint_set0_flag, true);
-        assert_eq!(sps.constraint_set1_flag, true);
-        assert_eq!(sps.constraint_set2_flag, false);
-        assert_eq!(sps.constraint_set3_flag, false);
-        assert_eq!(sps.constraint_set4_flag, false);
-        assert_eq!(sps.constraint_set5_flag, false);
+        assert!(sps.constraint_set0_flag);
+        assert!(sps.constraint_set1_flag);
+        assert!(!sps.constraint_set2_flag);
+        assert!(!sps.constraint_set3_flag);
+        assert!(!sps.constraint_set4_flag);
+        assert!(!sps.constraint_set5_flag);
         assert_eq!(sps.level_idc, 20, "level");
         assert_eq!(sps.seq_parameter_set_id, 0, "seq_parameter_set_id");
         assert_eq!(sps.log2_max_pic_order_cnt_lsb_minus4, 12, "log2_max_pic_order_cnt_lsb_minus4");
@@ -688,7 +687,7 @@ mod tests {
         assert_eq!(sps.pic_height_in_map_units_minus1, 3, "pic_width_in_mbs_minus1");
         assert_eq!(sps.max_num_ref_frames, 1);
         let vui = sps.vui_parameters.expect("vui is missing");
-        assert_eq!(vui.video_signal_type_present_flag, true);
+        assert!(vui.video_signal_type_present_flag);
         assert_eq!(vui.video_format, 5);
 
         assert_eq!(vui.colour_primaries, 6);
@@ -696,8 +695,8 @@ mod tests {
         assert_eq!(vui.log2_max_mv_length_horizontal, 16);
         assert_eq!(vui.log2_max_mv_length_vertical, 16);
         assert_eq!(vui.max_dec_frame_buffering, 1);
-        assert_eq!(vui.motion_vectors_over_pic_boundaries_flag, true);
-        assert_eq!(vui.bitstream_restriction_flag, true);
+        assert!(vui.motion_vectors_over_pic_boundaries_flag);
+        assert!(vui.bitstream_restriction_flag);
     }
 
     #[test]
@@ -706,7 +705,7 @@ mod tests {
         let pps = parse_pps_test(&data);
         assert_eq!(pps.pic_parameter_set_id, 0, "pic_parameter_set_id");
         assert_eq!(pps.seq_parameter_set_id, 0, "seq_parameter_set_id");
-        assert_eq!(pps.extension.is_some(), true);
+        assert!(pps.extension.is_some());
     }
 
     #[test]
@@ -717,8 +716,8 @@ mod tests {
         assert_eq!(pps.seq_parameter_set_id, 0, "seq_parameter_set_id");
         assert_eq!(pps.pic_init_qp_minus26, 0);
         assert_eq!(pps.pic_init_qs_minus26, 0);
-        assert_eq!(pps.deblocking_filter_control_present_flag, true);
-        assert_eq!(pps.entropy_coding_mode_flag, false);
-        assert_eq!(pps.extension.is_some(), false);
+        assert!(pps.deblocking_filter_control_present_flag);
+        assert!(!pps.entropy_coding_mode_flag);
+        assert!(!pps.extension.is_some());
     }
 }

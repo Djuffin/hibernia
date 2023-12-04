@@ -1,12 +1,12 @@
+#![allow(clippy::needless_range_loop)]
 use super::pps;
+use super::slice;
 use super::sps;
 
-use super::pps::{
-    PicParameterSet, PicParameterSetExtra, SliceGroup, SliceGroupChangeType, SliceRect,
-};
-use super::slice::{ColourPlane, SliceHeader, SliceType};
-use super::sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
 use super::DecoderContext;
+use pps::{PicParameterSet, PicParameterSetExtra, SliceGroup, SliceGroupChangeType, SliceRect};
+use slice::{ColourPlane, Macroblock, Slice, SliceHeader, SliceType};
+use sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
 
 use nom::{
     bits::complete::*,
@@ -23,9 +23,7 @@ type ParseResult<'a, T> = IResult<BitInput<'a>, T, VerboseError<BitInput<'a>>>;
 
 fn make_error<'a>(input: BitInput<'a>, message: &'static str) -> Err<VerboseError<BitInput<'a>>> {
     let error = VerboseError::from_error_kind(input, ErrorKind::Verify);
-    Err::Error(ContextError::<BitInput<'a>>::add_context(
-        input, message, error,
-    ))
+    Err::Error(ContextError::<BitInput<'a>>::add_context(input, message, error))
 }
 
 fn u<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>> {
@@ -50,12 +48,8 @@ fn se<'a>() -> impl Parser<BitInput<'a>, i32, VerboseError<BitInput<'a>>> {
     move |i| {
         // Mapping process for signed Exp-Golomb codes Section 9.1.1
         let (i, value) = ue(32).parse(i)?;
-        let result: i32;
-        if value & 1 != 0 {
-            result = ((value >> 1) + 1) as i32;
-        } else {
-            result = -((value >> 1) as i32);
-        }
+        let result =
+            if value & 1 != 0 { ((value >> 1) + 1) as i32 } else { -((value >> 1) as i32) };
         Ok((i, result))
     }
 }
@@ -98,17 +92,12 @@ macro_rules! read_value {
     };
 }
 
-// Section 7.4.1
-fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
-    // 1-bit at the end
-    let (input, _) = context("rbsp_trailing_bits_sentinel", tag(1, 1u8))(input)?;
+fn align_till_next_byte(input: BitInput, bit_value: bool) -> ParseResult<()> {
     let bit_position = input.1;
-
-    // alignment with 0-bits till next byte
     let input = if bit_position % 8 != 0 {
-        let zero_bits_count = 8 - (bit_position % 8);
-        println!("{:?}", zero_bits_count);
-        let (input, _) = context("rbsp_trailing_bits_padding", tag(0, zero_bits_count))(input)?;
+        let alignment_bit_cnt = 8 - (bit_position % 8);
+        let mask = if bit_value { 0xff } else { 0 };
+        let (input, _) = context("alignment_bits", tag(mask, alignment_bit_cnt))(input)?;
         input
     } else {
         input
@@ -117,10 +106,19 @@ fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
     Ok((input, ()))
 }
 
+// Section 7.4.1
+fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
+    // 1-bit at the end
+    let (input, _) = context("rbsp_trailing_bits_sentinel", tag(1, 1u8))(input)?;
+    let bit_position = input.1;
+
+    return align_till_next_byte(input, false);
+}
+
 // Section 7.2
 fn more_rbsp_data(input: BitInput) -> bool {
     let (data, index) = input;
-    if data.len() == 0 {
+    if data.is_empty() {
         return false;
     }
 
@@ -133,8 +131,7 @@ fn more_rbsp_data(input: BitInput) -> bool {
             return true;
         }
     }
-
-    return false;
+    false
 }
 
 fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
@@ -184,13 +181,13 @@ fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
     let mut nal_hrd_parameters_present = false;
     read_value!(input, nal_hrd_parameters_present, bool);
     if nal_hrd_parameters_present {
-        unimplemented!();
+        todo!("NAL HDR");
     }
 
     let mut vcl_hrd_parameters_present = false;
     read_value!(input, vcl_hrd_parameters_present, bool);
     if vcl_hrd_parameters_present {
-        unimplemented!();
+        todo!("VCL HDR");
     }
 
     read_value!(input, vui.pic_struct_present_flag, bool);
@@ -239,8 +236,7 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
         read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, bool);
         read_value!(input, sps.seq_scaling_matrix_present_flag, bool);
         if sps.seq_scaling_matrix_present_flag {
-            unimplemented!();
-            //return Err(Err::Error(Error::new(input, ErrorKind::Not)));
+            todo!("scaling matrix");
         }
     }
 
@@ -269,7 +265,9 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
     read_value!(input, sps.pic_height_in_map_units_minus1, ue, 16);
 
     read_value!(input, sps.frame_mbs_only_flag, bool);
-    if !sps.frame_mbs_only_flag {
+    if sps.frame_mbs_only_flag {
+        sps.mb_adaptive_frame_field_flag = false;
+    } else {
         read_value!(input, sps.mb_adaptive_frame_field_flag, bool);
     }
 
@@ -310,24 +308,18 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
                 for i in 0..=num_slice_groups_minus1 {
                     read_value!(input, run_length_minus1[i], ue, 32);
                 }
-                Some(SliceGroup::Interleaved {
-                    run_length_minus1: run_length_minus1,
-                })
+                Some(SliceGroup::Interleaved { run_length_minus1: run_length_minus1 })
             }
-            1 => Some(SliceGroup::Dispersed {
-                num_slice_groups_minus1: num_slice_groups_minus1,
-            }),
+            1 => Some(SliceGroup::Dispersed { num_slice_groups_minus1: num_slice_groups_minus1 }),
             2 => {
                 let mut rectangles = vec![SliceRect::default(); num_slice_groups_minus1 + 1];
                 for i in 0..=num_slice_groups_minus1 {
                     read_value!(input, rectangles[i].top_left, ue, 32);
                     read_value!(input, rectangles[i].bottom_right, ue, 32);
                 }
-                Some(SliceGroup::Foreground {
-                    rectangles: rectangles,
-                })
+                Some(SliceGroup::Foreground { rectangles: rectangles })
             }
-            3 | 4 | 5 => {
+            3..=5 => {
                 let change_type = match slice_group_map_type {
                     3 => SliceGroupChangeType::BoxOut,
                     4 => SliceGroupChangeType::RasterScan,
@@ -378,7 +370,7 @@ fn parse_pps_extra(i: BitInput) -> ParseResult<PicParameterSetExtra> {
     let mut pic_scaling_matrix_present_flag = false;
     read_value!(input, pic_scaling_matrix_present_flag, bool);
     if pic_scaling_matrix_present_flag {
-        unimplemented!();
+        todo!("scaling matrix");
     }
     read_value!(input, pps_extra.second_chroma_qp_index_offset, se);
     Ok((input, pps_extra))
@@ -392,11 +384,7 @@ pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
     read_value!(input, pps.pic_parameter_set_id, ue, 8);
     read_value!(input, pps.seq_parameter_set_id, ue, 8);
     read_value!(input, pps.entropy_coding_mode_flag, bool);
-    read_value!(
-        input,
-        pps.bottom_field_pic_order_in_frame_present_flag,
-        bool
-    );
+    read_value!(input, pps.bottom_field_pic_order_in_frame_present_flag, bool);
 
     let (i, group) = parse_slice_group(input)?;
     input = i;
@@ -423,12 +411,10 @@ pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
 }
 
 // Section 7.3.3 Slice header syntax
-pub fn parse_slice_header<'a, 'b>(
-    ctx: &'a DecoderContext,
-    i: BitInput<'b>,
-) -> ParseResult<'b, SliceHeader> {
+pub fn parse_slice_header<'a>(ctx: &DecoderContext, i: BitInput<'a>) -> ParseResult<'a, Slice> {
     let idr_pic_flag = true;
     let nal_ref_idc = 3;
+    let nal_type = 5;
 
     let mut header = SliceHeader::default();
     let mut input = i;
@@ -462,32 +448,29 @@ pub fn parse_slice_header<'a, 'b>(
 
     read_value!(input, header.frame_num, u, sps.bits_in_frame_num());
 
-    let mut field_pic_flag = false;
-    if !sps.frame_mbs_only_flag {
-        read_value!(input, field_pic_flag, bool);
-        if field_pic_flag {
+    if sps.frame_mbs_only_flag {
+        header.field_pic_flag = false;
+    } else {
+        read_value!(input, header.field_pic_flag, bool);
+        if header.field_pic_flag {
             let mut bottom_field_flag = false;
             read_value!(input, bottom_field_flag, bool);
             header.bottom_field_flag = Some(bottom_field_flag);
         }
+        todo!("implement interlaced video. i.e. fields");
     }
 
     if idr_pic_flag {
-        read_value!(input, header.idr_pic_id, ue, 32);
+        read_value!(input, header.idr_pic_id, ue, 16);
     }
 
     if sps.pic_order_cnt_type == 0 {
-        read_value!(
-            input,
-            header.pic_order_cnt_lsb,
-            u,
-            sps.bits_in_max_pic_order_cnt()
-        );
-        if (pps.bottom_field_pic_order_in_frame_present_flag && !field_pic_flag) {
+        read_value!(input, header.pic_order_cnt_lsb, u, sps.bits_in_max_pic_order_cnt());
+        if (pps.bottom_field_pic_order_in_frame_present_flag && !header.field_pic_flag) {
             read_value!(input, header.delta_pic_order_cnt_bottom, se);
         }
     } else {
-        unimplemented!();
+        todo!();
     }
     if pps.redundant_pic_cnt_present_flag {
         read_value!(input, header.redundant_pic_cnt, ue);
@@ -500,7 +483,7 @@ pub fn parse_slice_header<'a, 'b>(
             read_value!(input, no_output_of_prior_pics_flag, bool);
             read_value!(input, long_term_reference_flag, bool);
         } else {
-            unimplemented!();
+            todo!("non IDR slice");
         }
     }
 
@@ -515,7 +498,45 @@ pub fn parse_slice_header<'a, 'b>(
         }
     }
 
-    Ok((input, header))
+    Ok((input, Slice { sps: sps.clone(), pps: pps.clone(), header }))
+}
+
+pub fn parse_macroblock<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, Macroblock> {
+    let mut input = i;
+    let mut result: Macroblock = Macroblock::default();
+    read_value!(input, result.mb_type, ue);
+
+    Ok((input, result))
+}
+
+// Section 7.3.4 Slice data syntax
+pub fn parse_slice_data<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, Vec<Macroblock>> {
+    let mut input = i;
+    let mut blocks = Vec::<Macroblock>::new();
+
+    assert_eq!(slice.pps.entropy_coding_mode_flag, false, "entropy coding is not implemented yet");
+    assert_eq!(slice.MbaffFrameFlag(), false, "interlaced video is not implemented yet");
+    if slice.pps.entropy_coding_mode_flag {
+        // cabac_alignment_one_bit
+        let (i, _) = align_till_next_byte(input, true)?;
+        input = i;
+    }
+
+    if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
+        todo!("non I-slices");
+    }
+
+    let mut curr_mb_addr = slice.header.first_mb_in_slice * (1 + slice.MbaffFrameFlag() as u32);
+    let mut more_data = true;
+    let mut prev_mb_skipped = false;
+    while more_data {
+        let (i, block) = parse_macroblock(input, slice)?;
+        input = i;
+        blocks.push(block);
+        more_data = false;
+    }
+
+    Ok((input, blocks))
 }
 
 #[cfg(test)]
@@ -555,7 +576,7 @@ mod tests {
         sps
     }
 
-    fn parse_pps_test(data: &[u8]) -> pps::PicParameterSet {
+    fn parse_pps_test(data: &[u8]) -> PicParameterSet {
         let pps = parse_pps((data, 0)).expect("PPS parsing failed").1;
         pps
     }
@@ -610,16 +631,20 @@ mod tests {
             0x79, 0x31, 0x72, 0x72, 0x75, 0x8B, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA,
             0xF0,
         ];
-        let header = parse_slice_header(&ctx, (&slice_data, 0))
-            .expect("Slice parsing failed")
-            .1;
-        assert_eq!(header.slice_type, SliceType(2));
+        let (input, slice) =
+            parse_slice_header(&ctx, (&slice_data, 0)).expect("header parsing failed");
+        let header = &slice.header;
+        assert_eq!(header.slice_type, SliceType::I);
         assert_eq!(header.frame_num, 0);
         assert_eq!(header.pic_parameter_set_id, 0);
         assert_eq!(header.idr_pic_id, Some(1));
         assert_eq!(header.pic_order_cnt_lsb, Some(0));
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.disable_deblocking_filter_idc, 0);
+
+        let (input, blocks) = parse_slice_data(input, &slice).expect("blocks parsing failed");
+        assert_eq!(blocks.len(), 1);
+        println!("{:?}", blocks[0].mb_type);
     }
 
     #[test]
@@ -638,10 +663,7 @@ mod tests {
         assert_eq!(sps.constraint_set5_flag, false);
         assert_eq!(sps.level_idc, 10, "level");
         assert_eq!(sps.pic_width_in_mbs_minus1, 3, "pic_width_in_mbs_minus1");
-        assert_eq!(
-            sps.pic_height_in_map_units_minus1, 3,
-            "pic_width_in_mbs_minus1"
-        );
+        assert_eq!(sps.pic_height_in_map_units_minus1, 3, "pic_width_in_mbs_minus1");
     }
 
     #[test]
@@ -660,19 +682,10 @@ mod tests {
         assert_eq!(sps.constraint_set5_flag, false);
         assert_eq!(sps.level_idc, 20, "level");
         assert_eq!(sps.seq_parameter_set_id, 0, "seq_parameter_set_id");
-        assert_eq!(
-            sps.log2_max_pic_order_cnt_lsb_minus4, 12,
-            "log2_max_pic_order_cnt_lsb_minus4"
-        );
-        assert_eq!(
-            sps.log2_max_frame_num_minus4, 11,
-            "log2_max_frame_num_minus4"
-        );
+        assert_eq!(sps.log2_max_pic_order_cnt_lsb_minus4, 12, "log2_max_pic_order_cnt_lsb_minus4");
+        assert_eq!(sps.log2_max_frame_num_minus4, 11, "log2_max_frame_num_minus4");
         assert_eq!(sps.pic_width_in_mbs_minus1, 3, "pic_width_in_mbs_minus1");
-        assert_eq!(
-            sps.pic_height_in_map_units_minus1, 3,
-            "pic_width_in_mbs_minus1"
-        );
+        assert_eq!(sps.pic_height_in_map_units_minus1, 3, "pic_width_in_mbs_minus1");
         assert_eq!(sps.max_num_ref_frames, 1);
         let vui = sps.vui_parameters.expect("vui is missing");
         assert_eq!(vui.video_signal_type_present_flag, true);

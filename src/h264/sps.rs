@@ -93,7 +93,14 @@ pub struct SequenceParameterSet {
     pub gaps_in_frame_num_value_allowed_flag: bool,
     pub pic_width_in_mbs_minus1: u16,
     pub pic_height_in_map_units_minus1: u16,
+
+    // False specifies that coded pictures of the coded video sequence may either be coded fields or
+    // coded frames. True specifies that every coded picture of the coded video sequence is a coded
+    // frame containing only frame macroblocks.
     pub frame_mbs_only_flag: bool,
+
+    // False specifies no switching between frame and field macroblocks within a picture.
+    // True specifies the possible use of switching between frame and field macroblocks within frames.
     pub mb_adaptive_frame_field_flag: bool,
     pub direct_8x8_inference_flag: bool,
 

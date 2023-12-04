@@ -1,6 +1,4 @@
-use super::pps::{
-    PicParameterSet, PicParameterSetExtra, SliceGroup, SliceGroupChangeType, SliceRect,
-};
+use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -96,6 +94,20 @@ pub enum IMacroblockType {
     I_PCM = 25,
 }
 
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum PredictionMode {
+    #[default]
+    None,
+
+    Intra_4x4,
+    Intra_8x8,
+    Intra_16x16,
+
+    Pred_L0,
+    Pred_L1,
+}
+
 impl TryFrom<u32> for IMacroblockType {
     type Error = ();
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -134,6 +146,24 @@ impl TryFrom<u32> for IMacroblockType {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Macroblock {
     pub mb_type: IMacroblockType,
+    pub transform_size_8x8_flag: bool,
+}
+
+#[allow(non_snake_case)]
+impl Macroblock {
+    pub fn MbPartPredMode(&self, partition: usize) -> PredictionMode {
+        match self.mb_type {
+            IMacroblockType::I_NxN => {
+                if (self.transform_size_8x8_flag) {
+                    PredictionMode::Intra_4x4
+                } else {
+                    PredictionMode::Intra_8x8
+                }
+            }
+            IMacroblockType::I_PCM => PredictionMode::None,
+            _ => PredictionMode::Intra_16x16,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]

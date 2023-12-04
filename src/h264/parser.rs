@@ -3,8 +3,8 @@ use super::slice;
 use super::sps;
 
 use super::DecoderContext;
-use pps::{PicParameterSet, PicParameterSetExtra, SliceGroup, SliceGroupChangeType, SliceRect};
-use slice::{ColourPlane, Macroblock, Slice, SliceHeader, SliceType};
+use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
+use slice::{ColourPlane, IMacroblockType, Macroblock, Slice, SliceHeader, SliceType};
 use sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
 
 use nom::{
@@ -361,20 +361,6 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
     Ok((input, slice_group))
 }
 
-fn parse_pps_extra(i: BitInput) -> ParseResult<PicParameterSetExtra> {
-    let mut pps_extra = PicParameterSetExtra::default();
-    let mut input = i;
-
-    read_value!(input, pps_extra.transform_8x8_mode_flag, bool);
-    let mut pic_scaling_matrix_present_flag = false;
-    read_value!(input, pic_scaling_matrix_present_flag, bool);
-    if pic_scaling_matrix_present_flag {
-        todo!("scaling matrix");
-    }
-    read_value!(input, pps_extra.second_chroma_qp_index_offset, se);
-    Ok((input, pps_extra))
-}
-
 // Section 7.3.2.2 Picture parameter set RBSP syntax
 pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
     let mut pps = PicParameterSet::default();
@@ -401,9 +387,16 @@ pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
     read_value!(input, pps.redundant_pic_cnt_present_flag, bool);
 
     if more_rbsp_data(input) {
-        let (i, pps_extra) = parse_pps_extra(input)?;
-        input = i;
-        pps.extension = Some(pps_extra);
+        read_value!(input, pps.transform_8x8_mode_flag, bool);
+        let mut pic_scaling_matrix_present_flag = false;
+        read_value!(input, pic_scaling_matrix_present_flag, bool);
+        if pic_scaling_matrix_present_flag {
+            todo!("scaling matrix");
+        }
+        read_value!(input, pps.second_chroma_qp_index_offset, se);
+    } else {
+        pps.transform_8x8_mode_flag = false;
+        pps.second_chroma_qp_index_offset = pps.chroma_qp_index_offset;
     }
     rbsp_trailing_bits(input)?;
     Ok((input, pps))
@@ -502,10 +495,18 @@ pub fn parse_slice_header<'a>(ctx: &DecoderContext, i: BitInput<'a>) -> ParseRes
 
 pub fn parse_macroblock<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, Macroblock> {
     let mut input = i;
-    let mut result: Macroblock = Macroblock::default();
-    read_value!(input, result.mb_type, ue);
+    let mut block: Macroblock = Macroblock::default();
+    read_value!(input, block.mb_type, ue);
 
-    Ok((input, result))
+    if block.mb_type == IMacroblockType::I_PCM {
+        todo!("PCM macroblock");
+    } else {
+        if slice.pps.transform_8x8_mode_flag && block.mb_type == IMacroblockType::I_NxN {
+            read_value!(input, block.transform_size_8x8_flag, bool);
+        }
+    }
+
+    Ok((input, block))
 }
 
 // Section 7.3.4 Slice data syntax
@@ -705,7 +706,6 @@ mod tests {
         let pps = parse_pps_test(&data);
         assert_eq!(pps.pic_parameter_set_id, 0, "pic_parameter_set_id");
         assert_eq!(pps.seq_parameter_set_id, 0, "seq_parameter_set_id");
-        assert!(pps.extension.is_some());
     }
 
     #[test]
@@ -718,6 +718,5 @@ mod tests {
         assert_eq!(pps.pic_init_qs_minus26, 0);
         assert!(pps.deblocking_filter_control_present_flag);
         assert!(!pps.entropy_coding_mode_flag);
-        assert!(!pps.extension.is_some());
     }
 }

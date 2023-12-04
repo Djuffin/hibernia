@@ -36,13 +36,6 @@ pub enum SliceGroup {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct PicParameterSetExtra {
-    pub transform_8x8_mode_flag: bool,
-    //pub pic_scaling_matrix: Option<PicScalingMatrix>,
-    pub second_chroma_qp_index_offset: i32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct PicParameterSet {
     pub pic_parameter_set_id: u8,
     pub seq_parameter_set_id: u8,
@@ -63,5 +56,7 @@ pub struct PicParameterSet {
     pub deblocking_filter_control_present_flag: bool,
     pub constrained_intra_pred_flag: bool,
     pub redundant_pic_cnt_present_flag: bool,
-    pub extension: Option<PicParameterSetExtra>,
+    pub transform_8x8_mode_flag: bool,
+    //pub pic_scaling_matrix: Option<PicScalingMatrix>,
+    pub second_chroma_qp_index_offset: i32,
 }

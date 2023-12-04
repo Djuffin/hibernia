@@ -39,7 +39,7 @@ fn ue<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>
         let (i, _) = tag(1, 1u8).parse(i)?;
         let (i, x) = u(zero_bits).parse(i)?;
         let result = (1u32 << zero_bits) - 1 + x;
-        if (zero_bits >= n || result as u64 >= 1u64 << n) {
+        if zero_bits >= n || result as u64 >= 1u64 << n {
             return Err(make_error(i, "Value is too large to fit the variable"));
         }
         Ok((i, result))
@@ -51,7 +51,7 @@ fn se<'a>() -> impl Parser<BitInput<'a>, i32, VerboseError<BitInput<'a>>> {
         // Mapping process for signed Exp-Golomb codes Section 9.1.1
         let (i, value) = ue(32).parse(i)?;
         let result: i32;
-        if (value & 1 != 0) {
+        if value & 1 != 0 {
             result = ((value >> 1) + 1) as i32;
         } else {
             result = -((value >> 1) as i32);
@@ -73,7 +73,7 @@ macro_rules! read_value {
         let (i, value) = context(context_str, ue(32)).parse($input)?;
         $input = i;
         println!("ue {} = {}", context_str, value);
-        $dest = value as usize;
+        $dest = value.try_into().unwrap();
     };
     ($input:ident, $dest:expr, ue, $bits:expr) => {
         let context_str = stringify!($dest);
@@ -87,14 +87,14 @@ macro_rules! read_value {
         let (i, value) = context(context_str, se()).parse($input)?;
         $input = i;
         println!("se {} = {}", context_str, value);
-        $dest = value;
+        $dest = value.try_into().unwrap();
     };
     ($input:ident, $dest:expr, bool) => {
         let context_str = stringify!($dest);
         let (i, value) = context(context_str, bool).parse($input)?;
         $input = i;
         println!("flag {} = {}", context_str, value);
-        $dest = value;
+        $dest = value.try_into().unwrap();
     };
 }
 
@@ -105,7 +105,7 @@ fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
     let bit_position = input.1;
 
     // alignment with 0-bits till next byte
-    let input = if (bit_position % 8 != 0) {
+    let input = if bit_position % 8 != 0 {
         let zero_bits_count = 8 - (bit_position % 8);
         println!("{:?}", zero_bits_count);
         let (input, _) = context("rbsp_trailing_bits_padding", tag(0, zero_bits_count))(input)?;
@@ -183,13 +183,13 @@ fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
 
     let mut nal_hrd_parameters_present = false;
     read_value!(input, nal_hrd_parameters_present, bool);
-    if (nal_hrd_parameters_present) {
+    if nal_hrd_parameters_present {
         unimplemented!();
     }
 
     let mut vcl_hrd_parameters_present = false;
     read_value!(input, vcl_hrd_parameters_present, bool);
-    if (vcl_hrd_parameters_present) {
+    if vcl_hrd_parameters_present {
         unimplemented!();
     }
 
@@ -213,10 +213,7 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
     let mut input = i;
 
-    let mut profile_idc = 0u8;
-    read_value!(input, profile_idc, u, 8);
-    sps.profile_idc = ProfileIdc(profile_idc);
-
+    read_value!(input, sps.profile_idc, u, 8);
     read_value!(input, sps.constraint_set0_flag, bool);
     read_value!(input, sps.constraint_set1_flag, bool);
     read_value!(input, sps.constraint_set2_flag, bool);
@@ -241,7 +238,7 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
         read_value!(input, sps.bit_depth_chroma_minus8, ue, 8);
         read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, bool);
         read_value!(input, sps.seq_scaling_matrix_present_flag, bool);
-        if (sps.seq_scaling_matrix_present_flag) {
+        if sps.seq_scaling_matrix_present_flag {
             unimplemented!();
             //return Err(Err::Error(Error::new(input, ErrorKind::Not)));
         }
@@ -305,7 +302,7 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
     let mut slice_group_map_type: u8 = 0;
 
     read_value!(input, num_slice_groups_minus1, ue);
-    if (num_slice_groups_minus1 > 0) {
+    if num_slice_groups_minus1 > 0 {
         read_value!(input, slice_group_map_type, ue, 8);
         slice_group = match slice_group_map_type {
             0 => {
@@ -380,7 +377,7 @@ fn parse_pps_extra(i: BitInput) -> ParseResult<PicParameterSetExtra> {
     read_value!(input, pps_extra.transform_8x8_mode_flag, bool);
     let mut pic_scaling_matrix_present_flag = false;
     read_value!(input, pic_scaling_matrix_present_flag, bool);
-    if (pic_scaling_matrix_present_flag) {
+    if pic_scaling_matrix_present_flag {
         unimplemented!();
     }
     read_value!(input, pps_extra.second_chroma_qp_index_offset, se);
@@ -416,7 +413,7 @@ pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
     read_value!(input, pps.constrained_intra_pred_flag, bool);
     read_value!(input, pps.redundant_pic_cnt_present_flag, bool);
 
-    if (more_rbsp_data(input)) {
+    if more_rbsp_data(input) {
         let (i, pps_extra) = parse_pps_extra(input)?;
         input = i;
         pps.extension = Some(pps_extra);
@@ -430,12 +427,13 @@ pub fn parse_slice_header<'a, 'b>(
     ctx: &'a DecoderContext,
     i: BitInput<'b>,
 ) -> ParseResult<'b, SliceHeader> {
+    let idr_pic_flag = true;
+    let nal_ref_idc = 3;
+
     let mut header = SliceHeader::default();
     let mut input = i;
     read_value!(input, header.first_mb_in_slice, ue, 32);
-    let mut slice_type = 0u8;
-    read_value!(input, slice_type, ue, 8);
-    header.slice_type = SliceType(slice_type);
+    read_value!(input, header.slice_type, ue, 8);
     read_value!(input, header.pic_parameter_set_id, ue, 8);
 
     let pps = match ctx.get_pps(header.pic_parameter_set_id) {
@@ -451,7 +449,7 @@ pub fn parse_slice_header<'a, 'b>(
         }
     };
 
-    if (sps.separate_colour_plane_flag) {
+    if sps.separate_colour_plane_flag {
         let mut colour_plane_id: u8 = 0;
         read_value!(input, colour_plane_id, u, 2);
         header.colour_plane = match colour_plane_id {
@@ -462,15 +460,59 @@ pub fn parse_slice_header<'a, 'b>(
         };
     }
 
-    let bits_in_frame_num = (sps.log2_max_frame_num_minus4 + 4) as usize;
-    read_value!(input, header.frame_num, u, bits_in_frame_num);
+    read_value!(input, header.frame_num, u, sps.bits_in_frame_num());
 
     let mut field_pic_flag = false;
-    read_value!(input, field_pic_flag, bool);
-    if field_pic_flag {
-        let mut bottom_field_flag = false;
-        read_value!(input, bottom_field_flag, bool);
-        header.bottom_field_flag = Some(bottom_field_flag);
+    if !sps.frame_mbs_only_flag {
+        read_value!(input, field_pic_flag, bool);
+        if field_pic_flag {
+            let mut bottom_field_flag = false;
+            read_value!(input, bottom_field_flag, bool);
+            header.bottom_field_flag = Some(bottom_field_flag);
+        }
+    }
+
+    if idr_pic_flag {
+        read_value!(input, header.idr_pic_id, ue, 32);
+    }
+
+    if sps.pic_order_cnt_type == 0 {
+        read_value!(
+            input,
+            header.pic_order_cnt_lsb,
+            u,
+            sps.bits_in_max_pic_order_cnt()
+        );
+        if (pps.bottom_field_pic_order_in_frame_present_flag && !field_pic_flag) {
+            read_value!(input, header.delta_pic_order_cnt_bottom, se);
+        }
+    } else {
+        unimplemented!();
+    }
+    if pps.redundant_pic_cnt_present_flag {
+        read_value!(input, header.redundant_pic_cnt, ue);
+    }
+
+    if nal_ref_idc != 0 {
+        if (idr_pic_flag) {
+            let mut no_output_of_prior_pics_flag = false;
+            let mut long_term_reference_flag = false;
+            read_value!(input, no_output_of_prior_pics_flag, bool);
+            read_value!(input, long_term_reference_flag, bool);
+        } else {
+            unimplemented!();
+        }
+    }
+
+    read_value!(input, header.slice_qp_delta, se);
+    if pps.deblocking_filter_control_present_flag {
+        read_value!(input, header.disable_deblocking_filter_idc, ue, 8);
+        if header.disable_deblocking_filter_idc != 1 {
+            let mut slice_alpha_c0_offset_div2: i32 = 0;
+            let mut slice_beta_offset_div2: i32 = 0;
+            read_value!(input, slice_alpha_c0_offset_div2, se);
+            read_value!(input, slice_beta_offset_div2, se);
+        }
     }
 
     Ok((input, header))
@@ -574,6 +616,10 @@ mod tests {
         assert_eq!(header.slice_type, SliceType(2));
         assert_eq!(header.frame_num, 0);
         assert_eq!(header.pic_parameter_set_id, 0);
+        assert_eq!(header.idr_pic_id, Some(1));
+        assert_eq!(header.pic_order_cnt_lsb, Some(0));
+        assert_eq!(header.slice_qp_delta, -4);
+        assert_eq!(header.disable_deblocking_filter_idc, 0);
     }
 
     #[test]

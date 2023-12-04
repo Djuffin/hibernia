@@ -1,6 +1,12 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct ProfileIdc(pub u8);
 
+impl From<u32> for ProfileIdc {
+    fn from(value: u32) -> Self {
+        ProfileIdc(value.try_into().unwrap())
+    }
+}
+
 impl ProfileIdc {
     pub fn has_chroma_info(self) -> bool {
         match self.0 {
@@ -98,4 +104,14 @@ pub struct SequenceParameterSet {
     pub frame_crop_bottom_offset: u32,
 
     pub vui_parameters: Option<VuiParameters>,
+}
+
+impl SequenceParameterSet {
+    pub fn bits_in_frame_num(&self) -> usize {
+        (self.log2_max_frame_num_minus4 + 4) as usize
+    }
+
+    pub fn bits_in_max_pic_order_cnt(&self) -> usize {
+        (self.log2_max_pic_order_cnt_lsb_minus4 + 4) as usize
+    }
 }

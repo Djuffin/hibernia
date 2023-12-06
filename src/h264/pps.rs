@@ -56,6 +56,9 @@ pub struct PicParameterSet {
     pub deblocking_filter_control_present_flag: bool,
     pub constrained_intra_pred_flag: bool,
     pub redundant_pic_cnt_present_flag: bool,
+
+    // True specifies that the 8x8 transform decoding process may be in use.
+    // False if not present.
     pub transform_8x8_mode_flag: bool,
     //pub pic_scaling_matrix: Option<PicScalingMatrix>,
     pub second_chroma_qp_index_offset: i32,

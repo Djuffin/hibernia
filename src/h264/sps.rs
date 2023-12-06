@@ -1,20 +1,7 @@
+use super::Profile;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct ProfileIdc(pub u8);
-
-impl From<u32> for ProfileIdc {
-    fn from(value: u32) -> Self {
-        ProfileIdc(value.try_into().unwrap())
-    }
-}
-
-impl ProfileIdc {
-    pub fn has_chroma_info(self) -> bool {
-        match self.0 {
-            100 | 110 | 122 | 244 | 44 | 83 | 86 => true,
-            _ => false,
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct HdrParameters {}
@@ -64,7 +51,7 @@ pub struct VuiParameters {
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SequenceParameterSet {
-    pub profile_idc: ProfileIdc,
+    pub profile: Profile,
     pub constraint_set0_flag: bool,
     pub constraint_set1_flag: bool,
     pub constraint_set2_flag: bool,

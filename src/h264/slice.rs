@@ -1,5 +1,6 @@
 use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
+use super::Profile;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum SliceType {
@@ -10,6 +11,7 @@ pub enum SliceType {
     SP = 3,
     SI = 4,
 }
+
 impl TryFrom<u32> for SliceType {
     type Error = ();
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -155,9 +157,9 @@ impl Macroblock {
         match self.mb_type {
             IMacroblockType::I_NxN => {
                 if (self.transform_size_8x8_flag) {
-                    PredictionMode::Intra_4x4
-                } else {
                     PredictionMode::Intra_8x8
+                } else {
+                    PredictionMode::Intra_4x4
                 }
             }
             IMacroblockType::I_PCM => PredictionMode::None,

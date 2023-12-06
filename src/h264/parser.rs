@@ -3,6 +3,7 @@ use super::slice;
 use super::sps;
 
 use super::DecoderContext;
+use super::Profile;
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, IMacroblockType, Macroblock, Slice, SliceHeader, SliceType};
 use sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
@@ -209,7 +210,7 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
     let mut input = i;
 
-    read_value!(input, sps.profile_idc, u, 8);
+    read_value!(input, sps.profile, u, 8);
     read_value!(input, sps.constraint_set0_flag, bool);
     read_value!(input, sps.constraint_set1_flag, bool);
     read_value!(input, sps.constraint_set2_flag, bool);
@@ -223,7 +224,7 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
     read_value!(input, sps.level_idc, u, 8);
     read_value!(input, sps.seq_parameter_set_id, ue, 8);
 
-    if sps.profile_idc.has_chroma_info() {
+    if sps.profile.has_chroma_info() {
         read_value!(input, sps.chroma_format_idc, ue, 8);
 
         if sps.chroma_format_idc == 3 {
@@ -504,6 +505,7 @@ pub fn parse_macroblock<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, M
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMacroblockType::I_NxN {
             read_value!(input, block.transform_size_8x8_flag, bool);
         }
+        let prediction_mode = block.MbPartPredMode(0);
     }
 
     Ok((input, block))
@@ -514,8 +516,11 @@ pub fn parse_slice_data<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, V
     let mut input = i;
     let mut blocks = Vec::<Macroblock>::new();
 
+    // Baseline profile features
     assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
-    assert!(!slice.MbaffFrameFlag(), "interlaced video is not implemented yet");
+    assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
+    assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
+
     if slice.pps.entropy_coding_mode_flag {
         // cabac_alignment_one_bit
         let (i, _) = align_till_next_byte(input, true)?;
@@ -584,7 +589,7 @@ mod tests {
     #[test]
     pub fn test_slice() {
         let sps = SequenceParameterSet {
-            profile_idc: ProfileIdc(66),
+            profile: Profile::Baseline,
             constraint_set0_flag: true,
             constraint_set1_flag: true,
             level_idc: 20,
@@ -654,7 +659,7 @@ mod tests {
             0x00, 0x00, 0xCA, 0x3C, 0x48, 0x96, 0x11, 0x80,
         ];
         let sps = parse_sps_test(&data);
-        assert_eq!(sps.profile_idc, sps::ProfileIdc(100), "profile");
+        assert_eq!(sps.profile, Profile::High, "profile");
         assert!(!sps.constraint_set0_flag);
         assert!(!sps.constraint_set1_flag);
         assert!(!sps.constraint_set2_flag);
@@ -673,7 +678,7 @@ mod tests {
             0x8D, 0x40,
         ];
         let sps = parse_sps_test(&data);
-        assert_eq!(sps.profile_idc, sps::ProfileIdc(66), "profile");
+        assert_eq!(sps.profile, Profile::Baseline, "profile");
         assert!(sps.constraint_set0_flag);
         assert!(sps.constraint_set1_flag);
         assert!(!sps.constraint_set2_flag);

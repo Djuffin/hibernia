@@ -1,0 +1,22 @@
+Baseline profile
+Bitstreams conforming to the Baseline profile shall obey the following constraints:
+– Only I and P slice types may be present.
+– NAL unit streams shall not contain nal_unit_type values in the range of 2 to 4, inclusive.
+– Sequence parameter sets shall have frame_mbs_only_flag equal to 1.
+– The syntax elements chroma_format_idc, bit_depth_luma_minus8, bit_depth_chroma_minus8,
+   qpprime_y_zero_transform_bypass_flag, and seq_scaling_matrix_present_flag shall not be present in sequence
+   parameter sets.
+– Picture parameter sets shall have weighted_pred_flag and weighted_bipred_idc both equal to 0.
+– Picture parameter sets shall have entropy_coding_mode_flag equal to 0.
+– Picture parameter sets shall have num_slice_groups_minus1 in the range of 0 to 7, inclusive.
+– The syntax elements transform_8x8_mode_flag, pic_scaling_matrix_present_flag, and
+   second_chroma_qp_index_offset shall not be present in picture parameter sets.
+– The syntax element level_prefix shall not be greater than 15 (when present).
+– The syntax elements pcm_sample_luma[ i ], with i = 0..255, and pcm_sample_chroma[ i ], with
+   i = 0..2 * MbWidthC * MbHeightC − 1, shall not be equal to 0 (when present).
+– The level constraints specified for the Baseline profile in clause A.3 shall be fulfilled.
+
+Conformance of a bitstream to the Baseline profile is indicated by profile_idc being equal to 66.
+Decoders conforming to the Baseline profile at a specific level shall be capable of decoding all
+bitstreams in which profile_idc is equal to 66 or constraint_set0_flag is equal to 1 and in which
+level_idc and constraint_set3_flag represent a level less than or equal to the specified level.

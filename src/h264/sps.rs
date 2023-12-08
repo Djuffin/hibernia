@@ -1,8 +1,5 @@
 use super::Profile;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-pub struct ProfileIdc(pub u8);
-
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct HdrParameters {}
 

@@ -54,6 +54,13 @@ pub struct PicParameterSet {
     pub pic_init_qs_minus26: i32,
     pub chroma_qp_index_offset: i32,
     pub deblocking_filter_control_present_flag: bool,
+
+    // False specifies that intra prediction allows usage of residual data and decoded samples
+    // of neighbouring macroblocks coded using Inter macroblock prediction modes for the
+    // prediction of macroblocks coded using Intra macroblock prediction modes.
+    // True specifies constrained intra prediction, in which case prediction of macroblocks coded
+    // using Intra macroblock prediction modes only uses residual data and decoded samples
+    // from I or SI macroblock types.
     pub constrained_intra_pred_flag: bool,
     pub redundant_pic_cnt_present_flag: bool,
 

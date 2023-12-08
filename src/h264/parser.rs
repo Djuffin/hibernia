@@ -2,11 +2,12 @@ use super::pps;
 use super::slice;
 use super::sps;
 
+use super::macroblock::{IMacroblockType, IMb, Macroblock};
 use super::DecoderContext;
 use super::Profile;
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use slice::{ColourPlane, IMacroblockType, Macroblock, Slice, SliceHeader, SliceType};
-use sps::{ProfileIdc, SequenceParameterSet, VuiParameters};
+use slice::{ColourPlane, Slice, SliceHeader, SliceType};
+use sps::{SequenceParameterSet, VuiParameters};
 
 use nom::{
     bits::complete::*,
@@ -33,14 +34,14 @@ fn u<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>>
 fn ue<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>> {
     move |i| {
         // Parsing process for Exp-Golomb codes. Section 9.1
-        let (i, zero_bits) = many0_count(tag(0, 1u8))(i)?;
-        let (i, _) = tag(1, 1u8).parse(i)?;
-        let (i, x) = u(zero_bits).parse(i)?;
+        let (input, zero_bits) = many0_count(tag(0, 1u8))(i)?;
+        let (input, _) = tag(1, 1u8).parse(input)?;
+        let (input, x) = u(zero_bits).parse(input)?;
         let result = (1u32 << zero_bits) - 1 + x;
         if zero_bits >= n || result as u64 >= 1u64 << n {
             return Err(make_error(i, "Value is too large to fit the variable"));
         }
-        Ok((i, result))
+        Ok((input, result))
     }
 }
 
@@ -496,7 +497,7 @@ pub fn parse_slice_header<'a>(ctx: &DecoderContext, i: BitInput<'a>) -> ParseRes
 
 pub fn parse_macroblock<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, Macroblock> {
     let mut input = i;
-    let mut block: Macroblock = Macroblock::default();
+    let mut block = IMb::default();
     read_value!(input, block.mb_type, ue);
 
     if block.mb_type == IMacroblockType::I_PCM {
@@ -506,9 +507,10 @@ pub fn parse_macroblock<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, M
             read_value!(input, block.transform_size_8x8_flag, bool);
         }
         let prediction_mode = block.MbPartPredMode(0);
+        return Ok((input, Macroblock::I(block)));
     }
 
-    Ok((input, block))
+    return Err(make_error(i, "Unknown macroblock"));
 }
 
 // Section 7.3.4 Slice data syntax
@@ -517,6 +519,9 @@ pub fn parse_slice_data<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, V
     let mut blocks = Vec::<Macroblock>::new();
 
     // Baseline profile features
+    if (slice.sps.profile != Profile::Baseline) {
+        todo!("profiles above baseline");
+    }
     assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
@@ -649,7 +654,7 @@ mod tests {
 
         let (input, blocks) = parse_slice_data(input, &slice).expect("blocks parsing failed");
         assert_eq!(blocks.len(), 1);
-        println!("{:?}", blocks[0].mb_type);
+        println!("{:?}", blocks[0]);
     }
 
     #[test]

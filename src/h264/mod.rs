@@ -1,3 +1,6 @@
+use num_enum::TryFromPrimitive;
+
+pub mod macroblock;
 pub mod parser;
 pub mod pps;
 pub mod slice;
@@ -9,7 +12,8 @@ pub struct DecoderContext {
     pps: Vec<pps::PicParameterSet>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, TryFromPrimitive)]
+#[repr(u8)]
 pub enum Profile {
     #[default]
     Baseline = 66,
@@ -43,24 +47,11 @@ impl Profile {
 }
 
 impl TryFrom<u32> for Profile {
-    type Error = ();
+    type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            66 => Ok(Profile::Baseline),
-            77 => Ok(Profile::Main),
-            100 => Ok(Profile::High),
-            122 => Ok(Profile::High422),
-            110 => Ok(Profile::High10),
-            244 => Ok(Profile::High444),
-            88 => Ok(Profile::Extended),
-            83 => Ok(Profile::ScalableBase),
-            86 => Ok(Profile::ScalableHigh),
-            118 => Ok(Profile::MultiviewHigh),
-            128 => Ok(Profile::StereoHigh),
-            135 => Ok(Profile::MFCDepthHigh),
-            138 => Ok(Profile::MultiviewDepthHigh),
-            139 => Ok(Profile::EnhancedMultiviewDepthHigh),
-            _ => Err(()),
+        match Profile::try_from_primitive(value as u8) {
+            Err(e) => Err("Unknown profile."),
+            Ok(x) => Ok(x),
         }
     }
 }

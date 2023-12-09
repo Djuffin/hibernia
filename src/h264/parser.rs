@@ -188,7 +188,7 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     Ok(vui)
 }
 
-// 7.3.2.1.1 Sequence parameter set data syntax
+// Section 7.3.2.1.1 Sequence parameter set data syntax
 pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
 

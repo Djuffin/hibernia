@@ -46,6 +46,7 @@ pub struct VuiParameters {
     pub max_dec_frame_buffering: u8,
 }
 
+// Section 7.4.2.1.1 Sequence parameter set data semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SequenceParameterSet {
     pub profile: Profile,

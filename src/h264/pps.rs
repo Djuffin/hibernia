@@ -35,6 +35,7 @@ pub enum SliceGroup {
     },
 }
 
+// Section 7.4.2.2 Picture parameter set RBSP semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct PicParameterSet {
     pub pic_parameter_set_id: u8,

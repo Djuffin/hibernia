@@ -9,135 +9,110 @@ use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
 
-use nom::{
-    bits::complete::*,
-    error::{
-        context, convert_error, ContextError, Error, ErrorKind, ParseError, VerboseError,
-        VerboseErrorKind,
-    },
-    multi::count,
-    multi::many0_count,
-    Err, IResult, Parser,
-};
-type BitInput<'a> = (&'a [u8], usize);
-type ParseResult<'a, T> = IResult<BitInput<'a>, T, VerboseError<BitInput<'a>>>;
+use bitreader::BitReader;
+type ParseResult<T> = Result<T, String>;
 
-fn make_error<'a>(input: BitInput<'a>, message: &'static str) -> Err<VerboseError<BitInput<'a>>> {
-    let error = VerboseError::from_error_kind(input, ErrorKind::Verify);
-    Err::Error(ContextError::<BitInput<'a>>::add_context(input, message, error))
+fn f(input: &mut BitReader) -> ParseResult<bool> {
+    input.read_bool().map_err(|e| "f() parsing error".to_owned())
 }
 
-fn u<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>> {
-    take(n)
+fn u(input: &mut BitReader, n: u8) -> ParseResult<u32> {
+    input.read_u32(n).map_err(|e| "u() parsing error".to_owned())
 }
 
-fn ue<'a>(n: usize) -> impl Parser<BitInput<'a>, u32, VerboseError<BitInput<'a>>> {
-    move |i| {
-        // Parsing process for Exp-Golomb codes. Section 9.1
-        let (input, zero_bits) = many0_count(tag(0, 1u8))(i)?;
-        let (input, _) = tag(1, 1u8).parse(input)?;
-        let (input, x) = u(zero_bits).parse(input)?;
-        let result = (1u32 << zero_bits) - 1 + x;
-        if zero_bits >= n || result as u64 >= 1u64 << n {
-            return Err(make_error(i, "Value is too large to fit the variable"));
+fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
+    // Parsing process for Exp-Golomb codes. Section 9.1
+    if n > 32 {
+        return Err(format!("ue(): too many ({}) bits requested", n));
+    }
+
+    let mut zero_bits = 0u8;
+    while !input.read_bool().map_err(|e| "ue() parsing error: leading zeros".to_owned())? {
+        zero_bits += 1;
+        if (zero_bits > n) {
+            return Err(format!("ue(): too many ({}) leading zeros", zero_bits));
         }
-        Ok((input, result))
     }
+
+    let x =
+        input.read_u32(zero_bits).map_err(|e| "ue() parsing error: meaningful bits".to_owned())?;
+    let result = (1u32 << zero_bits) - 1 + x;
+    if result as u64 >= 1u64 << n {
+        return Err("Value is too large to fit the variable".to_owned());
+    }
+    Ok(result)
 }
 
-fn se<'a>() -> impl Parser<BitInput<'a>, i32, VerboseError<BitInput<'a>>> {
-    move |i| {
-        // Mapping process for signed Exp-Golomb codes Section 9.1.1
-        let (i, value) = ue(32).parse(i)?;
-        let result =
-            if value & 1 != 0 { ((value >> 1) + 1) as i32 } else { -((value >> 1) as i32) };
-        Ok((i, result))
-    }
+fn se(input: &mut BitReader) -> ParseResult<i32> {
+    // Mapping process for signed Exp-Golomb codes Section 9.1.1
+    let value = ue(input, 32)?;
+    let result = if value & 1 != 0 { ((value >> 1) + 1) as i32 } else { -((value >> 1) as i32) };
+    Ok(result)
 }
 
 macro_rules! read_value {
     ($input:ident, $dest:expr, u, $bits:expr) => {
-        let context_str = stringify!($dest);
-        let (i, value) = context(context_str, u($bits)).parse($input)?;
-        $input = i;
-        println!("u({}) {} = {}", $bits, context_str, value);
+        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
+        let value = u($input, $bits).map_err(error_handler)?;
+        println!("u({}) {} = {}", $bits, stringify!($dest), value);
         $dest = value.try_into().unwrap();
     };
     ($input:ident, $dest:expr, ue) => {
-        let context_str = stringify!($dest);
-        let (i, value) = context(context_str, ue(32)).parse($input)?;
-        $input = i;
-        println!("ue {} = {}", context_str, value);
-        $dest = value.try_into().unwrap();
+        read_value!($input, $dest, ue, 32);
     };
     ($input:ident, $dest:expr, ue, $bits:expr) => {
-        let context_str = stringify!($dest);
-        let (i, value) = context(context_str, ue($bits)).parse($input)?;
-        $input = i;
-        println!("ue({}) {} = {}", $bits, context_str, value);
+        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
+        let value = ue($input, $bits).map_err(error_handler)?;
+        println!("ue({}) {} = {}", $bits, stringify!($dest), value);
         $dest = value.try_into().unwrap();
     };
     ($input:ident, $dest:expr, se) => {
-        let context_str = stringify!($dest);
-        let (i, value) = context(context_str, se()).parse($input)?;
-        $input = i;
-        println!("se {} = {}", context_str, value);
+        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
+        let value = se($input).map_err(error_handler)?;
+        println!("se {} = {}", stringify!($dest), value);
         $dest = value.try_into().unwrap();
     };
     ($input:ident, $dest:expr, bool) => {
-        let context_str = stringify!($dest);
-        let (i, value) = context(context_str, bool).parse($input)?;
-        $input = i;
-        println!("flag {} = {}", context_str, value);
+        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
+        let value = f($input).map_err(error_handler)?;
+        println!("flag {} = {}", stringify!($dest), value);
         $dest = value.try_into().unwrap();
     };
 }
 
-fn align_till_next_byte(input: BitInput, bit_value: bool) -> ParseResult<()> {
-    let bit_position = input.1;
-    let input = if bit_position % 8 != 0 {
-        let alignment_bit_cnt = 8 - (bit_position % 8);
-        let mask = if bit_value { 0xff } else { 0 };
-        let (input, _) = context("alignment_bits", tag(mask, alignment_bit_cnt))(input)?;
-        input
-    } else {
-        input
-    };
-
-    Ok((input, ()))
-}
-
 // Section 7.4.1
-fn rbsp_trailing_bits(input: BitInput) -> ParseResult<()> {
+fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
     // 1-bit at the end
-    let (input, _) = context("rbsp_trailing_bits_sentinel", tag(1, 1u8))(input)?;
-    let bit_position = input.1;
+    if !input.read_bool().map_err(|e| "expected rbsp_trailing_bits_sentinel")? {
+        return Err("expected rbsp_trailing_bits_sentinel".to_owned());
+    }
 
-    return align_till_next_byte(input, false);
+    input.align(1).map_err(|e| "can't align in rbsp_trailing_bits")?;
+    Ok(())
 }
 
 // Section 7.2
-fn more_rbsp_data(input: BitInput) -> bool {
-    let (data, index) = input;
-    if data.is_empty() {
+fn more_rbsp_data(input: &mut BitReader) -> bool {
+    if input.remaining() == 0 {
         return false;
     }
 
-    if rbsp_trailing_bits(input).is_err() {
+    let mut tmp_reader = input.relative_reader();
+    if rbsp_trailing_bits(&mut tmp_reader).is_err() {
         return true;
     }
 
-    for i in 1..data.len() {
-        if data[i] != 0 {
-            return true;
+    loop {
+        match tmp_reader.read_u8(8) {
+            Ok(value) if value > 0 => return true,
+            Ok(value) => {}
+            Err(_) => return false,
         }
     }
-    false
 }
 
-fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
+fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     let mut vui = VuiParameters::default();
-    let mut input = i;
 
     read_value!(input, vui.aspect_ratio_info_present_flag, bool);
     if vui.aspect_ratio_info_present_flag {
@@ -203,13 +178,12 @@ fn parse_vui(i: BitInput) -> ParseResult<VuiParameters> {
         read_value!(input, vui.max_dec_frame_buffering, ue, 8);
     }
 
-    Ok((input, vui))
+    Ok(vui)
 }
 
 // 7.3.2.1.1 Sequence parameter set data syntax
-pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
+pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
-    let mut input = i;
 
     read_value!(input, sps.profile, u, 8);
     read_value!(input, sps.constraint_set0_flag, bool);
@@ -219,8 +193,10 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
     read_value!(input, sps.constraint_set4_flag, bool);
     read_value!(input, sps.constraint_set5_flag, bool);
 
-    let (i, _) = context("reserved_zero_2bits", tag(0b00, 2u8))(input)?;
-    input = i;
+    let (reserver1, reserver2) = (f(input)?, f(input)?);
+    if reserver1 || reserver2 {
+        return Err("reserved_zero_2bits must be zero".to_owned());
+    }
 
     read_value!(input, sps.level_idc, u, 8);
     read_value!(input, sps.seq_parameter_set_id, ue, 8);
@@ -253,8 +229,10 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
 
             let mut cnt_cycle = 0;
             read_value!(input, cnt_cycle, ue, 8);
-            let (input, offsets) = count(se(), cnt_cycle as usize)(input)?;
-            sps.offset_for_ref_frame = offsets;
+            for _ in 0..cnt_cycle {
+                let offset: i32 = se(input)?;
+                sps.offset_for_ref_frame.push(offset);
+            }
         }
         _ => {}
     };
@@ -284,18 +262,15 @@ pub fn parse_sps(i: BitInput) -> ParseResult<SequenceParameterSet> {
     let mut vui_parameters_present = false;
     read_value!(input, vui_parameters_present, bool);
     if vui_parameters_present {
-        let (i, vui) = parse_vui(input)?;
-        sps.vui_parameters = Some(vui);
-        input = i;
+        sps.vui_parameters = Some(parse_vui(input)?);
     }
     rbsp_trailing_bits(input)?;
 
-    Ok((input, sps))
+    Ok(sps)
 }
 
-fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
+fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
     let mut slice_group: Option<SliceGroup> = None;
-    let mut input = i;
 
     let mut num_slice_groups_minus1: usize = 0;
     let mut slice_group_map_type: u8 = 0;
@@ -345,7 +320,7 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
                 let mut pic_size_in_map_units_minus1: usize = 0;
                 read_value!(input, pic_size_in_map_units_minus1, ue);
 
-                let slice_group_id_bits = 1 + num_slice_groups_minus1.ilog2() as usize;
+                let slice_group_id_bits = 1 + num_slice_groups_minus1.ilog2() as u8;
                 let mut slice_group_ids = vec![0u32; num_slice_groups_minus1 + 1];
                 for i in 0..=num_slice_groups_minus1 {
                     read_value!(input, slice_group_ids[i], u, slice_group_id_bits);
@@ -360,22 +335,19 @@ fn parse_slice_group(i: BitInput) -> ParseResult<Option<SliceGroup>> {
         }
     }
 
-    Ok((input, slice_group))
+    Ok(slice_group)
 }
 
 // Section 7.3.2.2 Picture parameter set RBSP syntax
-pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
+pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
     let mut pps = PicParameterSet::default();
-    let mut input = i;
 
     read_value!(input, pps.pic_parameter_set_id, ue, 8);
     read_value!(input, pps.seq_parameter_set_id, ue, 8);
     read_value!(input, pps.entropy_coding_mode_flag, bool);
     read_value!(input, pps.bottom_field_pic_order_in_frame_present_flag, bool);
 
-    let (i, group) = parse_slice_group(input)?;
-    input = i;
-    pps.slice_group = group;
+    pps.slice_group = parse_slice_group(input)?;
 
     read_value!(input, pps.num_ref_idx_l0_default_active_minus1, ue, 32);
     read_value!(input, pps.num_ref_idx_l1_default_active_minus1, ue, 32);
@@ -401,17 +373,16 @@ pub fn parse_pps(i: BitInput) -> ParseResult<PicParameterSet> {
         pps.second_chroma_qp_index_offset = pps.chroma_qp_index_offset;
     }
     rbsp_trailing_bits(input)?;
-    Ok((input, pps))
+    Ok(pps)
 }
 
 // Section 7.3.3 Slice header syntax
-pub fn parse_slice_header<'a>(ctx: &DecoderContext, i: BitInput<'a>) -> ParseResult<'a, Slice> {
+pub fn parse_slice_header(ctx: &DecoderContext, input: &mut BitReader) -> ParseResult<Slice> {
     let idr_pic_flag = true;
     let nal_ref_idc = 3;
     let nal_type = 5;
 
     let mut header = SliceHeader::default();
-    let mut input = i;
     read_value!(input, header.first_mb_in_slice, ue, 32);
     read_value!(input, header.slice_type, ue, 8);
     read_value!(input, header.pic_parameter_set_id, ue, 8);
@@ -419,13 +390,13 @@ pub fn parse_slice_header<'a>(ctx: &DecoderContext, i: BitInput<'a>) -> ParseRes
     let pps = match ctx.get_pps(header.pic_parameter_set_id) {
         Some(pps) => pps,
         None => {
-            return Err(make_error(input, "PPS is missing in context"));
+            return Err("PPS is missing in context".to_owned());
         }
     };
     let sps = match ctx.get_sps(pps.seq_parameter_set_id) {
         Some(sps) => sps,
         None => {
-            return Err(make_error(input, "SPS is missing in context"));
+            return Err("SPS is missing in context".to_owned());
         }
     };
 
@@ -492,11 +463,10 @@ pub fn parse_slice_header<'a>(ctx: &DecoderContext, i: BitInput<'a>) -> ParseRes
         }
     }
 
-    Ok((input, Slice { sps: sps.clone(), pps: pps.clone(), header }))
+    Ok(Slice { sps: sps.clone(), pps: pps.clone(), header })
 }
 
-pub fn parse_macroblock<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, Macroblock> {
-    let mut input = i;
+pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
     let mut block = IMb::default();
     read_value!(input, block.mb_type, ue);
 
@@ -507,15 +477,14 @@ pub fn parse_macroblock<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, M
             read_value!(input, block.transform_size_8x8_flag, bool);
         }
         let prediction_mode = block.MbPartPredMode(0);
-        return Ok((input, Macroblock::I(block)));
+        return Ok(Macroblock::I(block));
     }
 
-    return Err(make_error(i, "Unknown macroblock"));
+    Err("Unknown macroblock".to_owned())
 }
 
 // Section 7.3.4 Slice data syntax
-pub fn parse_slice_data<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, Vec<Macroblock>> {
-    let mut input = i;
+pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec<Macroblock>> {
     let mut blocks = Vec::<Macroblock>::new();
 
     // Baseline profile features
@@ -527,9 +496,7 @@ pub fn parse_slice_data<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, V
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
 
     if slice.pps.entropy_coding_mode_flag {
-        // cabac_alignment_one_bit
-        let (i, _) = align_till_next_byte(input, true)?;
-        input = i;
+        input.align(1);
     }
 
     if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
@@ -540,54 +507,58 @@ pub fn parse_slice_data<'a>(i: BitInput<'a>, slice: &Slice) -> ParseResult<'a, V
     let mut more_data = true;
     let mut prev_mb_skipped = false;
     while more_data {
-        let (i, block) = parse_macroblock(input, slice)?;
-        input = i;
+        let block = parse_macroblock(input, slice)?;
         blocks.push(block);
         more_data = false;
     }
 
-    Ok((input, blocks))
+    Ok(blocks)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    pub fn reader(bytes: &[u8]) -> BitReader {
+        BitReader::new(bytes)
+    }
+
     #[test]
     pub fn test_ue() {
-        assert_eq!(0, ue(8).parse((&[0b10000000], 0)).unwrap().1);
-        assert_eq!(1, ue(8).parse((&[0b01000000], 0)).unwrap().1);
-        assert_eq!(2, ue(8).parse((&[0b01100000], 0)).unwrap().1);
-        assert_eq!(3, ue(8).parse((&[0b00100000], 0)).unwrap().1);
-        assert_eq!(4, ue(8).parse((&[0b00101000], 0)).unwrap().1);
-        assert_eq!(5, ue(8).parse((&[0b00110000], 0)).unwrap().1);
-        assert_eq!(6, ue(8).parse((&[0b00111000], 0)).unwrap().1);
-        assert_eq!(7, ue(8).parse((&[0b00010000], 0)).unwrap().1);
-        assert_eq!(8, ue(8).parse((&[0b00010010], 0)).unwrap().1);
-        assert_eq!(9, ue(8).parse((&[0b00010100], 0)).unwrap().1);
+        assert_eq!(0, ue(&mut reader(&[0b10000000]), 8).unwrap());
+        assert_eq!(1, ue(&mut reader(&[0b01000000]), 8).unwrap());
+        assert_eq!(2, ue(&mut reader(&[0b01100000]), 8).unwrap());
+        assert_eq!(3, ue(&mut reader(&[0b00100000]), 8).unwrap());
+        assert_eq!(4, ue(&mut reader(&[0b00101000]), 8).unwrap());
+        assert_eq!(5, ue(&mut reader(&[0b00110000]), 8).unwrap());
+        assert_eq!(6, ue(&mut reader(&[0b00111000]), 8).unwrap());
+        assert_eq!(7, ue(&mut reader(&[0b00010000]), 8).unwrap());
+        assert_eq!(8, ue(&mut reader(&[0b00010010]), 8).unwrap());
+        assert_eq!(9, ue(&mut reader(&[0b00010100]), 8).unwrap());
+        assert_eq!(255, ue(&mut reader(&[0b00000000, 0b10000000, 0]), 8).unwrap());
     }
 
     #[test]
     pub fn test_se() {
-        assert_eq!(0, se().parse((&[0b10000000], 0)).unwrap().1);
-        assert_eq!(1, se().parse((&[0b01000000], 0)).unwrap().1);
-        assert_eq!(-1, se().parse((&[0b01100000], 0)).unwrap().1);
-        assert_eq!(2, se().parse((&[0b00100000], 0)).unwrap().1);
-        assert_eq!(-2, se().parse((&[0b00101000], 0)).unwrap().1);
-        assert_eq!(3, se().parse((&[0b00110000], 0)).unwrap().1);
-        assert_eq!(-3, se().parse((&[0b00111000], 0)).unwrap().1);
-        assert_eq!(4, se().parse((&[0b00010000], 0)).unwrap().1);
-        assert_eq!(-4, se().parse((&[0b00010010], 0)).unwrap().1);
-        assert_eq!(5, se().parse((&[0b00010100], 0)).unwrap().1);
+        assert_eq!(0, se(&mut reader(&[0b10000000])).unwrap());
+        assert_eq!(1, se(&mut reader(&[0b01000000])).unwrap());
+        assert_eq!(-1, se(&mut reader(&[0b01100000])).unwrap());
+        assert_eq!(2, se(&mut reader(&[0b00100000])).unwrap());
+        assert_eq!(-2, se(&mut reader(&[0b00101000])).unwrap());
+        assert_eq!(3, se(&mut reader(&[0b00110000])).unwrap());
+        assert_eq!(-3, se(&mut reader(&[0b00111000])).unwrap());
+        assert_eq!(4, se(&mut reader(&[0b00010000])).unwrap());
+        assert_eq!(-4, se(&mut reader(&[0b00010010])).unwrap());
+        assert_eq!(5, se(&mut reader(&[0b00010100])).unwrap());
     }
 
     fn parse_sps_test(data: &[u8]) -> SequenceParameterSet {
-        let sps = parse_sps((data, 0)).expect("SPS parsing failed").1;
+        let sps = parse_sps(&mut reader(data)).expect("SPS parsing failed");
         sps
     }
 
     fn parse_pps_test(data: &[u8]) -> PicParameterSet {
-        let pps = parse_pps((data, 0)).expect("PPS parsing failed").1;
+        let pps = parse_pps(&mut reader(data)).expect("PPS parsing failed");
         pps
     }
 
@@ -641,8 +612,8 @@ mod tests {
             0x79, 0x31, 0x72, 0x72, 0x75, 0x8B, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA,
             0xF0,
         ];
-        let (input, slice) =
-            parse_slice_header(&ctx, (&slice_data, 0)).expect("header parsing failed");
+        let mut input = reader(&slice_data);
+        let slice = parse_slice_header(&ctx, &mut input).expect("header parsing failed");
         let header = &slice.header;
         assert_eq!(header.slice_type, SliceType::I);
         assert_eq!(header.frame_num, 0);
@@ -652,7 +623,7 @@ mod tests {
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.disable_deblocking_filter_idc, 0);
 
-        let (input, blocks) = parse_slice_data(input, &slice).expect("blocks parsing failed");
+        let blocks = parse_slice_data(&mut input, &slice).expect("blocks parsing failed");
         assert_eq!(blocks.len(), 1);
         println!("{:?}", blocks[0]);
     }

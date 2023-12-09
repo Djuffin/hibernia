@@ -98,11 +98,11 @@ pub struct SequenceParameterSet {
 }
 
 impl SequenceParameterSet {
-    pub fn bits_in_frame_num(&self) -> usize {
-        (self.log2_max_frame_num_minus4 + 4) as usize
+    pub fn bits_in_frame_num(&self) -> u8 {
+        self.log2_max_frame_num_minus4 + 4
     }
 
-    pub fn bits_in_max_pic_order_cnt(&self) -> usize {
-        (self.log2_max_pic_order_cnt_lsb_minus4 + 4) as usize
+    pub fn bits_in_max_pic_order_cnt(&self) -> u8 {
+        self.log2_max_pic_order_cnt_lsb_minus4 + 4
     }
 }

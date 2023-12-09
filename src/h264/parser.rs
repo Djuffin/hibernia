@@ -13,11 +13,11 @@ use bitreader::BitReader;
 type ParseResult<T> = Result<T, String>;
 
 fn f(input: &mut BitReader) -> ParseResult<bool> {
-    input.read_bool().map_err(|e| "f() parsing error".to_owned())
+    input.read_bool().map_err(|e| "f(): end of stream".to_owned())
 }
 
 fn u(input: &mut BitReader, n: u8) -> ParseResult<u32> {
-    input.read_u32(n).map_err(|e| "u() parsing error".to_owned())
+    input.read_u32(n).map_err(|e| "u(): end of stream".to_owned())
 }
 
 fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
@@ -27,20 +27,19 @@ fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
     }
 
     let mut zero_bits = 0u8;
-    while !input.read_bool().map_err(|e| "ue() parsing error: leading zeros".to_owned())? {
+    while !input.read_bool().map_err(|e| "ue() end of stream".to_owned())? {
         zero_bits += 1;
         if (zero_bits > n) {
             return Err(format!("ue(): too many ({}) leading zeros", zero_bits));
         }
     }
 
-    let x =
-        input.read_u32(zero_bits).map_err(|e| "ue() parsing error: meaningful bits".to_owned())?;
-    let result = (1u32 << zero_bits) - 1 + x;
-    if result as u64 >= 1u64 << n {
-        return Err("Value is too large to fit the variable".to_owned());
+    let x = input.read_u64(zero_bits).map_err(|e| "ue(): end of stream".to_owned())?;
+    let result = (1u64 << zero_bits) - 1 + x;
+    if result >= 1u64 << n {
+        return Err(format!("ue(): value ({}) is too large to fit the variable", result));
     }
-    Ok(result)
+    Ok(result as u32)
 }
 
 fn se(input: &mut BitReader) -> ParseResult<i32> {
@@ -83,8 +82,8 @@ macro_rules! read_value {
 // Section 7.4.1
 fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
     // 1-bit at the end
-    if !input.read_bool().map_err(|e| "expected rbsp_trailing_bits_sentinel")? {
-        return Err("expected rbsp_trailing_bits_sentinel".to_owned());
+    if !input.read_bool().map_err(|e| "rbsp_trailing_bits end of stream".to_owned())? {
+        return Err("rbsp_trailing_bits sentinel != 1".to_owned());
     }
 
     input.align(1).map_err(|e| "can't align in rbsp_trailing_bits")?;
@@ -536,6 +535,17 @@ mod tests {
         assert_eq!(8, ue(&mut reader(&[0b00010010]), 8).unwrap());
         assert_eq!(9, ue(&mut reader(&[0b00010100]), 8).unwrap());
         assert_eq!(255, ue(&mut reader(&[0b00000000, 0b10000000, 0]), 8).unwrap());
+        assert_eq!(
+            u32::MAX,
+            ue(
+                &mut reader(&[
+                    0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b00000000,
+                    0b00000000, 0b00000000, 0
+                ]),
+                32
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -553,13 +563,11 @@ mod tests {
     }
 
     fn parse_sps_test(data: &[u8]) -> SequenceParameterSet {
-        let sps = parse_sps(&mut reader(data)).expect("SPS parsing failed");
-        sps
+        parse_sps(&mut reader(data)).expect("SPS parsing failed")
     }
 
     fn parse_pps_test(data: &[u8]) -> PicParameterSet {
-        let pps = parse_pps(&mut reader(data)).expect("PPS parsing failed");
-        pps
+        parse_pps(&mut reader(data)).expect("PPS parsing failed")
     }
 
     #[test]

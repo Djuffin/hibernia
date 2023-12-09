@@ -1,4 +1,4 @@
-use super::Profile;
+use super::{ChromaFormat, Profile};
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct HdrParameters {}
@@ -57,7 +57,7 @@ pub struct SequenceParameterSet {
     pub constraint_set5_flag: bool,
     pub level_idc: u8,
     pub seq_parameter_set_id: u8,
-    pub chroma_format_idc: u8,
+    pub chroma_format_idc: ChromaFormat,
     pub separate_colour_plane_flag: bool,
     pub bit_depth_luma_minus8: u8,
     pub bit_depth_chroma_minus8: u8,
@@ -97,6 +97,7 @@ pub struct SequenceParameterSet {
     pub vui_parameters: Option<VuiParameters>,
 }
 
+#[allow(non_snake_case)]
 impl SequenceParameterSet {
     pub fn bits_in_frame_num(&self) -> u8 {
         self.log2_max_frame_num_minus4 + 4
@@ -104,5 +105,13 @@ impl SequenceParameterSet {
 
     pub fn bits_in_max_pic_order_cnt(&self) -> u8 {
         self.log2_max_pic_order_cnt_lsb_minus4 + 4
+    }
+
+    pub fn ChromaArrayType(&self) -> ChromaFormat {
+        if self.separate_colour_plane_flag {
+            ChromaFormat::Monochrome
+        } else {
+            self.chroma_format_idc
+        }
     }
 }

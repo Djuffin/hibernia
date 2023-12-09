@@ -40,7 +40,7 @@ pub enum IMacroblockType {
 impl TryFrom<u32> for IMacroblockType {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match IMacroblockType::try_from_primitive(value as u8) {
+        match TryFromPrimitive::try_from_primitive(value as u8) {
             Err(e) => Err("Unknown prediction mode."),
             Ok(x) => Ok(x),
         }
@@ -63,7 +63,8 @@ pub enum MbPredictionMode {
 
 // Section 8.3.1.2 Intra_4x4 sample prediction
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, TryFromPrimitive)]
+#[repr(u8)]
 pub enum Intra_4x4_SamplePredictionMode {
     Vertical = 0,
     Horizontal = 1,
@@ -77,11 +78,45 @@ pub enum Intra_4x4_SamplePredictionMode {
     Horizontal_Up = 8,
 }
 
+impl TryFrom<u32> for Intra_4x4_SamplePredictionMode {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match TryFromPrimitive::try_from_primitive(value as u8) {
+            Err(e) => Err("Unknown sample prediction mode."),
+            Ok(x) => Ok(x),
+        }
+    }
+}
+
+// Table 7-16
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, TryFromPrimitive)]
+#[repr(u8)]
+pub enum Intra_Chroma_Pred_Mode {
+    #[default]
+    DC = 0,
+    Horizontal = 1,
+    Vertical = 2,
+    Plane = 3,
+}
+
+impl TryFrom<u32> for Intra_Chroma_Pred_Mode {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match TryFromPrimitive::try_from_primitive(value as u8) {
+            Err(e) => Err("Unknown chroma prediction mode."),
+            Ok(x) => Ok(x),
+        }
+    }
+}
+
 // Macroblock of type I
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct IMb {
     pub mb_type: IMacroblockType,
     pub transform_size_8x8_flag: bool,
+    pub rem_intra4x4_pred_mode: [Option<Intra_4x4_SamplePredictionMode>; 16],
+    pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]

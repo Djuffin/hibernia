@@ -1,10 +1,10 @@
+use super::macroblock;
 use super::pps;
 use super::slice;
 use super::sps;
 
-use super::macroblock::{IMacroblockType, IMb, Macroblock};
-use super::DecoderContext;
-use super::Profile;
+use super::{ChromaFormat, DecoderContext, Profile};
+use macroblock::{IMacroblockType, IMb, Macroblock, MbPredictionMode};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
@@ -210,8 +210,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
 
     if sps.profile.has_chroma_info() {
         read_value!(input, sps.chroma_format_idc, ue, 8);
-
-        if sps.chroma_format_idc == 3 {
+        if sps.chroma_format_idc == ChromaFormat::YUV444 {
             read_value!(input, sps.separate_colour_plane_flag, bool);
         }
 
@@ -483,7 +482,23 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMacroblockType::I_NxN {
             read_value!(input, block.transform_size_8x8_flag, bool);
         }
-        let prediction_mode = block.MbPartPredMode(0);
+        match block.MbPartPredMode(0) {
+            MbPredictionMode::Intra_4x4 => {
+                for mode in block.rem_intra4x4_pred_mode.iter_mut() {
+                    let mut prev_intra4x4_pred_mode_flag = false;
+                    read_value!(input, prev_intra4x4_pred_mode_flag, bool);
+                    if !prev_intra4x4_pred_mode_flag {
+                        let rem_intra4x4_pred_mode: macroblock::Intra_4x4_SamplePredictionMode;
+                        read_value!(input, rem_intra4x4_pred_mode, u, 3);
+                        *mode = Some(rem_intra4x4_pred_mode);
+                    }
+                }
+            }
+            _ => todo!("other prediction modes!"),
+        };
+        if slice.sps.ChromaArrayType().is_chrome_subsampled() {
+            read_value!(input, block.intra_chroma_pred_mode, ue, 2);
+        }
         return Ok(Macroblock::I(block));
     }
 
@@ -586,7 +601,7 @@ mod tests {
             constraint_set1_flag: true,
             level_idc: 20,
             seq_parameter_set_id: 0,
-            chroma_format_idc: 0,
+            chroma_format_idc: ChromaFormat::YUV420,
             separate_colour_plane_flag: false,
             log2_max_frame_num_minus4: 11,
             log2_max_pic_order_cnt_lsb_minus4: 12,

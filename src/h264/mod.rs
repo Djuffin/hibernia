@@ -6,13 +6,7 @@ pub mod pps;
 pub mod slice;
 pub mod sps;
 
-#[derive(Clone, Debug, Default)]
-pub struct DecoderContext {
-    sps: Vec<sps::SequenceParameterSet>,
-    pps: Vec<pps::PicParameterSet>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, TryFromPrimitive)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Profile {
     #[default]
@@ -34,26 +28,58 @@ pub enum Profile {
 
 impl Profile {
     pub fn has_chroma_info(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Profile::High
-            | Profile::High10
-            | Profile::High422
-            | Profile::High444
-            | Profile::ScalableBase
-            | Profile::ScalableHigh => true,
-            _ => false,
-        }
+                | Profile::High10
+                | Profile::High422
+                | Profile::High444
+                | Profile::ScalableBase
+                | Profile::ScalableHigh
+        )
     }
 }
 
 impl TryFrom<u32> for Profile {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match Profile::try_from_primitive(value as u8) {
+        match TryFromPrimitive::try_from_primitive(value as u8) {
             Err(e) => Err("Unknown profile."),
             Ok(x) => Ok(x),
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, TryFromPrimitive)]
+#[repr(u8)]
+pub enum ChromaFormat {
+    Monochrome = 0,
+    #[default]
+    YUV420 = 1,
+    YUV422 = 2,
+    YUV444 = 3,
+}
+
+impl ChromaFormat {
+    pub fn is_chrome_subsampled(&self) -> bool {
+        matches!(self, ChromaFormat::YUV420 | ChromaFormat::YUV422)
+    }
+}
+
+impl TryFrom<u32> for ChromaFormat {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match TryFromPrimitive::try_from_primitive(value as u8) {
+            Err(e) => Err("Unknown chroma format."),
+            Ok(x) => Ok(x),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DecoderContext {
+    sps: Vec<sps::SequenceParameterSet>,
+    pps: Vec<pps::PicParameterSet>,
 }
 
 impl DecoderContext {

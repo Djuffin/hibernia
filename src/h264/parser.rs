@@ -49,12 +49,23 @@ fn se(input: &mut BitReader) -> ParseResult<i32> {
     Ok(result)
 }
 
+macro_rules! cast_or_error {
+    ($dest:expr, $value:expr) => {
+        println!("set {} = {}", stringify!($dest), $value);
+        $dest = match $value.try_into() {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(format!("Error casting '{}': {}", stringify!($dest), e));
+            }
+        };
+    };
+}
+
 macro_rules! read_value {
     ($input:ident, $dest:expr, u, $bits:expr) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
         let value = u($input, $bits).map_err(error_handler)?;
-        println!("u({}) {} = {}", $bits, stringify!($dest), value);
-        $dest = value.try_into().unwrap();
+        cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, ue) => {
         read_value!($input, $dest, ue, 32);
@@ -62,20 +73,17 @@ macro_rules! read_value {
     ($input:ident, $dest:expr, ue, $bits:expr) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
         let value = ue($input, $bits).map_err(error_handler)?;
-        println!("ue({}) {} = {}", $bits, stringify!($dest), value);
-        $dest = value.try_into().unwrap();
+        cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, se) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
         let value = se($input).map_err(error_handler)?;
-        println!("se {} = {}", stringify!($dest), value);
-        $dest = value.try_into().unwrap();
+        cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, bool) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
         let value = f($input).map_err(error_handler)?;
-        println!("flag {} = {}", stringify!($dest), value);
-        $dest = value.try_into().unwrap();
+        cast_or_error!($dest, value);
     };
 }
 

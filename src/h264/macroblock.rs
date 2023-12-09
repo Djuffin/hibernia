@@ -82,7 +82,6 @@ pub enum Intra_4x4_SamplePredictionMode {
 pub struct IMb {
     pub mb_type: IMacroblockType,
     pub transform_size_8x8_flag: bool,
-    //pub  Option
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]

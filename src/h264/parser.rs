@@ -2,6 +2,7 @@ use super::macroblock;
 use super::pps;
 use super::slice;
 use super::sps;
+use super::tables;
 
 use super::{ChromaFormat, DecoderContext, Profile};
 use macroblock::{IMacroblockType, IMb, Macroblock, MbPredictionMode};
@@ -494,10 +495,26 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
                     }
                 }
             }
-            _ => todo!("other prediction modes!"),
+            MbPredictionMode::Intra_16x16 => {}
+            _ => todo!("implement Intra_8x8"),
         };
         if slice.sps.ChromaArrayType().is_chrome_subsampled() {
             read_value!(input, block.intra_chroma_pred_mode, ue, 2);
+        }
+        if block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
+            block.coded_block_pattern = tables::mb_type_to_coded_block_pattern(block.mb_type)
+                .ok_or("Invalid coded_block_pattern")?;
+        } else {
+            let mut coded_block_pattern_num: u8;
+            read_value!(input, coded_block_pattern_num, ue, 8);
+            block.coded_block_pattern =
+                tables::code_num_to_intra_coded_block_pattern(coded_block_pattern_num)
+                    .ok_or("Invalid coded_block_pattern")?;
+        }
+        if block.coded_block_pattern.non_zero()
+            || block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16
+        {
+            read_value!(input, block.mb_qp_delta, se);
         }
         return Ok(Macroblock::I(block));
     }

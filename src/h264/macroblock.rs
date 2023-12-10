@@ -1,6 +1,6 @@
-use num_traits::cast::FromPrimitive;
 use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{SequenceParameterSet, VuiParameters};
+use num_traits::cast::FromPrimitive;
 
 // Table 7-11 – Macroblock types for I slices
 #[allow(non_camel_case_types)]
@@ -95,6 +95,30 @@ impl TryFrom<u32> for Intra_Chroma_Pred_Mode {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct CodedBlockPattern(pub u8);
+
+impl CodedBlockPattern {
+    pub const fn new(luma: u8, chroma: u8) -> CodedBlockPattern {
+        CodedBlockPattern((luma & 0b1111) | (chroma << 4))
+    }
+
+    #[inline]
+    pub const fn luma(&self) -> u8 {
+        self.0 & 0b1111
+    }
+
+    #[inline]
+    pub const fn chroma(&self) -> u8 {
+        self.0 >> 4
+    }
+
+    #[inline]
+    pub const fn non_zero(&self) -> bool {
+        self.0 != 0
+    }
+}
+
 // Macroblock of type I
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct IMb {
@@ -102,6 +126,8 @@ pub struct IMb {
     pub transform_size_8x8_flag: bool,
     pub rem_intra4x4_pred_mode: [Option<Intra_4x4_SamplePredictionMode>; 16],
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
+    pub coded_block_pattern: CodedBlockPattern,
+    pub mb_qp_delta: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -115,6 +141,7 @@ pub enum Macroblock {
 
 #[allow(non_snake_case)]
 impl IMb {
+    #[inline]
     pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self.mb_type {
             IMacroblockType::I_NxN => {

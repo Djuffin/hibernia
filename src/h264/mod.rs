@@ -3,6 +3,7 @@ pub mod parser;
 pub mod pps;
 pub mod slice;
 pub mod sps;
+pub mod tables;
 
 use num_traits::cast::FromPrimitive;
 

@@ -33,6 +33,7 @@ pub enum ColourPlane {
     Cr,
 }
 
+// Section 7.4.3 Slice header semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SliceHeader {
     pub first_mb_in_slice: u32,

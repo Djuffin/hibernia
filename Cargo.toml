@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 bitreader = "0.3.8"
-num_enum = "0.7.1"
+num-traits = "0.2.17"
+num-derive = "0.4.1"

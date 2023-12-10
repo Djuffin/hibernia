@@ -1,13 +1,12 @@
-use num_enum::TryFromPrimitive;
-
 pub mod macroblock;
 pub mod parser;
 pub mod pps;
 pub mod slice;
 pub mod sps;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, TryFromPrimitive)]
-#[repr(u8)]
+use num_traits::cast::FromPrimitive;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum Profile {
     #[default]
     Baseline = 66,
@@ -43,15 +42,11 @@ impl Profile {
 impl TryFrom<u32> for Profile {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match TryFromPrimitive::try_from_primitive(value as u8) {
-            Err(e) => Err("Unknown profile."),
-            Ok(x) => Ok(x),
-        }
+        FromPrimitive::from_u32(value).ok_or("Unknown profile.")
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, TryFromPrimitive)]
-#[repr(u8)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum ChromaFormat {
     Monochrome = 0,
     #[default]
@@ -69,10 +64,7 @@ impl ChromaFormat {
 impl TryFrom<u32> for ChromaFormat {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match TryFromPrimitive::try_from_primitive(value as u8) {
-            Err(e) => Err("Unknown chroma format."),
-            Ok(x) => Ok(x),
-        }
+        FromPrimitive::from_u32(value).ok_or("Unknown chroma format.")
     }
 }
 

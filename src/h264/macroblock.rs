@@ -1,12 +1,10 @@
-use num_enum::TryFromPrimitive;
-
+use num_traits::cast::FromPrimitive;
 use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{SequenceParameterSet, VuiParameters};
 
 // Table 7-11 – Macroblock types for I slices
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, TryFromPrimitive)]
-#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum IMacroblockType {
     #[default]
     I_NxN = 0,
@@ -40,10 +38,7 @@ pub enum IMacroblockType {
 impl TryFrom<u32> for IMacroblockType {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match TryFromPrimitive::try_from_primitive(value as u8) {
-            Err(e) => Err("Unknown prediction mode."),
-            Ok(x) => Ok(x),
-        }
+        FromPrimitive::from_u32(value).ok_or("Unknown prediction mode.")
     }
 }
 
@@ -60,11 +55,9 @@ pub enum MbPredictionMode {
     Pred_L0,
     Pred_L1,
 }
-
 // Section 8.3.1.2 Intra_4x4 sample prediction
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, TryFromPrimitive)]
-#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum Intra_4x4_SamplePredictionMode {
     Vertical = 0,
     Horizontal = 1,
@@ -81,17 +74,12 @@ pub enum Intra_4x4_SamplePredictionMode {
 impl TryFrom<u32> for Intra_4x4_SamplePredictionMode {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match TryFromPrimitive::try_from_primitive(value as u8) {
-            Err(e) => Err("Unknown sample prediction mode."),
-            Ok(x) => Ok(x),
-        }
+        FromPrimitive::from_u32(value).ok_or("Unknown sample prediction mode.")
     }
 }
-
 // Table 7-16
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, TryFromPrimitive)]
-#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum Intra_Chroma_Pred_Mode {
     #[default]
     DC = 0,
@@ -103,10 +91,7 @@ pub enum Intra_Chroma_Pred_Mode {
 impl TryFrom<u32> for Intra_Chroma_Pred_Mode {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match TryFromPrimitive::try_from_primitive(value as u8) {
-            Err(e) => Err("Unknown chroma prediction mode."),
-            Ok(x) => Ok(x),
-        }
+        FromPrimitive::from_u32(value).ok_or("Unknown chroma prediction mode.")
     }
 }
 

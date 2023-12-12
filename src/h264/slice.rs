@@ -54,7 +54,8 @@ pub struct SliceHeader {
 
     //pub direct_spatial_mv_pred_flag: Option<bool>,
     //pub num_ref_idx_active: Option<NumRefIdxActive>,
-    //pub ref_pic_list_modification: Option<RefPicListModifications>, // may become an enum rather than Option in future (for ref_pic_list_mvc_modification)
+    // may become an enum rather than Option in future (for ref_pic_list_mvc_modification)
+    //pub ref_pic_list_modification: Option<RefPicListModifications>,
     //pub pred_weight_table: Option<PredWeightTable>,
     //pub dec_ref_pic_marking: Option<DecRefPicMarking>,
     //pub cabac_init_idc: Option<u32>,

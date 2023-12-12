@@ -44,3 +44,15 @@ pub const fn mb_type_to_coded_block_pattern(mb_type: IMacroblockType) -> Option<
         _ => None,
     }
 }
+
+type CoeffTokenPattern = (u16, u8);
+const NA: (u16, u8) = (0, 0);
+pub const TABLE95: [(
+    (u8, u8),
+    CoeffTokenPattern,
+    CoeffTokenPattern,
+    CoeffTokenPattern,
+    CoeffTokenPattern,
+    CoeffTokenPattern,
+    CoeffTokenPattern,
+); 62] = include!("table_9-5.rs");

@@ -3,11 +3,13 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::needless_late_init)]
 
+use crate::h264::tables;
+
 #[macro_use]
 extern crate num_derive;
 
 pub mod h264;
 
 fn main() {
-    println!("Hello, world!");
+    println!("Table 9-5: \n {:#?}", tables::TABLE95);
 }

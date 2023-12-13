@@ -1,6 +1,8 @@
+use super::cavlc;
 use super::macroblock;
-use macroblock::CodedBlockPattern;
-use macroblock::IMacroblockType;
+
+use cavlc::CoeffTokenPattern;
+use macroblock::{CodedBlockPattern, IMacroblockType};
 
 // Table 9-4 – Assignment of codeNum to values of coded_block_pattern for
 // macroblock prediction modes
@@ -45,8 +47,6 @@ pub const fn mb_type_to_coded_block_pattern(mb_type: IMacroblockType) -> Option<
     }
 }
 
-type CoeffTokenPattern = (u16, u8);
-const NA: (u16, u8) = (0, 0);
 pub const TABLE95: [(
     (u8, u8),
     CoeffTokenPattern,

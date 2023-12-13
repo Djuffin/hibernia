@@ -1,3 +1,4 @@
+pub mod cavlc;
 pub mod macroblock;
 pub mod parser;
 pub mod pps;

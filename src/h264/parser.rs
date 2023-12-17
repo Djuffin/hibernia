@@ -93,7 +93,7 @@ macro_rules! read_value {
         let value = se($input).map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
-    ($input:ident, $dest:expr, bool) => {
+    ($input:ident, $dest:expr, f) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
         let value = f($input).map_err(error_handler)?;
         cast_or_error!($dest, value);
@@ -131,7 +131,7 @@ fn more_rbsp_data(input: &mut BitReader) -> bool {
 fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     let mut vui = VuiParameters::default();
 
-    read_value!(input, vui.aspect_ratio_info_present_flag, bool);
+    read_value!(input, vui.aspect_ratio_info_present_flag, f);
     if vui.aspect_ratio_info_present_flag {
         const EXTENDED_SAR: u8 = 255;
         read_value!(input, vui.aspect_ratio_idc, u, 8);
@@ -141,16 +141,16 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
         }
     }
 
-    read_value!(input, vui.overscan_info_present_flag, bool);
+    read_value!(input, vui.overscan_info_present_flag, f);
     if vui.overscan_info_present_flag {
-        read_value!(input, vui.overscan_appropriate_flag, bool);
+        read_value!(input, vui.overscan_appropriate_flag, f);
     }
 
-    read_value!(input, vui.video_signal_type_present_flag, bool);
+    read_value!(input, vui.video_signal_type_present_flag, f);
     if vui.video_signal_type_present_flag {
         read_value!(input, vui.video_format, u, 3);
-        read_value!(input, vui.video_full_range_flag, bool);
-        read_value!(input, vui.colour_description_present_flag, bool);
+        read_value!(input, vui.video_full_range_flag, f);
+        read_value!(input, vui.colour_description_present_flag, f);
         if vui.colour_description_present_flag {
             read_value!(input, vui.colour_primaries, u, 8);
             read_value!(input, vui.transfer_characteristics, u, 8);
@@ -158,35 +158,35 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
         }
     }
 
-    read_value!(input, vui.chroma_loc_info_present_flag, bool);
+    read_value!(input, vui.chroma_loc_info_present_flag, f);
     if vui.chroma_loc_info_present_flag {
         read_value!(input, vui.chroma_sample_loc_type_top_field, ue, 8);
         read_value!(input, vui.chroma_sample_loc_type_bottom_field, ue, 8);
     }
 
-    read_value!(input, vui.timing_info_present_flag, bool);
+    read_value!(input, vui.timing_info_present_flag, f);
     if vui.timing_info_present_flag {
         read_value!(input, vui.num_units_in_tick, u, 32);
         read_value!(input, vui.time_scale, u, 32);
-        read_value!(input, vui.fixed_frame_rate_flag, bool);
+        read_value!(input, vui.fixed_frame_rate_flag, f);
     }
 
     let mut nal_hrd_parameters_present = false;
-    read_value!(input, nal_hrd_parameters_present, bool);
+    read_value!(input, nal_hrd_parameters_present, f);
     if nal_hrd_parameters_present {
         todo!("NAL HDR");
     }
 
     let mut vcl_hrd_parameters_present = false;
-    read_value!(input, vcl_hrd_parameters_present, bool);
+    read_value!(input, vcl_hrd_parameters_present, f);
     if vcl_hrd_parameters_present {
         todo!("VCL HDR");
     }
 
-    read_value!(input, vui.pic_struct_present_flag, bool);
-    read_value!(input, vui.bitstream_restriction_flag, bool);
+    read_value!(input, vui.pic_struct_present_flag, f);
+    read_value!(input, vui.bitstream_restriction_flag, f);
     if vui.bitstream_restriction_flag {
-        read_value!(input, vui.motion_vectors_over_pic_boundaries_flag, bool);
+        read_value!(input, vui.motion_vectors_over_pic_boundaries_flag, f);
         read_value!(input, vui.max_bytes_per_pic_denom, ue, 8);
         read_value!(input, vui.max_bits_per_mb_denom, ue, 8);
         read_value!(input, vui.log2_max_mv_length_horizontal, ue, 8);
@@ -203,12 +203,12 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
 
     read_value!(input, sps.profile, u, 8);
-    read_value!(input, sps.constraint_set0_flag, bool);
-    read_value!(input, sps.constraint_set1_flag, bool);
-    read_value!(input, sps.constraint_set2_flag, bool);
-    read_value!(input, sps.constraint_set3_flag, bool);
-    read_value!(input, sps.constraint_set4_flag, bool);
-    read_value!(input, sps.constraint_set5_flag, bool);
+    read_value!(input, sps.constraint_set0_flag, f);
+    read_value!(input, sps.constraint_set1_flag, f);
+    read_value!(input, sps.constraint_set2_flag, f);
+    read_value!(input, sps.constraint_set3_flag, f);
+    read_value!(input, sps.constraint_set4_flag, f);
+    read_value!(input, sps.constraint_set5_flag, f);
 
     expect_value!(input, "reserved_zero_2bits", 0, 2);
 
@@ -218,13 +218,13 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     if sps.profile.has_chroma_info() {
         read_value!(input, sps.chroma_format_idc, ue, 8);
         if sps.chroma_format_idc == ChromaFormat::YUV444 {
-            read_value!(input, sps.separate_colour_plane_flag, bool);
+            read_value!(input, sps.separate_colour_plane_flag, f);
         }
 
         read_value!(input, sps.bit_depth_luma_minus8, ue, 8);
         read_value!(input, sps.bit_depth_chroma_minus8, ue, 8);
-        read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, bool);
-        read_value!(input, sps.seq_scaling_matrix_present_flag, bool);
+        read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, f);
+        read_value!(input, sps.seq_scaling_matrix_present_flag, f);
         if sps.seq_scaling_matrix_present_flag {
             todo!("scaling matrix");
         }
@@ -251,20 +251,20 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     };
 
     read_value!(input, sps.max_num_ref_frames, ue, 8);
-    read_value!(input, sps.gaps_in_frame_num_value_allowed_flag, bool);
+    read_value!(input, sps.gaps_in_frame_num_value_allowed_flag, f);
 
     read_value!(input, sps.pic_width_in_mbs_minus1, ue, 16);
     read_value!(input, sps.pic_height_in_map_units_minus1, ue, 16);
 
-    read_value!(input, sps.frame_mbs_only_flag, bool);
+    read_value!(input, sps.frame_mbs_only_flag, f);
     if sps.frame_mbs_only_flag {
         sps.mb_adaptive_frame_field_flag = false;
     } else {
-        read_value!(input, sps.mb_adaptive_frame_field_flag, bool);
+        read_value!(input, sps.mb_adaptive_frame_field_flag, f);
     }
 
-    read_value!(input, sps.direct_8x8_inference_flag, bool);
-    read_value!(input, sps.frame_cropping_flag, bool);
+    read_value!(input, sps.direct_8x8_inference_flag, f);
+    read_value!(input, sps.frame_cropping_flag, f);
     if sps.frame_cropping_flag {
         read_value!(input, sps.frame_crop_left_offset, ue, 32);
         read_value!(input, sps.frame_crop_right_offset, ue, 32);
@@ -273,7 +273,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     }
 
     let mut vui_parameters_present = false;
-    read_value!(input, vui_parameters_present, bool);
+    read_value!(input, vui_parameters_present, f);
     if vui_parameters_present {
         sps.vui_parameters = Some(parse_vui(input)?);
     }
@@ -319,7 +319,7 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
                 };
                 let mut slice_group_change_direction_flag: bool = false;
                 let mut slice_group_change_rate_minus1: u32 = 0;
-                read_value!(input, slice_group_change_direction_flag, bool);
+                read_value!(input, slice_group_change_direction_flag, f);
                 read_value!(input, slice_group_change_rate_minus1, ue, 32);
 
                 Some(SliceGroup::Changing {
@@ -357,26 +357,26 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
 
     read_value!(input, pps.pic_parameter_set_id, ue, 8);
     read_value!(input, pps.seq_parameter_set_id, ue, 8);
-    read_value!(input, pps.entropy_coding_mode_flag, bool);
-    read_value!(input, pps.bottom_field_pic_order_in_frame_present_flag, bool);
+    read_value!(input, pps.entropy_coding_mode_flag, f);
+    read_value!(input, pps.bottom_field_pic_order_in_frame_present_flag, f);
 
     pps.slice_group = parse_slice_group(input)?;
 
     read_value!(input, pps.num_ref_idx_l0_default_active_minus1, ue, 32);
     read_value!(input, pps.num_ref_idx_l1_default_active_minus1, ue, 32);
-    read_value!(input, pps.weighted_pred_flag, bool);
+    read_value!(input, pps.weighted_pred_flag, f);
     read_value!(input, pps.weighted_bipred_idc, u, 2);
     read_value!(input, pps.pic_init_qp_minus26, se);
     read_value!(input, pps.pic_init_qs_minus26, se);
     read_value!(input, pps.chroma_qp_index_offset, se);
-    read_value!(input, pps.deblocking_filter_control_present_flag, bool);
-    read_value!(input, pps.constrained_intra_pred_flag, bool);
-    read_value!(input, pps.redundant_pic_cnt_present_flag, bool);
+    read_value!(input, pps.deblocking_filter_control_present_flag, f);
+    read_value!(input, pps.constrained_intra_pred_flag, f);
+    read_value!(input, pps.redundant_pic_cnt_present_flag, f);
 
     if more_rbsp_data(input) {
-        read_value!(input, pps.transform_8x8_mode_flag, bool);
+        read_value!(input, pps.transform_8x8_mode_flag, f);
         let mut pic_scaling_matrix_present_flag = false;
-        read_value!(input, pic_scaling_matrix_present_flag, bool);
+        read_value!(input, pic_scaling_matrix_present_flag, f);
         if pic_scaling_matrix_present_flag {
             todo!("scaling matrix");
         }
@@ -453,10 +453,10 @@ pub fn parse_slice_header(
     if sps.frame_mbs_only_flag {
         header.field_pic_flag = false;
     } else {
-        read_value!(input, header.field_pic_flag, bool);
+        read_value!(input, header.field_pic_flag, f);
         if header.field_pic_flag {
             let mut bottom_field_flag = false;
-            read_value!(input, bottom_field_flag, bool);
+            read_value!(input, bottom_field_flag, f);
             header.bottom_field_flag = Some(bottom_field_flag);
         }
         todo!("implement interlaced video. i.e. fields");
@@ -482,8 +482,8 @@ pub fn parse_slice_header(
         if (idr_pic_flag) {
             let mut no_output_of_prior_pics_flag = false;
             let mut long_term_reference_flag = false;
-            read_value!(input, no_output_of_prior_pics_flag, bool);
-            read_value!(input, long_term_reference_flag, bool);
+            read_value!(input, no_output_of_prior_pics_flag, f);
+            read_value!(input, long_term_reference_flag, f);
         } else {
             todo!("non IDR slice");
         }
@@ -511,13 +511,13 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         todo!("PCM macroblock");
     } else {
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMacroblockType::I_NxN {
-            read_value!(input, block.transform_size_8x8_flag, bool);
+            read_value!(input, block.transform_size_8x8_flag, f);
         }
         match block.MbPartPredMode(0) {
             MbPredictionMode::Intra_4x4 => {
                 for mode in block.rem_intra4x4_pred_mode.iter_mut() {
                     let mut prev_intra4x4_pred_mode_flag = false;
-                    read_value!(input, prev_intra4x4_pred_mode_flag, bool);
+                    read_value!(input, prev_intra4x4_pred_mode_flag, f);
                     if !prev_intra4x4_pred_mode_flag {
                         let rem_intra4x4_pred_mode: macroblock::Intra_4x4_SamplePredictionMode;
                         read_value!(input, rem_intra4x4_pred_mode, u, 3);

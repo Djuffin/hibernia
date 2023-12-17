@@ -148,18 +148,18 @@ impl Decoder {
                 NalUnitType::IDRSlice => {
                     let slice = parser::parse_slice_header(&self.context, &nal, &mut unit_input)
                         .map_err(parse_error_handler)?;
-                    info!("IDR Slice: {:?}", slice);
+                    info!("IDR Slice: {:#?}", slice);
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {
                     let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
-                    info!("SPS: {:?}", sps);
+                    info!("SPS: {:#?}", sps);
                     info!("Data {:?}", nal_buffer);
                     self.context.put_sps(sps);
                 }
                 NalUnitType::PicParameterSet => {
                     let pps = parser::parse_pps(&mut unit_input).map_err(parse_error_handler)?;
-                    info!("PPS: {:?}", pps);
+                    info!("PPS: {:#?}", pps);
                     info!("Data {:?}", nal_buffer);
                     self.context.put_pps(pps);
                 }

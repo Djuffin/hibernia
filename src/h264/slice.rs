@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{SequenceParameterSet, VuiParameters};
 use super::Profile;
@@ -65,11 +67,21 @@ pub struct SliceHeader {
     pub disable_deblocking_filter_idc: u8,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Slice {
     pub sps: SequenceParameterSet,
     pub pps: PicParameterSet,
     pub header: SliceHeader,
+}
+
+impl fmt::Debug for Slice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Slice")
+            .field("seq_parameter_set_id", &self.sps.seq_parameter_set_id)
+            .field("pic_parameter_set_id", &self.pps.pic_parameter_set_id)
+            .field("header", &self.header)
+            .finish()
+    }
 }
 
 #[allow(non_snake_case)]

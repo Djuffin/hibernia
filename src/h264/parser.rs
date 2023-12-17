@@ -408,7 +408,7 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
     expect_value!(input, "forbidden_zero_bit", 0, 1);
     read_value!(input, header.nal_ref_idc, u, 2);
     read_value!(input, header.nal_unit_type, u, 5);
-    return Ok(header);
+    Ok(header)
 }
 
 // Section 7.3.3 Slice header syntax
@@ -791,11 +791,13 @@ mod tests {
 
         let sps_nal = parse_nal_header(&mut reader(&data)).expect("NAL unit");
         assert_eq!(sps_nal.nal_unit_type, NalUnitType::SeqParameterSet);
+        assert_eq!(sps_nal.nal_ref_idc, 3);
 
         let data =
             [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80];
 
         let pps_nal = parse_nal_header(&mut reader(&data)).expect("NAL unit");
         assert_eq!(pps_nal.nal_unit_type, NalUnitType::PicParameterSet);
+        assert_eq!(pps_nal.nal_ref_idc, 3);
     }
 }

@@ -30,7 +30,7 @@ pub fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
             return CoeffToken { total_coeffs, trailing_ones, pattern_len };
         }
     }
-    return CoeffToken::default();
+    CoeffToken::default()
 }
 
 #[cfg(test)]

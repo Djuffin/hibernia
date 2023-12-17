@@ -47,6 +47,7 @@ pub const fn mb_type_to_coded_block_pattern(mb_type: IMacroblockType) -> Option<
     }
 }
 
+#[allow(clippy::all)]
 pub const TABLE95: [(
     (u8, u8),
     CoeffTokenPattern,

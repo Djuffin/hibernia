@@ -1,4 +1,5 @@
 use super::macroblock;
+use super::nal;
 use super::pps;
 use super::slice;
 use super::sps;
@@ -6,6 +7,7 @@ use super::tables;
 
 use super::{ChromaFormat, DecoderContext, Profile};
 use macroblock::{IMacroblockType, IMb, Macroblock, MbPredictionMode};
+use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
@@ -62,6 +64,16 @@ macro_rules! cast_or_error {
     };
 }
 
+macro_rules! expect_value {
+    ($input:ident, $msg:expr, $expected:expr, $bits:expr) => {
+        let error_handler = |e| format!("Not enough data for {}", $msg);
+        let value = $input.read_u32($bits).map_err(error_handler)?;
+        if value != $expected {
+            return Err(format!("Unexpected value of {}: {} vs {}", $msg, value, $expected));
+        }
+    };
+}
+
 macro_rules! read_value {
     ($input:ident, $dest:expr, u, $bits:expr) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
@@ -91,10 +103,7 @@ macro_rules! read_value {
 // Section 7.4.1
 fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
     // 1-bit at the end
-    if !input.read_bool().map_err(|e| "rbsp_trailing_bits end of stream".to_owned())? {
-        return Err("rbsp_trailing_bits sentinel != 1".to_owned());
-    }
-
+    expect_value!(input, "rbsp_trailing_bits", 1, 1);
     input.align(1).map_err(|e| "can't align in rbsp_trailing_bits")?;
     Ok(())
 }
@@ -201,10 +210,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     read_value!(input, sps.constraint_set4_flag, bool);
     read_value!(input, sps.constraint_set5_flag, bool);
 
-    let (reserver1, reserver2) = (f(input)?, f(input)?);
-    if reserver1 || reserver2 {
-        return Err("reserved_zero_2bits must be zero".to_owned());
-    }
+    expect_value!(input, "reserved_zero_2bits", 0, 2);
 
     read_value!(input, sps.level_idc, u, 8);
     read_value!(input, sps.seq_parameter_set_id, ue, 8);
@@ -383,11 +389,35 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
     Ok(pps)
 }
 
+pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
+    let mut forbidden_zero_bit = true;
+    let mut header = NalHeader::default();
+    input.align(1).map_err(|e| "can't align for NAL header")?;
+
+    // Skip zeros and the start code prefix.
+    loop {
+        // Short start code: 0x00_00_00_01
+        if input.peek_u32(24) == Ok(1) {
+            input.read_u32(24).map_err(|e| "broken start code")?;
+            break;
+        }
+
+        expect_value!(input, "NAL start code zero_byte", 0, 8);
+    }
+
+    expect_value!(input, "forbidden_zero_bit", 0, 1);
+    read_value!(input, header.nal_ref_idc, u, 2);
+    read_value!(input, header.nal_unit_type, u, 5);
+    return Ok(header);
+}
+
 // Section 7.3.3 Slice header syntax
-pub fn parse_slice_header(ctx: &DecoderContext, input: &mut BitReader) -> ParseResult<Slice> {
-    let idr_pic_flag = true;
-    let nal_ref_idc = 3;
-    let nal_type = 5;
+pub fn parse_slice_header(
+    ctx: &DecoderContext,
+    nal: &NalHeader,
+    input: &mut BitReader,
+) -> ParseResult<Slice> {
+    let idr_pic_flag = nal.nal_unit_type == NalUnitType::IDRSlice;
 
     let mut header = SliceHeader::default();
     read_value!(input, header.first_mb_in_slice, ue, 32);
@@ -448,7 +478,7 @@ pub fn parse_slice_header(ctx: &DecoderContext, input: &mut BitReader) -> ParseR
         read_value!(input, header.redundant_pic_cnt, ue);
     }
 
-    if nal_ref_idc != 0 {
+    if nal.nal_ref_idc != 0 {
         if (idr_pic_flag) {
             let mut no_output_of_prior_pics_flag = false;
             let mut long_term_reference_flag = false;
@@ -656,12 +686,15 @@ mod tests {
         ctx.put_pps(pps);
 
         let slice_data = [
-            0xB8, 0x00, 0x04, 0x00, 0x00, 0x09, 0xFF, 0xFF, 0xF8, 0x7A, 0x28, 0x00, 0x08, 0x24,
-            0x79, 0x31, 0x72, 0x72, 0x75, 0x8B, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA, 0xEB, 0xAE, 0xBA,
-            0xF0,
+            0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04, 0x00, 0x00, 0x09, 0xFF, 0xFF, 0xF8,
+            0x7A, 0x28, 0x00, 0x08, 0x24, 0x79, 0x31, 0x72, 0x72, 0x75, 0x8B, 0xAE, 0xBA, 0xEB,
+            0xAE, 0xBA, 0xEB, 0xAE, 0xBA, 0xF0,
         ];
         let mut input = reader(&slice_data);
-        let slice = parse_slice_header(&ctx, &mut input).expect("header parsing failed");
+        let nal_header = parse_nal_header(&mut input).expect("NAL unit");
+        assert_eq!(nal_header.nal_unit_type, NalUnitType::IDRSlice);
+        let slice =
+            parse_slice_header(&ctx, &nal_header, &mut input).expect("header parsing failed");
         let header = &slice.header;
         assert_eq!(header.slice_type, SliceType::I);
         assert_eq!(header.frame_num, 0);
@@ -747,5 +780,22 @@ mod tests {
         assert_eq!(pps.pic_init_qs_minus26, 0);
         assert!(pps.deblocking_filter_control_present_flag);
         assert!(!pps.entropy_coding_mode_flag);
+    }
+
+    #[test]
+    pub fn test_nal_header() {
+        let data = [
+            0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xC0, 0x14, 0x8C, 0x8D, 0x42, 0x12, 0x4D, 0x41,
+            0x81, 0x81, 0x81, 0xE1, 0x10, 0x8D, 0x40,
+        ];
+
+        let sps_nal = parse_nal_header(&mut reader(&data)).expect("NAL unit");
+        assert_eq!(sps_nal.nal_unit_type, NalUnitType::SeqParameterSet);
+
+        let data =
+            [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80];
+
+        let pps_nal = parse_nal_header(&mut reader(&data)).expect("NAL unit");
+        assert_eq!(pps_nal.nal_unit_type, NalUnitType::PicParameterSet);
     }
 }

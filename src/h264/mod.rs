@@ -1,5 +1,6 @@
 pub mod cavlc;
 pub mod macroblock;
+pub mod nal;
 pub mod parser;
 pub mod pps;
 pub mod slice;

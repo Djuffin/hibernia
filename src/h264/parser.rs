@@ -413,6 +413,44 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     None
 }
 
+pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
+    let mut zeros = 0;
+    let mut result = Vec::<u8>::new();
+    let mut byte_index = 0;
+    for byte in input {
+        match *byte {
+            0 => {
+                if !result.is_empty() {
+                    result.push(*byte);
+                }
+                zeros += 1;
+            }
+            3 => {
+                if zeros >= 2 {
+                    if result.is_empty() {
+                        result.reserve(input.len());
+                        result.extend_from_slice(&input[..byte_index]);
+                    }
+                } else {
+                    if !result.is_empty() {
+                        result.push(*byte);
+                    }
+                }
+                zeros = 0;
+            }
+            _ => {
+                if !result.is_empty() {
+                    result.push(*byte);
+                }
+                zeros = 0;
+            }
+        }
+
+        byte_index += 1;
+    }
+    result
+}
+
 pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
     let mut forbidden_zero_bit = true;
     let mut header = NalHeader::default();
@@ -538,33 +576,19 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         let luma_samples = 16 * 16;
         let chroma_samples = 8 * 8;
         block.pcm_sample_luma.reserve(luma_samples);
-        trace!("pos: {}", input.position() / 8);
-        for idx in 0..luma_samples {
-            let luma_byte:u8;
-            trace!("idx = {}", idx);
-            read_value!(input, luma_byte, u, 8);
-            block.pcm_sample_luma.push(luma_byte);
+        for _ in 0..luma_samples {
+            block.pcm_sample_luma.push(input.read_u8(8).map_err(|e| "Luma samples")?);
         }
-        trace!("pos: {}", input.position() / 8);
         block.pcm_sample_chroma_cb.reserve(chroma_samples);
-        for idx in 0..chroma_samples {
-            let cb_byte:u8;
-            trace!("idx = {}", idx);
-            read_value!(input, cb_byte, u, 8);
-            block.pcm_sample_chroma_cb.push(cb_byte);
+        for _ in 0..chroma_samples {
+            block.pcm_sample_chroma_cb.push(input.read_u8(8).map_err(|e| "ChromaCB samples")?);
         }
-        trace!("pos: {}", input.position() / 8);
-        block.pcm_sample_chroma_cr.reserve(chroma_samples);
-        for idx in 0..chroma_samples {
-            let cr_byte:u8;
-            trace!("idx = {}", idx);
-            read_value!(input, cr_byte, u, 8);
-            block.pcm_sample_chroma_cr.push(cr_byte);
+        for _ in 0..chroma_samples {
+            block.pcm_sample_chroma_cr.push(input.read_u8(8).map_err(|e| "ChromaCR samples")?);
         }
-        trace!("pos: {}", input.position() / 8);
         return Ok(Macroblock::PCM(block));
     } else {
-        let mut block = IMb{mb_type, ..IMb::default()};
+        let mut block = IMb { mb_type, ..IMb::default() };
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
             read_value!(input, block.transform_size_8x8_flag, f);
         }
@@ -635,7 +659,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec
     while more_data {
         let block = parse_macroblock(input, slice)?;
         blocks.push(block);
-        if (curr_mb_addr <  pic_size_in_mbs) {
+        if (curr_mb_addr < pic_size_in_mbs) {
             curr_mb_addr += 1;
             more_data = more_rbsp_data(input);
         } else {
@@ -648,8 +672,8 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec
 
 #[cfg(test)]
 mod tests {
-    use crate::diag;
     use super::*;
+    use crate::diag;
 
     pub fn reader(bytes: &[u8]) -> BitReader {
         BitReader::new(bytes)
@@ -878,5 +902,23 @@ mod tests {
 
         let data = [0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04];
         assert_eq!(count_bytes_till_start_code(&data), None);
+    }
+
+    #[test]
+    pub fn test_remove_emulation_if_needed() {
+        let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0f, 0x00, 0x00, 0x00, 0x00];
+        assert!(remove_emulation_if_needed(&data).is_empty());
+
+        let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0f, 0x00, 0x00, 0x03, 0x00];
+        assert_eq!(
+            remove_emulation_if_needed(&data),
+            vec![0xAA, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00]
+        );
+
+        let data = [0x00, 0x03, 0x0f, 0x00, 0x00, 0x03];
+        assert_eq!(remove_emulation_if_needed(&data), vec![0x00, 0x03, 0x0f, 0x00, 0x00]);
+
+        let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4];
+        assert!(remove_emulation_if_needed(&data).is_empty());
     }
 }

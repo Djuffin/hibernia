@@ -136,7 +136,12 @@ impl Decoder {
                     data.len() - cur_byte_index
                 };
             let nal_buffer = &data[cur_byte_index..cur_byte_index + nal_size_bytes];
-            let mut unit_input = parser::BitReader::new(nal_buffer);
+            let nal_vec = parser::remove_emulation_if_needed(&nal_buffer);
+            let mut unit_input = if nal_vec.is_empty() {
+                parser::BitReader::new(nal_buffer)
+            } else {
+                parser::BitReader::new(nal_vec.as_slice())
+            };
             input.skip((nal_size_bytes * 8) as u64);
 
             match nal.nal_unit_type {
@@ -150,7 +155,8 @@ impl Decoder {
                         .map_err(parse_error_handler)?;
 
                     info!("IDR Slice: {:#?}", slice);
-                    let blocks = parser::parse_slice_data(&mut unit_input, &slice).map_err(parse_error_handler)?;
+                    let blocks = parser::parse_slice_data(&mut unit_input, &slice)
+                        .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", blocks);
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}

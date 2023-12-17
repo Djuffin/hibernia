@@ -148,7 +148,10 @@ impl Decoder {
                 NalUnitType::IDRSlice => {
                     let slice = parser::parse_slice_header(&self.context, &nal, &mut unit_input)
                         .map_err(parse_error_handler)?;
+
                     info!("IDR Slice: {:#?}", slice);
+                    let blocks = parser::parse_slice_data(&mut unit_input, &slice).map_err(parse_error_handler)?;
+                    info!("Blocks: {:#?}", blocks);
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {

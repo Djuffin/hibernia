@@ -1,3 +1,5 @@
+use std::mem::{self, MaybeUninit};
+
 use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{SequenceParameterSet, VuiParameters};
 use num_traits::cast::FromPrimitive;
@@ -140,10 +142,15 @@ impl CodedBlockPattern {
 }
 
 // Special case of I macroblock - raw pixels (IMbType::I_PCM)
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct PcmMb {}
+#[derive(Clone, Debug, Default)]
+pub struct PcmMb {
+    // hardcoded YUV420, 8bit
+    pub pcm_sample_luma: Vec<u8>,
+    pub pcm_sample_chroma_cb: Vec<u8>,
+    pub pcm_sample_chroma_cr: Vec<u8>,
+}
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct IMb {
     pub mb_type: IMbType,
     pub transform_size_8x8_flag: bool,
@@ -154,12 +161,12 @@ pub struct IMb {
 }
 
 // Macroblock of type P
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct P {
     pub mb_type: PMbType,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Macroblock {
     I(IMb),
     PCM(PcmMb),

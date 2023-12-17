@@ -116,11 +116,15 @@ impl SequenceParameterSet {
         }
     }
 
-    pub fn width_in_mbs(&self) -> usize {
+    pub fn pic_width_in_mbs(&self) -> usize {
         self.pic_width_in_mbs_minus1 as usize + 1
     }
 
-    pub fn hight_in_mbs(&self) -> usize {
+    pub fn pic_hight_in_mbs(&self) -> usize {
         self.pic_height_in_map_units_minus1 as usize + 1
+    }
+
+    pub fn pic_size_in_mbs(&self) -> usize {
+        self.pic_hight_in_mbs() * self.pic_width_in_mbs()
     }
 }

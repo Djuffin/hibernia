@@ -71,7 +71,7 @@ pub struct SliceHeader {
     pub disable_deblocking_filter_idc: u8,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Slice {
     pub sps: SequenceParameterSet,
     pub pps: PicParameterSet,
@@ -89,8 +89,8 @@ impl fmt::Debug for Slice {
 #[allow(non_snake_case)]
 impl Slice {
     pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
-        let mb_count = sps.hight_in_mbs() * sps.width_in_mbs();
-        Slice { sps: sps, pps: pps, header, mb_addr_to_mb: HashMap::with_capacity(mb_count) }
+        let mb_count = sps.pic_size_in_mbs();
+        Slice { sps, pps, header, mb_addr_to_mb: HashMap::with_capacity(mb_count) }
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {

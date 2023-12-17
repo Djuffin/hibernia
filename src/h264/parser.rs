@@ -1,3 +1,7 @@
+use std::mem::MaybeUninit;
+
+use crate::h264::macroblock::PcmMb;
+
 use super::macroblock;
 use super::nal;
 use super::pps;
@@ -524,12 +528,43 @@ pub fn parse_slice_header(
 }
 
 pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
-    let mut block = IMb::default();
-    read_value!(input, block.mb_type, ue);
+    let mb_type: IMbType;
+    read_value!(input, mb_type, ue);
 
-    if block.mb_type == IMbType::I_PCM {
-        todo!("PCM macroblock");
+    if mb_type == IMbType::I_PCM {
+        let mut block = PcmMb::default();
+        input.align(1).map_err(|e| "pcm_alignment_zero_bit")?;
+
+        let luma_samples = 16 * 16;
+        let chroma_samples = 8 * 8;
+        block.pcm_sample_luma.reserve(luma_samples);
+        trace!("pos: {}", input.position() / 8);
+        for idx in 0..luma_samples {
+            let luma_byte:u8;
+            trace!("idx = {}", idx);
+            read_value!(input, luma_byte, u, 8);
+            block.pcm_sample_luma.push(luma_byte);
+        }
+        trace!("pos: {}", input.position() / 8);
+        block.pcm_sample_chroma_cb.reserve(chroma_samples);
+        for idx in 0..chroma_samples {
+            let cb_byte:u8;
+            trace!("idx = {}", idx);
+            read_value!(input, cb_byte, u, 8);
+            block.pcm_sample_chroma_cb.push(cb_byte);
+        }
+        trace!("pos: {}", input.position() / 8);
+        block.pcm_sample_chroma_cr.reserve(chroma_samples);
+        for idx in 0..chroma_samples {
+            let cr_byte:u8;
+            trace!("idx = {}", idx);
+            read_value!(input, cr_byte, u, 8);
+            block.pcm_sample_chroma_cr.push(cr_byte);
+        }
+        trace!("pos: {}", input.position() / 8);
+        return Ok(Macroblock::PCM(block));
     } else {
+        let mut block = IMb{mb_type, ..IMb::default()};
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
             read_value!(input, block.transform_size_8x8_flag, f);
         }
@@ -583,6 +618,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec
     assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
+    assert!(slice.pps.slice_group.is_none(), "slice groups not implemented yet");
 
     if slice.pps.entropy_coding_mode_flag {
         input.align(1);
@@ -595,10 +631,16 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec
     let mut curr_mb_addr = slice.header.first_mb_in_slice * (1 + slice.MbaffFrameFlag() as u32);
     let mut more_data = true;
     let mut prev_mb_skipped = false;
+    let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
     while more_data {
         let block = parse_macroblock(input, slice)?;
         blocks.push(block);
-        more_data = false;
+        if (curr_mb_addr <  pic_size_in_mbs) {
+            curr_mb_addr += 1;
+            more_data = more_rbsp_data(input);
+        } else {
+            more_data = false;
+        }
     }
 
     Ok(blocks)
@@ -606,6 +648,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec
 
 #[cfg(test)]
 mod tests {
+    use crate::diag;
     use super::*;
 
     pub fn reader(bytes: &[u8]) -> BitReader {
@@ -662,6 +705,7 @@ mod tests {
 
     #[test]
     pub fn test_slice() {
+        diag::init();
         let sps = SequenceParameterSet {
             profile: Profile::Baseline,
             constraint_set0_flag: true,

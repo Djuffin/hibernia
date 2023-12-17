@@ -1,3 +1,3 @@
 /target
 Cargo.lock
-test.h264
+test*.h264

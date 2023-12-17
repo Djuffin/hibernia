@@ -7,7 +7,7 @@ use super::tables;
 
 use super::{ChromaFormat, DecoderContext, Profile};
 use log::trace;
-use macroblock::{IMacroblockType, IMb, Macroblock, MbPredictionMode};
+use macroblock::{IMb, IMbType, Macroblock, MbPredictionMode};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
@@ -392,10 +392,6 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
 
 pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     let mut reader = BitReader::new(input);
-    if reader.align(1) != Ok(()) {
-        return None;
-    }
-
     while let Ok(bits) = reader.peek_u32(32) {
         if bits == 1 || (bits >> 8) == 1 {
             return Some((reader.position() / 8) as usize);
@@ -524,17 +520,17 @@ pub fn parse_slice_header(
         }
     }
 
-    Ok(Slice { sps: sps.clone(), pps: pps.clone(), header })
+    Ok(Slice::new(sps.clone(), pps.clone(), header))
 }
 
 pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
     let mut block = IMb::default();
     read_value!(input, block.mb_type, ue);
 
-    if block.mb_type == IMacroblockType::I_PCM {
+    if block.mb_type == IMbType::I_PCM {
         todo!("PCM macroblock");
     } else {
-        if slice.pps.transform_8x8_mode_flag && block.mb_type == IMacroblockType::I_NxN {
+        if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
             read_value!(input, block.transform_size_8x8_flag, f);
         }
         match block.MbPartPredMode(0) {

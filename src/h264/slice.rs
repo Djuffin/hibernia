@@ -1,8 +1,12 @@
+use std::collections::HashMap;
 use std::fmt;
 
+use super::macroblock::Macroblock;
 use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{SequenceParameterSet, VuiParameters};
 use super::Profile;
+
+type MbAddr = u32;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum SliceType {
@@ -38,7 +42,7 @@ pub enum ColourPlane {
 // Section 7.4.3 Slice header semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SliceHeader {
-    pub first_mb_in_slice: u32,
+    pub first_mb_in_slice: MbAddr,
     pub slice_type: SliceType,
     pub pic_parameter_set_id: u8,
     pub colour_plane: Option<ColourPlane>,
@@ -67,26 +71,33 @@ pub struct SliceHeader {
     pub disable_deblocking_filter_idc: u8,
 }
 
-#[derive(Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Slice {
     pub sps: SequenceParameterSet,
     pub pps: PicParameterSet,
     pub header: SliceHeader,
+
+    mb_addr_to_mb: HashMap<MbAddr, Macroblock>,
 }
 
 impl fmt::Debug for Slice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Slice")
-            .field("seq_parameter_set_id", &self.sps.seq_parameter_set_id)
-            .field("pic_parameter_set_id", &self.pps.pic_parameter_set_id)
-            .field("header", &self.header)
-            .finish()
+        f.debug_struct("Slice").field("header", &self.header).finish()
     }
 }
 
 #[allow(non_snake_case)]
 impl Slice {
+    pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
+        let mb_count = sps.hight_in_mbs() * sps.width_in_mbs();
+        Slice { sps: sps, pps: pps, header, mb_addr_to_mb: HashMap::with_capacity(mb_count) }
+    }
+
     pub fn MbaffFrameFlag(&self) -> bool {
         self.sps.mb_adaptive_frame_field_flag && !self.header.field_pic_flag
+    }
+
+    pub fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
+        self.mb_addr_to_mb.get(&mb_addr)
     }
 }

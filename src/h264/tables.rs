@@ -2,7 +2,7 @@ use super::cavlc;
 use super::macroblock;
 
 use cavlc::CoeffTokenPattern;
-use macroblock::{CodedBlockPattern, IMacroblockType};
+use macroblock::{CodedBlockPattern, IMbType};
 
 // Table 9-4 – Assignment of codeNum to values of coded_block_pattern for
 // macroblock prediction modes
@@ -17,32 +17,32 @@ pub fn code_num_to_intra_coded_block_pattern(x: u8) -> Option<CodedBlockPattern>
 }
 
 // Table 7-11 – Macroblock types for I slices
-pub const fn mb_type_to_coded_block_pattern(mb_type: IMacroblockType) -> Option<CodedBlockPattern> {
+pub const fn mb_type_to_coded_block_pattern(mb_type: IMbType) -> Option<CodedBlockPattern> {
     match mb_type {
-        IMacroblockType::I_16x16_0_0_0 => Some(CodedBlockPattern::new(0, 0)),
-        IMacroblockType::I_16x16_1_0_0 => Some(CodedBlockPattern::new(0, 0)),
-        IMacroblockType::I_16x16_2_0_0 => Some(CodedBlockPattern::new(0, 0)),
-        IMacroblockType::I_16x16_3_0_0 => Some(CodedBlockPattern::new(0, 0)),
-        IMacroblockType::I_16x16_0_1_0 => Some(CodedBlockPattern::new(1, 0)),
-        IMacroblockType::I_16x16_1_1_0 => Some(CodedBlockPattern::new(1, 0)),
-        IMacroblockType::I_16x16_2_1_0 => Some(CodedBlockPattern::new(1, 0)),
-        IMacroblockType::I_16x16_3_1_0 => Some(CodedBlockPattern::new(1, 0)),
-        IMacroblockType::I_16x16_0_2_0 => Some(CodedBlockPattern::new(2, 0)),
-        IMacroblockType::I_16x16_1_2_0 => Some(CodedBlockPattern::new(2, 0)),
-        IMacroblockType::I_16x16_2_2_0 => Some(CodedBlockPattern::new(2, 0)),
-        IMacroblockType::I_16x16_3_2_0 => Some(CodedBlockPattern::new(2, 0)),
-        IMacroblockType::I_16x16_0_0_1 => Some(CodedBlockPattern::new(0, 15)),
-        IMacroblockType::I_16x16_1_0_1 => Some(CodedBlockPattern::new(0, 15)),
-        IMacroblockType::I_16x16_2_0_1 => Some(CodedBlockPattern::new(0, 15)),
-        IMacroblockType::I_16x16_3_0_1 => Some(CodedBlockPattern::new(0, 15)),
-        IMacroblockType::I_16x16_0_1_1 => Some(CodedBlockPattern::new(1, 15)),
-        IMacroblockType::I_16x16_1_1_1 => Some(CodedBlockPattern::new(1, 15)),
-        IMacroblockType::I_16x16_2_1_1 => Some(CodedBlockPattern::new(1, 15)),
-        IMacroblockType::I_16x16_3_1_1 => Some(CodedBlockPattern::new(1, 15)),
-        IMacroblockType::I_16x16_0_2_1 => Some(CodedBlockPattern::new(2, 15)),
-        IMacroblockType::I_16x16_1_2_1 => Some(CodedBlockPattern::new(2, 15)),
-        IMacroblockType::I_16x16_2_2_1 => Some(CodedBlockPattern::new(2, 15)),
-        IMacroblockType::I_16x16_3_2_1 => Some(CodedBlockPattern::new(2, 15)),
+        IMbType::I_16x16_0_0_0 => Some(CodedBlockPattern::new(0, 0)),
+        IMbType::I_16x16_1_0_0 => Some(CodedBlockPattern::new(0, 0)),
+        IMbType::I_16x16_2_0_0 => Some(CodedBlockPattern::new(0, 0)),
+        IMbType::I_16x16_3_0_0 => Some(CodedBlockPattern::new(0, 0)),
+        IMbType::I_16x16_0_1_0 => Some(CodedBlockPattern::new(1, 0)),
+        IMbType::I_16x16_1_1_0 => Some(CodedBlockPattern::new(1, 0)),
+        IMbType::I_16x16_2_1_0 => Some(CodedBlockPattern::new(1, 0)),
+        IMbType::I_16x16_3_1_0 => Some(CodedBlockPattern::new(1, 0)),
+        IMbType::I_16x16_0_2_0 => Some(CodedBlockPattern::new(2, 0)),
+        IMbType::I_16x16_1_2_0 => Some(CodedBlockPattern::new(2, 0)),
+        IMbType::I_16x16_2_2_0 => Some(CodedBlockPattern::new(2, 0)),
+        IMbType::I_16x16_3_2_0 => Some(CodedBlockPattern::new(2, 0)),
+        IMbType::I_16x16_0_0_1 => Some(CodedBlockPattern::new(0, 15)),
+        IMbType::I_16x16_1_0_1 => Some(CodedBlockPattern::new(0, 15)),
+        IMbType::I_16x16_2_0_1 => Some(CodedBlockPattern::new(0, 15)),
+        IMbType::I_16x16_3_0_1 => Some(CodedBlockPattern::new(0, 15)),
+        IMbType::I_16x16_0_1_1 => Some(CodedBlockPattern::new(1, 15)),
+        IMbType::I_16x16_1_1_1 => Some(CodedBlockPattern::new(1, 15)),
+        IMbType::I_16x16_2_1_1 => Some(CodedBlockPattern::new(1, 15)),
+        IMbType::I_16x16_3_1_1 => Some(CodedBlockPattern::new(1, 15)),
+        IMbType::I_16x16_0_2_1 => Some(CodedBlockPattern::new(2, 15)),
+        IMbType::I_16x16_1_2_1 => Some(CodedBlockPattern::new(2, 15)),
+        IMbType::I_16x16_2_2_1 => Some(CodedBlockPattern::new(2, 15)),
+        IMbType::I_16x16_3_2_1 => Some(CodedBlockPattern::new(2, 15)),
         _ => None,
     }
 }

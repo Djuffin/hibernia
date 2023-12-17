@@ -5,7 +5,7 @@ use num_traits::cast::FromPrimitive;
 // Table 7-11 – Macroblock types for I slices
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
-pub enum IMacroblockType {
+pub enum IMbType {
     #[default]
     I_NxN = 0,
     I_16x16_0_0_0 = 1,
@@ -35,10 +35,30 @@ pub enum IMacroblockType {
     I_PCM = 25,
 }
 
-impl TryFrom<u32> for IMacroblockType {
+impl TryFrom<u32> for IMbType {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown prediction mode.")
+        FromPrimitive::from_u32(value).ok_or("Unknown I-mb type.")
+    }
+}
+
+// Table 7-13 – Macroblock type values 0 to 4 for P and SP slices
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
+pub enum PMbType {
+    #[default]
+    P_L0_16x16 = 0,
+    P_L0_L0_16x8 = 1,
+    P_L0_L0_8x16 = 2,
+    P_8x8 = 3,
+    P_8x8ref0 = 4,
+    P_Skip,
+}
+
+impl TryFrom<u32> for PMbType {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or("Unknown P-mb type.")
     }
 }
 
@@ -119,10 +139,13 @@ impl CodedBlockPattern {
     }
 }
 
-// Macroblock of type I
+// Special case of I macroblock - raw pixels (IMbType::I_PCM)
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct PcmMb {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct IMb {
-    pub mb_type: IMacroblockType,
+    pub mb_type: IMbType,
     pub transform_size_8x8_flag: bool,
     pub rem_intra4x4_pred_mode: [Option<Intra_4x4_SamplePredictionMode>; 16],
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
@@ -130,12 +153,16 @@ pub struct IMb {
     pub mb_qp_delta: i32,
 }
 
+// Macroblock of type P
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct P {}
+pub struct P {
+    pub mb_type: PMbType,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Macroblock {
     I(IMb),
+    PCM(PcmMb),
     P(P),
 }
 
@@ -144,14 +171,14 @@ impl IMb {
     #[inline]
     pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self.mb_type {
-            IMacroblockType::I_NxN => {
+            IMbType::I_NxN => {
                 if (self.transform_size_8x8_flag) {
                     MbPredictionMode::Intra_8x8
                 } else {
                     MbPredictionMode::Intra_4x4
                 }
             }
-            IMacroblockType::I_PCM => MbPredictionMode::None,
+            IMbType::I_PCM => MbPredictionMode::None,
             _ => MbPredictionMode::Intra_16x16,
         }
     }

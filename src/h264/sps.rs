@@ -115,4 +115,12 @@ impl SequenceParameterSet {
             self.chroma_format_idc
         }
     }
+
+    pub fn width_in_mbs(&self) -> usize {
+        self.pic_width_in_mbs_minus1 as usize + 1
+    }
+
+    pub fn hight_in_mbs(&self) -> usize {
+        self.pic_height_in_map_units_minus1 as usize + 1
+    }
 }

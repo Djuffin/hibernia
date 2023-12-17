@@ -3,13 +3,22 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::needless_late_init)]
 
-use crate::h264::tables;
-
 #[macro_use]
 extern crate num_derive;
 
 pub mod h264;
 
+use std::env;
+use std::fs;
+
 fn main() {
-    println!("Table 9-5: \n {:#?}", tables::TABLE95);
+    let args: Vec<String> = env::args().collect();
+    println!("Running {:?}", args);
+    if args.len() > 1 {
+        let name = args[1].clone();
+        println!("Processing {}", name);
+        let buf = fs::read(name).unwrap();
+        let mut decoder = h264::Decoder::new();
+        decoder.decode(&buf).expect("parsing error");
+    }
 }

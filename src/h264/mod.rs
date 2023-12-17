@@ -98,3 +98,105 @@ impl DecoderContext {
         self.pps.push(pps);
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum DecodingError {
+    MisformedData(String)
+}
+
+#[derive(Debug, Default)]
+pub struct Decoder {
+    context: DecoderContext,
+}
+
+impl Decoder {
+    pub fn new() -> Decoder {
+        Decoder::default()
+    }
+
+    pub fn decode(&mut self, data: &[u8]) -> Result<(), DecodingError> {
+        use nal::NalUnitType;
+        let mut input = parser::BitReader::new(data);
+        let parse_error_handler = |e| DecodingError::MisformedData(e);
+        loop {
+            println!("----------------------------------------------");
+            println!(">position: {}", input.position());
+            let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
+            println!("NAL {:?}", nal);
+            println!(">position: {}", input.position());
+            match nal.nal_unit_type {
+                NalUnitType::Unspecified => {
+
+                },
+                NalUnitType::SliceDataA => {
+
+                },
+                NalUnitType::SliceDataB => {
+
+                },
+                NalUnitType::SliceDataC => {
+
+                },
+                NalUnitType::NonIDRSlice |
+                NalUnitType::IDRSlice => {
+                    let slice = parser::parse_slice_header(&self.context, &nal, &mut input)
+                                    .map_err(parse_error_handler)?;
+                    println!("IDR Slice: {:?}", slice);
+                },
+                NalUnitType::SupplementalEnhancementInfo => {
+
+                },
+                NalUnitType::SeqParameterSet => {
+                    let sps = parser::parse_sps(&mut input).map_err(parse_error_handler)?;
+                    println!("SPS: {:?}", sps);
+                    self.context.put_sps(sps);
+
+                },
+                NalUnitType::PicParameterSet => {
+                    let pps = parser::parse_pps(&mut input).map_err(parse_error_handler)?;
+                    println!("PPS: {:?}", pps);
+                    self.context.put_pps(pps);
+
+                },
+                NalUnitType::AccessUnitDelimiter => {
+
+                },
+                NalUnitType::EndOfSeq => {
+
+                },
+                NalUnitType::EndOfStream => {
+
+                },
+                NalUnitType::FillerData => {
+
+                },
+                NalUnitType::SeqParameterSetExtension => {
+
+                },
+                NalUnitType::Prefix => {
+
+                },
+                NalUnitType::SubsetSeqParameterSet => {
+
+                },
+                NalUnitType::DepthParameterSet => {
+
+                },
+                NalUnitType::CodedSliceAux => {
+
+                },
+                NalUnitType::CodedSliceExtension => {
+
+                },
+                NalUnitType::CodedSliceExtensionForDepthView => {
+
+                },
+                NalUnitType::Reserved => {
+
+                },
+            }
+            parser::skip_till_start_code(&mut input);
+        }
+        Ok(())
+    }
+}

@@ -5,6 +5,7 @@ use super::slice;
 use super::sps;
 use super::tables;
 
+use log::trace;
 use super::{ChromaFormat, DecoderContext, Profile};
 use macroblock::{IMacroblockType, IMb, Macroblock, MbPredictionMode};
 use nal::{NalHeader, NalUnitType};
@@ -54,7 +55,7 @@ fn se(input: &mut BitReader) -> ParseResult<i32> {
 
 macro_rules! cast_or_error {
     ($dest:expr, $value:expr) => {
-        println!("set {} = {}", stringify!($dest), $value);
+        trace!("set {} = {}", stringify!($dest), $value);
         $dest = match $value.try_into() {
             Ok(v) => v,
             Err(e) => {
@@ -823,7 +824,6 @@ mod tests {
         assert_eq!(pps_nal.nal_ref_idc, 3);
     }
 
-
     #[test]
     pub fn test_skip_till_start_code() {
         let data = [
@@ -834,7 +834,7 @@ mod tests {
         assert_eq!(input.read_u64(8 * 5).unwrap(), 0x107);
 
         let data = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02
         ];
         let mut input = reader(&data);
@@ -847,5 +847,5 @@ mod tests {
         let mut input = reader(&data);
         assert_eq!(skip_till_start_code(&mut input), false);
         assert_eq!(input.remaining(), 0);
-    }    
+    }
 }

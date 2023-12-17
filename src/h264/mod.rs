@@ -7,7 +7,8 @@ pub mod slice;
 pub mod sps;
 pub mod tables;
 
-use num_traits::cast::FromPrimitive;
+use log::{info, trace};
+use num_traits::{cast::FromPrimitive, ops::bytes};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum Profile {
@@ -101,7 +102,7 @@ impl DecoderContext {
 
 #[derive(Debug, Clone)]
 pub enum DecodingError {
-    MisformedData(String)
+    MisformedData(String),
 }
 
 #[derive(Debug, Default)]
@@ -119,83 +120,62 @@ impl Decoder {
         let mut input = parser::BitReader::new(data);
         let parse_error_handler = |e| DecodingError::MisformedData(e);
         loop {
-            println!("----------------------------------------------");
-            println!(">position: {}", input.position());
-            let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
-            println!("NAL {:?}", nal);
-            println!(">position: {}", input.position());
-            match nal.nal_unit_type {
-                NalUnitType::Unspecified => {
-
-                },
-                NalUnitType::SliceDataA => {
-
-                },
-                NalUnitType::SliceDataB => {
-
-                },
-                NalUnitType::SliceDataC => {
-
-                },
-                NalUnitType::NonIDRSlice |
-                NalUnitType::IDRSlice => {
-                    let slice = parser::parse_slice_header(&self.context, &nal, &mut input)
-                                    .map_err(parse_error_handler)?;
-                    println!("IDR Slice: {:?}", slice);
-                },
-                NalUnitType::SupplementalEnhancementInfo => {
-
-                },
-                NalUnitType::SeqParameterSet => {
-                    let sps = parser::parse_sps(&mut input).map_err(parse_error_handler)?;
-                    println!("SPS: {:?}", sps);
-                    self.context.put_sps(sps);
-
-                },
-                NalUnitType::PicParameterSet => {
-                    let pps = parser::parse_pps(&mut input).map_err(parse_error_handler)?;
-                    println!("PPS: {:?}", pps);
-                    self.context.put_pps(pps);
-
-                },
-                NalUnitType::AccessUnitDelimiter => {
-
-                },
-                NalUnitType::EndOfSeq => {
-
-                },
-                NalUnitType::EndOfStream => {
-
-                },
-                NalUnitType::FillerData => {
-
-                },
-                NalUnitType::SeqParameterSetExtension => {
-
-                },
-                NalUnitType::Prefix => {
-
-                },
-                NalUnitType::SubsetSeqParameterSet => {
-
-                },
-                NalUnitType::DepthParameterSet => {
-
-                },
-                NalUnitType::CodedSliceAux => {
-
-                },
-                NalUnitType::CodedSliceExtension => {
-
-                },
-                NalUnitType::CodedSliceExtensionForDepthView => {
-
-                },
-                NalUnitType::Reserved => {
-
-                },
+            if (input.remaining() < 4 * 8) {
+                info!("End of data");
+                break;
             }
-            parser::skip_till_start_code(&mut input);
+            info!("---------------------------------------------------");
+            let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
+            assert!(input.is_aligned(1));
+            info!("NAL {:?}", nal);
+            let cur_byte_index = (input.position() / 8) as usize;
+            let nal_size_bytes =
+                if let Some(bytes) = parser::count_bytes_till_start_code(&data[cur_byte_index..]) {
+                    bytes
+                } else {
+                    data.len() - cur_byte_index
+                };
+            let nal_buffer = &data[cur_byte_index..cur_byte_index + nal_size_bytes];
+            let mut unit_input = parser::BitReader::new(nal_buffer);
+            input.skip((nal_size_bytes * 8) as u64);
+
+            match nal.nal_unit_type {
+                NalUnitType::Unspecified => {}
+                NalUnitType::SliceDataA => {}
+                NalUnitType::SliceDataB => {}
+                NalUnitType::SliceDataC => {}
+                NalUnitType::NonIDRSlice => {}
+                NalUnitType::IDRSlice => {
+                    let slice = parser::parse_slice_header(&self.context, &nal, &mut unit_input)
+                        .map_err(parse_error_handler)?;
+                    info!("IDR Slice: {:?}", slice);
+                }
+                NalUnitType::SupplementalEnhancementInfo => {}
+                NalUnitType::SeqParameterSet => {
+                    let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
+                    info!("SPS: {:?}", sps);
+                    info!("Data {:?}", nal_buffer);
+                    self.context.put_sps(sps);
+                }
+                NalUnitType::PicParameterSet => {
+                    let pps = parser::parse_pps(&mut unit_input).map_err(parse_error_handler)?;
+                    info!("PPS: {:?}", pps);
+                    info!("Data {:?}", nal_buffer);
+                    self.context.put_pps(pps);
+                }
+                NalUnitType::AccessUnitDelimiter => {}
+                NalUnitType::EndOfSeq => {}
+                NalUnitType::EndOfStream => {}
+                NalUnitType::FillerData => {}
+                NalUnitType::SeqParameterSetExtension => {}
+                NalUnitType::Prefix => {}
+                NalUnitType::SubsetSeqParameterSet => {}
+                NalUnitType::DepthParameterSet => {}
+                NalUnitType::CodedSliceAux => {}
+                NalUnitType::CodedSliceExtension => {}
+                NalUnitType::CodedSliceExtensionForDepthView => {}
+                NalUnitType::Reserved => {}
+            }
         }
         Ok(())
     }

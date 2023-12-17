@@ -5,8 +5,8 @@ use super::slice;
 use super::sps;
 use super::tables;
 
-use log::trace;
 use super::{ChromaFormat, DecoderContext, Profile};
+use log::trace;
 use macroblock::{IMacroblockType, IMb, Macroblock, MbPredictionMode};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -390,26 +390,27 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
     Ok(pps)
 }
 
-pub fn skip_till_start_code(input: &mut BitReader) -> bool {
-    if input.align(1) != Ok(()) || input.remaining() < 32 {
-        return false;
+pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
+    let mut reader = BitReader::new(input);
+    if reader.align(1) != Ok(()) {
+        return None;
     }
 
-    while let Ok(bits) = input.peek_u32(32) {
+    while let Ok(bits) = reader.peek_u32(32) {
         if bits == 1 || (bits >> 8) == 1 {
-            return true;
+            return Some((reader.position() / 8) as usize);
         }
 
         let bytes_to_skip = match bits.leading_zeros() {
             9..=16 => 2,
             17..=24 => 3,
             25..=31 => 4,
-            _ => 1
+            _ => 1,
         };
-        input.skip(bytes_to_skip * 8);
+        reader.skip(bytes_to_skip * 8);
     }
 
-    false
+    None
 }
 
 pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
@@ -825,27 +826,17 @@ mod tests {
     }
 
     #[test]
-    pub fn test_skip_till_start_code() {
-        let data = [
-            0xFF, 0xFF, 0x00, 0x00, 0xAA, 0x00, 0x00, 0x00, 0x01, 0x07
-        ];
-        let mut input = reader(&data);
-        assert_eq!(skip_till_start_code(&mut input), true);
-        assert_eq!(input.read_u64(8 * 5).unwrap(), 0x107);
+    pub fn test_count_bytes_till_start_code() {
+        let data = [0xFF, 0xFF, 0x00, 0x00, 0xAA, 0x00, 0x00, 0x00, 0x01, 0x07];
+        assert_eq!(count_bytes_till_start_code(&data), Some(5));
 
         let data = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02,
         ];
-        let mut input = reader(&data);
-        assert_eq!(skip_till_start_code(&mut input), true);
-        assert_eq!(input.read_u64(8 * 6).expect("where is data?"), 0x10002);
+        assert_eq!(count_bytes_till_start_code(&data), Some(15));
 
-        let data = [
-            0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04,
-        ];
-        let mut input = reader(&data);
-        assert_eq!(skip_till_start_code(&mut input), false);
-        assert_eq!(input.remaining(), 0);
+        let data = [0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04];
+        assert_eq!(count_bytes_till_start_code(&data), None);
     }
 }

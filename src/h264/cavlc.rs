@@ -85,6 +85,7 @@ mod tests {
     #[test]
     pub fn brute_force_test_lookup_total_zeros() {
         for vcl_idx in 1..16 {
+            let mut recognizer_patterns = [false; 16];
             for bits in 0..=u16::MAX {
                 let result = lookup_total_zeros(bits, vcl_idx);
                 if result.1 == 0 {
@@ -92,6 +93,10 @@ mod tests {
                 }
                 assert!(result.1 <= 9);
                 assert!(result.0 < 17 - vcl_idx);
+                recognizer_patterns[result.0 as usize] = true;
+            }
+            for i in 0..(17 - vcl_idx) {
+                assert!(recognizer_patterns[i as usize], "vcl_idx:{:} i:{:}", vcl_idx, i);
             }
         }
     }

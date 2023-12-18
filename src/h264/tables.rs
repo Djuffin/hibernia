@@ -1,7 +1,7 @@
 use super::cavlc;
 use super::macroblock;
 
-use cavlc::CoeffTokenPattern;
+use cavlc::BitPattern;
 use macroblock::{CodedBlockPattern, IMbType};
 
 pub const MB_WIDTH: usize = 16;
@@ -54,10 +54,23 @@ pub const fn mb_type_to_coded_block_pattern(mb_type: IMbType) -> Option<CodedBlo
 #[allow(clippy::all)]
 pub const TABLE95: [(
     (u8, u8),
-    CoeffTokenPattern,
-    CoeffTokenPattern,
-    CoeffTokenPattern,
-    CoeffTokenPattern,
-    CoeffTokenPattern,
-    CoeffTokenPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
 ); 62] = include!("table_9-5.rs");
+
+
+#[allow(clippy::all)]
+pub const TABLE97: [(
+    u8,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+); 16] = include!("table_9-7.rs");

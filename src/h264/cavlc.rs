@@ -13,7 +13,32 @@ impl CoeffToken {
     }
 }
 
-pub(crate) type CoeffTokenPattern = (/* bit pattern */ u16, /* length */ u8);
+pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
+
+// Naive implementation of Tables 9-7, 9-8, 9-9 lookup for total_zeros patterns
+pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> u8 {
+    for row in tables::TABLE97 {
+        let (pattern, pattern_len) = match vlc_idx {
+            1 => row.1,
+            2 => row.2,
+            3 => row.3,
+            4 => row.4,
+            5 => row.5,
+            6 => row.6,
+            7 => row.7,
+            _ => (0, 0),
+        };
+        if pattern_len == 0 {
+            break;
+        }
+        let shift = u16::BITS - pattern_len as u32;
+        let meaningful_bits = bits >> shift;
+        if meaningful_bits == pattern {
+            return row.0;
+        }
+    }
+    return u8::MAX;
+}
 
 // Naive implementation of Table 9-5 lookup for coeff_token patterns
 pub fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
@@ -47,6 +72,14 @@ mod tests {
     fn prepare_bits(bit_str: &str) -> u16 {
         let value = u16::from_str_radix(bit_str, 2).unwrap();
         value << (u16::BITS - bit_str.len() as u32)
+    }
+
+    #[test]
+    pub fn test_lookup_total_zeros() {
+        assert_eq!(lookup_total_zeros(prepare_bits("00000010"), 1), 12);
+        assert_eq!(lookup_total_zeros(prepare_bits("110"), 3), 2);
+        assert_eq!(lookup_total_zeros(prepare_bits("000000"), 7), 9);
+        assert_eq!(lookup_total_zeros(prepare_bits("000001"), 6), 0);
     }
 
     #[test]

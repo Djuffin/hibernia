@@ -81,3 +81,18 @@ pub const TABLE9_7AND8: [(
     BitPattern,
     BitPattern,
 ); 16] = include!("tables_9-7and8.rs");
+
+#[allow(clippy::all)]
+pub const TABLE9_9A: [(u8, BitPattern, BitPattern, BitPattern); 4] = include!("table_9-9_a.rs");
+
+#[allow(clippy::all)]
+pub const TABLE9_9B: [(
+    u8,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+); 8] = include!("table_9-9_b.rs");

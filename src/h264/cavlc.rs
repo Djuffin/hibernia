@@ -48,6 +48,27 @@ pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> (u8, u8) {
     (0, 0)
 }
 
+// Naive implementation of Tables 9-9 total_zeros patterns
+pub fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
+    for row in tables::TABLE9_9A {
+        let (pattern, pattern_len) = match vlc_idx {
+            1 => row.1,
+            2 => row.2,
+            3 => row.3,
+            _ => (0, 0),
+        };
+        if pattern_len == 0 {
+            break;
+        }
+        let shift = u16::BITS - pattern_len as u32;
+        let meaningful_bits = bits >> shift;
+        if meaningful_bits == pattern {
+            return (row.0, pattern_len);
+        }
+    }
+    (0, 0)
+}
+
 // Naive implementation of Table 9-5 lookup for coeff_token patterns
 pub fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
     for row in tables::TABLE95 {
@@ -113,6 +134,22 @@ mod tests {
         assert_eq!(lookup_total_zeros(prepare_bits("00000"), 10), (1, 5));
         assert_eq!(lookup_total_zeros(prepare_bits("0000"), 12), (0, 4));
         assert_eq!(lookup_total_zeros(prepare_bits("00001"), 9), (7, 5));
+    }
+
+    #[test]
+    pub fn test_lookup_total_zeros_chroma() {
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("1"), 1), (0, 1));
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("1"), 2), (0, 1));
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("1"), 3), (0, 1));
+
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("01"), 1), (1, 2));
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("01"), 2), (1, 2));
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("0"), 3), (1, 1));
+
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("001"), 1), (2, 3));
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("00"), 2), (2, 2));
+
+        assert_eq!(lookup_total_zeros_chroma(prepare_bits("000"), 1), (3, 3));
     }
 
     #[test]

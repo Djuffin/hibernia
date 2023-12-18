@@ -655,7 +655,26 @@ pub fn parse_residual_cavlc(
 
     // Section 9.2.3 Parsing process for run information
     let mut runs = [0; 16];
-    let zeros_left = if coeff_token.total_coeffs < (end_idx - start_idx + 1) as u8 { 1 } else { 0 };
+    let zeros_left = if coeff_token.total_coeffs < (end_idx - start_idx + 1) as u8 {
+        let next_16_bits = input.peek_u16(16).map_err(|e| "total_zeros".to_owned())?;
+        let tz_vlc_index = coeff_token.total_coeffs;
+        let lookup_tz = if max_num_coeff == 4 {
+            cavlc::lookup_total_zeros_chroma
+        } else {
+            cavlc::lookup_total_zeros
+        };
+        let (total_zeros, bits) = lookup_tz(next_16_bits, tz_vlc_index);
+        if bits == 0 {
+            return Err(format!(
+                "Unknown total_zeros value: {:#016b} tz_vlc_index:{}",
+                next_16_bits, tz_vlc_index
+            ));
+        }
+        input.skip(bits as u64);
+        total_zeros
+    } else {
+        0
+    };
 
     Ok(())
 }

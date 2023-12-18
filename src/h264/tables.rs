@@ -73,3 +73,16 @@ pub const TABLE97: [(
     BitPattern,
     BitPattern,
 ); 16] = include!("table_9-7.rs");
+
+#[allow(clippy::all)]
+pub const TABLE98: [(
+    u8,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+    BitPattern,
+); 9] = include!("table_9-8.rs");

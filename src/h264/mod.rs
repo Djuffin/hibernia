@@ -61,15 +61,17 @@ pub enum ChromaFormat {
 }
 
 impl ChromaFormat {
+    #[inline]
     pub fn is_chrome_subsampled(&self) -> bool {
         matches!(self, ChromaFormat::YUV420 | ChromaFormat::YUV422)
     }
 
-    pub fn get_chroma_sample_size(&self) -> Size {
+    #[inline]
+    pub fn get_chroma_shift(&self) -> Size {
         match self {
-            ChromaFormat::YUV420 => Size { width: 2, height: 2 },
-            ChromaFormat::YUV422 => Size { width: 2, height: 1 },
-            _ => Size { width: 1, height: 1 },
+            ChromaFormat::YUV420 => Size { width: 1, height: 1 },
+            ChromaFormat::YUV422 => Size { width: 1, height: 0 },
+            _ => Size { width: 0, height: 0 },
         }
     }
 }

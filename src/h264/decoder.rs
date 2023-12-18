@@ -149,7 +149,6 @@ impl Decoder {
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
                     Macroblock::PCM(block) => {
-                        info!("mb_addr: {:?} loc: {:?}", mb_addr, block_location);
                         let y_plane = &mut frame.planes[0];
                         let mut plane_slice =
                             y_plane.mut_slice(point_to_plain_offset(&block_location));

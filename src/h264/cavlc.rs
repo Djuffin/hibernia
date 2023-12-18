@@ -6,7 +6,14 @@ pub struct CoeffToken {
     pub trailing_ones: u8,
     pub pattern_len: u8,
 }
-pub type CoeffTokenPattern = (/* bit pattern */ u16, /* length */ u8);
+
+impl CoeffToken {
+    pub fn is_valid(&self) -> bool {
+        self.pattern_len > 0
+    }
+}
+
+pub(crate) type CoeffTokenPattern = (/* bit pattern */ u16, /* length */ u8);
 
 // Naive implementation of Table 9-5 lookup for coeff_token patterns
 pub fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
@@ -66,7 +73,7 @@ mod tests {
             let mut recognizer_patterns = [[false; 4]; 17];
             for bits in 0..=u16::MAX {
                 let result = lookup_coeff_token(bits, nc);
-                if result.pattern_len == 0 {
+                if !result.is_valid() {
                     continue;
                 }
                 if result.pattern_len == 1 {

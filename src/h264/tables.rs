@@ -62,7 +62,6 @@ pub const TABLE95: [(
     BitPattern,
 ); 62] = include!("table_9-5.rs");
 
-
 #[allow(clippy::all)]
 pub const TABLE97: [(
     u8,

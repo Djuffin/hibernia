@@ -37,7 +37,7 @@ pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> u8 {
             return row.0;
         }
     }
-    return u8::MAX;
+    u8::MAX
 }
 
 // Naive implementation of Table 9-5 lookup for coeff_token patterns

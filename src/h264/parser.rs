@@ -655,7 +655,7 @@ pub fn parse_residual_cavlc(
 
     // Section 9.2.3 Parsing process for run information
     let mut runs = [0; 16];
-    let zeros_left = if coeff_token.total_coeffs < (end_idx - start_idx + 1) as u8 { 0 } else { 0 };
+    let zeros_left = if coeff_token.total_coeffs < (end_idx - start_idx + 1) as u8 { 1 } else { 0 };
 
     Ok(())
 }
@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.disable_deblocking_filter_idc, 0);
 
-        parse_slice_data(&mut input, &mut slice);//.expect("blocks parsing failed");
+        parse_slice_data(&mut input, &mut slice); //.expect("blocks parsing failed");
     }
 
     #[test]

@@ -16,7 +16,7 @@ impl CoeffToken {
 pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
 
 // Naive implementation of Tables 9-7, 9-8 lookup for total_zeros patterns
-pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> u8 {
+pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> (u8, u8) {
     for row in tables::TABLE9_7AND8 {
         let (pattern, pattern_len) = match vlc_idx {
             1 => row.1,
@@ -42,10 +42,10 @@ pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> u8 {
         let shift = u16::BITS - pattern_len as u32;
         let meaningful_bits = bits >> shift;
         if meaningful_bits == pattern {
-            return row.0;
+            return (row.0, pattern_len);
         }
     }
-    u8::MAX
+    (0, 0)
 }
 
 // Naive implementation of Table 9-5 lookup for coeff_token patterns
@@ -83,17 +83,31 @@ mod tests {
     }
 
     #[test]
-    pub fn test_lookup_total_zeros() {
-        assert_eq!(lookup_total_zeros(prepare_bits("00000010"), 1), 12);
-        assert_eq!(lookup_total_zeros(prepare_bits("110"), 3), 2);
-        assert_eq!(lookup_total_zeros(prepare_bits("000000"), 7), 9);
-        assert_eq!(lookup_total_zeros(prepare_bits("000001"), 6), 0);
+    pub fn brute_force_test_lookup_total_zeros() {
+        for vcl_idx in 1..16 {
+            for bits in 0..=u16::MAX {
+                let result = lookup_total_zeros(bits, vcl_idx);
+                if result.1 == 0 {
+                    continue;
+                }
+                assert!(result.1 <= 9);
+                assert!(result.0 < 17 - vcl_idx);
+            }
+        }
+    }
 
-        assert_eq!(lookup_total_zeros(prepare_bits("000001"), 8), 0);
-        assert_eq!(lookup_total_zeros(prepare_bits("1"), 15), 1);
-        assert_eq!(lookup_total_zeros(prepare_bits("0000"), 10), 1);
-        assert_eq!(lookup_total_zeros(prepare_bits("0000"), 12), 0);
-        assert_eq!(lookup_total_zeros(prepare_bits("00001"), 9), 7);
+    #[test]
+    pub fn test_lookup_total_zeros() {
+        assert_eq!(lookup_total_zeros(prepare_bits("00000010"), 1), (12, 8));
+        assert_eq!(lookup_total_zeros(prepare_bits("110"), 3), (2, 3));
+        assert_eq!(lookup_total_zeros(prepare_bits("000000"), 7), (9, 6));
+        assert_eq!(lookup_total_zeros(prepare_bits("000001"), 6), (0, 6));
+
+        assert_eq!(lookup_total_zeros(prepare_bits("000001"), 8), (0, 6));
+        assert_eq!(lookup_total_zeros(prepare_bits("1"), 15), (1, 1));
+        assert_eq!(lookup_total_zeros(prepare_bits("00000"), 10), (1, 5));
+        assert_eq!(lookup_total_zeros(prepare_bits("0000"), 12), (0, 4));
+        assert_eq!(lookup_total_zeros(prepare_bits("00001"), 9), (7, 5));
     }
 
     #[test]

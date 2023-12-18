@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use super::macroblock::Macroblock;
+use super::macroblock::{Macroblock, MbAddr};
 use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{SequenceParameterSet, VuiParameters};
-use super::Profile;
-
-type MbAddr = u32;
+use super::{tables, Point, Profile};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum SliceType {
@@ -99,5 +97,20 @@ impl Slice {
 
     pub fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
         self.mb_addr_to_mb.get(&mb_addr)
+    }
+
+    pub fn put_mb(&mut self, mb_addr: MbAddr, block: Macroblock) {
+        self.mb_addr_to_mb.insert(mb_addr, block);
+    }
+
+    pub fn get_block_count(&self) -> usize {
+        self.mb_addr_to_mb.len()
+    }
+
+    pub fn get_mb_location(&self, addr: MbAddr) -> Point {
+        let width_in_mbs = self.sps.pic_width_in_mbs();
+        let x = addr % (width_in_mbs as u32) * (tables::MB_WIDTH as u32);
+        let y = addr / (width_in_mbs as u32) * (tables::MB_HEIGHT as u32);
+        Point { x, y }
     }
 }

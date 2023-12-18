@@ -4,6 +4,10 @@ use super::macroblock;
 use cavlc::CoeffTokenPattern;
 use macroblock::{CodedBlockPattern, IMbType};
 
+pub const MB_WIDTH: usize = 16;
+pub const MB_HEIGHT: usize = 16;
+pub const BIT_DEPTH: usize = 8;
+
 // Table 9-4 – Assignment of codeNum to values of coded_block_pattern for
 // macroblock prediction modes
 const CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN: [u8; 48] = [

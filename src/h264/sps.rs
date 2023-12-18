@@ -1,4 +1,4 @@
-use super::{ChromaFormat, Profile};
+use super::{tables, ChromaFormat, Profile};
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct HdrParameters {}
@@ -46,6 +46,14 @@ pub struct VuiParameters {
     pub max_dec_frame_buffering: u8,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct FrameCrop {
+    pub top: u32,
+    pub left: u32,
+    pub right: u32,
+    pub bottom: u32,
+}
+
 // Section 7.4.2.1.1 Sequence parameter set data semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SequenceParameterSet {
@@ -89,12 +97,7 @@ pub struct SequenceParameterSet {
     pub mb_adaptive_frame_field_flag: bool,
     pub direct_8x8_inference_flag: bool,
 
-    pub frame_cropping_flag: bool,
-    pub frame_crop_left_offset: u32,
-    pub frame_crop_right_offset: u32,
-    pub frame_crop_top_offset: u32,
-    pub frame_crop_bottom_offset: u32,
-
+    pub frame_cropping: Option<FrameCrop>,
     pub vui_parameters: Option<VuiParameters>,
 }
 
@@ -120,8 +123,16 @@ impl SequenceParameterSet {
         self.pic_width_in_mbs_minus1 as usize + 1
     }
 
+    pub fn pic_width(&self) -> usize {
+        self.pic_width_in_mbs() * tables::MB_WIDTH
+    }
+
     pub fn pic_hight_in_mbs(&self) -> usize {
         self.pic_height_in_map_units_minus1 as usize + 1
+    }
+
+    pub fn pic_hight(&self) -> usize {
+        self.pic_hight_in_mbs() * tables::MB_HEIGHT
     }
 
     pub fn pic_size_in_mbs(&self) -> usize {

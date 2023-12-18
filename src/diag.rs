@@ -9,7 +9,7 @@ impl log::Log for SimpleLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            println!("{} - {}", record.level(), record.args());
+            println!("{}: {}", record.level(), record.args());
         }
     }
 
@@ -20,5 +20,5 @@ static LOGGER: SimpleLogger = SimpleLogger;
 
 pub fn init() {
     log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(LevelFilter::Trace);
+    log::set_max_level(LevelFilter::Info);
 }

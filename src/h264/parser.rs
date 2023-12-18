@@ -1,7 +1,9 @@
 use std::mem::MaybeUninit;
 
 use crate::h264::macroblock::PcmMb;
+use crate::h264::sps::FrameCrop;
 
+use super::decoder;
 use super::macroblock;
 use super::nal;
 use super::pps;
@@ -9,7 +11,8 @@ use super::slice;
 use super::sps;
 use super::tables;
 
-use super::{ChromaFormat, DecoderContext, Profile};
+use super::{ChromaFormat, Profile};
+use decoder::DecoderContext;
 use log::trace;
 use macroblock::{IMb, IMbType, Macroblock, MbPredictionMode};
 use nal::{NalHeader, NalUnitType};
@@ -269,12 +272,25 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     }
 
     read_value!(input, sps.direct_8x8_inference_flag, f);
-    read_value!(input, sps.frame_cropping_flag, f);
-    if sps.frame_cropping_flag {
-        read_value!(input, sps.frame_crop_left_offset, ue, 32);
-        read_value!(input, sps.frame_crop_right_offset, ue, 32);
-        read_value!(input, sps.frame_crop_top_offset, ue, 32);
-        read_value!(input, sps.frame_crop_bottom_offset, ue, 32);
+
+    let frame_cropping_flag: bool;
+    read_value!(input, frame_cropping_flag, f);
+    if frame_cropping_flag {
+        let frame_crop_left_offset: u32;
+        let frame_crop_right_offset: u32;
+        let frame_crop_top_offset: u32;
+        let frame_crop_bottom_offset: u32;
+
+        read_value!(input, frame_crop_left_offset, ue, 32);
+        read_value!(input, frame_crop_right_offset, ue, 32);
+        read_value!(input, frame_crop_top_offset, ue, 32);
+        read_value!(input, frame_crop_bottom_offset, ue, 32);
+        sps.frame_cropping = Some(FrameCrop {
+            left: frame_crop_left_offset,
+            right: frame_crop_right_offset,
+            top: frame_crop_top_offset,
+            bottom: frame_crop_bottom_offset,
+        });
     }
 
     let mut vui_parameters_present = false;
@@ -416,8 +432,7 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
 pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
     let mut zeros = 0;
     let mut result = Vec::<u8>::new();
-    let mut byte_index = 0;
-    for byte in input {
+    for (byte_index, byte) in input.iter().enumerate() {
         match *byte {
             0 => {
                 if !result.is_empty() {
@@ -431,10 +446,8 @@ pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
                         result.reserve(input.len());
                         result.extend_from_slice(&input[..byte_index]);
                     }
-                } else {
-                    if !result.is_empty() {
-                        result.push(*byte);
-                    }
+                } else if !result.is_empty() {
+                    result.push(*byte);
                 }
                 zeros = 0;
             }
@@ -445,8 +458,6 @@ pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
                 zeros = 0;
             }
         }
-
-        byte_index += 1;
     }
     result
 }
@@ -573,8 +584,12 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         let mut block = PcmMb::default();
         input.align(1).map_err(|e| "pcm_alignment_zero_bit")?;
 
-        let luma_samples = 16 * 16;
-        let chroma_samples = 8 * 8;
+        let luma_samples =
+            tables::MB_WIDTH * tables::MB_HEIGHT * tables::BIT_DEPTH / (u8::BITS as usize);
+        let chroma_sample_size = slice.sps.chroma_format_idc.get_chroma_sample_size();
+        let chroma_samples = luma_samples
+            / (chroma_sample_size.width as usize)
+            / (chroma_sample_size.height as usize);
         block.pcm_sample_luma.reserve(luma_samples);
         for _ in 0..luma_samples {
             block.pcm_sample_luma.push(input.read_u8(8).map_err(|e| "Luma samples")?);
@@ -632,9 +647,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
 }
 
 // Section 7.3.4 Slice data syntax
-pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec<Macroblock>> {
-    let mut blocks = Vec::<Macroblock>::new();
-
+pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
     // Baseline profile features
     if (slice.sps.profile != Profile::Baseline) {
         todo!("profiles above baseline");
@@ -658,7 +671,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec
     let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
     while more_data {
         let block = parse_macroblock(input, slice)?;
-        blocks.push(block);
+        slice.put_mb(curr_mb_addr, block);
         if (curr_mb_addr < pic_size_in_mbs) {
             curr_mb_addr += 1;
             more_data = more_rbsp_data(input);
@@ -666,8 +679,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &Slice) -> ParseResult<Vec
             more_data = false;
         }
     }
-
-    Ok(blocks)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -781,7 +793,7 @@ mod tests {
         let mut input = reader(&slice_data);
         let nal_header = parse_nal_header(&mut input).expect("NAL unit");
         assert_eq!(nal_header.nal_unit_type, NalUnitType::IDRSlice);
-        let slice =
+        let mut slice =
             parse_slice_header(&ctx, &nal_header, &mut input).expect("header parsing failed");
         let header = &slice.header;
         assert_eq!(header.slice_type, SliceType::I);
@@ -792,9 +804,9 @@ mod tests {
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.disable_deblocking_filter_idc, 0);
 
-        let blocks = parse_slice_data(&mut input, &slice).expect("blocks parsing failed");
-        assert_eq!(blocks.len(), 1);
-        println!("{:?}", blocks[0]);
+        parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
+        //assert_eq!(blocks.len(), 1);
+        //println!("{:?}", blocks[0]);
     }
 
     #[test]

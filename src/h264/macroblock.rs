@@ -4,6 +4,8 @@ use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use super::sps::{SequenceParameterSet, VuiParameters};
 use num_traits::cast::FromPrimitive;
 
+pub type MbAddr = u32;
+
 // Table 7-11 – Macroblock types for I slices
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]

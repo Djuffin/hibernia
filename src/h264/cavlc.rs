@@ -17,16 +17,7 @@ pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
 
 // Naive implementation of Tables 9-7, 9-8 lookup for total_zeros patterns
 pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> u8 {
-    if vlc_idx < 8 {
-        lookup_total_zeros97(bits, vlc_idx)
-    } else {
-        lookup_total_zeros98(bits, vlc_idx)
-    }
-}
-
-// Tables 9-7
-fn lookup_total_zeros97(bits: u16, vlc_idx: u8) -> u8 {
-    for row in tables::TABLE97 {
+    for row in tables::TABLE9_7AND8 {
         let (pattern, pattern_len) = match vlc_idx {
             1 => row.1,
             2 => row.2,
@@ -35,32 +26,14 @@ fn lookup_total_zeros97(bits: u16, vlc_idx: u8) -> u8 {
             5 => row.5,
             6 => row.6,
             7 => row.7,
-            _ => (0, 0),
-        };
-        if pattern_len == 0 {
-            break;
-        }
-        let shift = u16::BITS - pattern_len as u32;
-        let meaningful_bits = bits >> shift;
-        if meaningful_bits == pattern {
-            return row.0;
-        }
-    }
-    u8::MAX
-}
-
-// Tables 9-8
-fn lookup_total_zeros98(bits: u16, vlc_idx: u8) -> u8 {
-    for row in tables::TABLE98 {
-        let (pattern, pattern_len) = match vlc_idx {
-            8 => row.1,
-            9 => row.2,
-            10 => row.3,
-            11 => row.4,
-            12 => row.5,
-            13 => row.6,
-            14 => row.7,
-            15 => row.8,
+            8 => row.8,
+            9 => row.9,
+            10 => row.10,
+            11 => row.11,
+            12 => row.12,
+            13 => row.13,
+            14 => row.14,
+            15 => row.15,
             _ => (0, 0),
         };
         if pattern_len == 0 {

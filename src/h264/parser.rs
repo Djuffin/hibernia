@@ -13,6 +13,7 @@ use super::slice;
 use super::sps;
 use super::tables;
 
+use super::cavlc::parse_residual_block;
 use super::{ChromaFormat, Profile};
 use decoder::DecoderContext;
 use log::trace;
@@ -21,7 +22,6 @@ use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
-use super::cavlc::parse_residual_block;
 
 pub use bitreader::BitReader;
 pub type ParseResult<T> = Result<T, String>;
@@ -758,7 +758,6 @@ mod tests {
 
     #[test]
     pub fn test_slice() {
-        diag::init();
         let sps = SequenceParameterSet {
             profile: Profile::Baseline,
             constraint_set0_flag: true,

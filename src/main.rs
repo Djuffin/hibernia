@@ -14,7 +14,7 @@ use std::env;
 use std::fs;
 
 fn main() {
-    diag::init();
+    diag::init(false);
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         let name = args[1].clone();

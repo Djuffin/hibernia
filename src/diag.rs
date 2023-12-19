@@ -18,7 +18,7 @@ impl log::Log for SimpleLogger {
 
 static LOGGER: SimpleLogger = SimpleLogger;
 
-pub fn init() {
+pub fn init(trace: bool) {
     log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(LevelFilter::Info);
+    log::set_max_level(if trace { LevelFilter::Trace } else { LevelFilter::Info });
 }

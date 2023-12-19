@@ -129,7 +129,6 @@ pub fn parse_residual_block(
     //end_idx: usize,
     max_num_coeff: usize,
 ) -> ParseResult<()> {
-    //coeff_level.fill(0);
     let nc = 0;
     let next_16_bits = input.peek_u16(16).map_err(|e| "coeff_token".to_owned())?;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
@@ -141,10 +140,12 @@ pub fn parse_residual_block(
     if total_coeffs == 0 {
         return Ok(());
     }
+    trace!("total_coeffs: {} trailing_ones: {}", total_coeffs, coeff_token.trailing_ones);
 
     // Section 9.2.2 Parsing process for level information
     let mut levels = [0; 16];
-    let (lower_levels, higher_levels) = levels.split_at_mut(coeff_token.trailing_ones as usize);
+    let (lower_levels, higher_levels) =
+        levels[..total_coeffs].split_at_mut(coeff_token.trailing_ones as usize);
     for level in lower_levels {
         let trailing_ones_sign_flag: i32;
         read_value!(input, trailing_ones_sign_flag, u, 1);
@@ -154,6 +155,7 @@ pub fn parse_residual_block(
     let mut suffix_len = if total_coeffs > 10 && coeff_token.trailing_ones < 3 { 1 } else { 0 };
     for (i, level) in higher_levels.iter_mut().enumerate() {
         let level_prefix = parse_level_prefix(input)?;
+        trace!("i: {} level_prefix: {}", i, level_prefix);
         let level_suffix_size = if level_prefix == 14 && suffix_len == 0 {
             4
         } else if level_prefix >= 15 {
@@ -161,6 +163,7 @@ pub fn parse_residual_block(
         } else {
             suffix_len
         };
+        trace!("level_suffix_size: {} suffix_len: {}", level_suffix_size, suffix_len);
         let mut level_suffix = 0u32;
         if level_suffix_size > 0 {
             read_value!(input, level_suffix, u, level_suffix_size as u8);
@@ -186,7 +189,9 @@ pub fn parse_residual_block(
         if suffix_len < 6 && level.abs() > (3 << (suffix_len - 1)) {
             suffix_len += 1;
         }
+        trace!("level: {}", *level);
     }
+    trace!("levels: {:?}", levels);
 
     // Section 9.2.3 Parsing process for run information
     let mut zeros_left = if total_coeffs < coeff_level.len() {
@@ -202,6 +207,7 @@ pub fn parse_residual_block(
             ));
         }
         input.skip(bits as u64);
+        trace!("total_zeros: {}", total_zeros);
         total_zeros
     } else {
         0
@@ -218,6 +224,7 @@ pub fn parse_residual_block(
                     next_16_bits, zeros_left
                 ));
             }
+            input.skip(bits as u64);
             zeros_left -= run_before;
             run_before
         } else {
@@ -225,12 +232,14 @@ pub fn parse_residual_block(
         }
     }
     runs[total_coeffs - 1] = zeros_left;
+    trace!("runs: {:?}", runs);
+
     let mut coeff_num = -1isize;
     for i in (0..total_coeffs).rev() {
         coeff_num += (runs[i] + 1) as isize;
         coeff_level[coeff_num as usize] = levels[i];
     }
-
+    trace!("coeff_level: {:?}", coeff_level);
     Ok(())
 }
 
@@ -241,6 +250,26 @@ mod tests {
     fn prepare_bits(bit_str: &str) -> u16 {
         let value = u16::from_str_radix(bit_str, 2).unwrap();
         value << (u16::BITS - bit_str.len() as u32)
+    }
+
+    #[test]
+    pub fn test_parse_residual() {
+        crate::diag::init(true);
+        let data = [0b00001000, 0b11100101, 0b11101101, 0, 0];
+        let mut output = [0i32; 16];
+
+        parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
+        assert_eq!(output, [0, 3, 0, 1, -1, -1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+        let data = [0b00000001, 0b10100010, 0b01000010, 0b11100110, 0b0, 0, 0];
+        output.fill(0);
+        parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
+        assert_eq!(output, [-2, 4, 3, -3, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+        let data = [0b00011100, 0b01110010, 0, 0];
+        output.fill(0);
+        parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
+        assert_eq!(output, [0, 0, 0, 1, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

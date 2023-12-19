@@ -69,6 +69,31 @@ pub fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
     (0, 0)
 }
 
+// Naive implementation of Table 9-10 – Tables for run_before
+pub fn lookup_run_before(bits: u16, zeros_left: u8) -> (u8, u8) {
+    for row in tables::TABLE9_10 {
+        let (pattern, pattern_len) = match zeros_left {
+            0 => (0, 0),
+            1 => row.1,
+            2 => row.2,
+            3 => row.3,
+            4 => row.4,
+            5 => row.5,
+            6 => row.6,
+            7.. => row.7,
+        };
+        if pattern_len == 0 {
+            break;
+        }
+        let shift = u16::BITS - pattern_len as u32;
+        let meaningful_bits = bits >> shift;
+        if meaningful_bits == pattern {
+            return (row.0, pattern_len);
+        }
+    }
+    (0, 0)
+}
+
 // Naive implementation of Table 9-5 lookup for coeff_token patterns
 pub fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
     for row in tables::TABLE95 {
@@ -101,6 +126,17 @@ mod tests {
     fn prepare_bits(bit_str: &str) -> u16 {
         let value = u16::from_str_radix(bit_str, 2).unwrap();
         value << (u16::BITS - bit_str.len() as u32)
+    }
+
+    #[test]
+    pub fn test_lookup_run_before() {
+        for i in 3..7 {
+            assert_eq!(lookup_run_before(prepare_bits("11"), i), (0, 2));
+        }
+
+        assert_eq!(lookup_run_before(prepare_bits("010"), 5), (3, 3));
+        assert_eq!(lookup_run_before(prepare_bits("000000000001"), 7), (14, 12));
+        assert_eq!(lookup_run_before(prepare_bits("110"), 7), (1, 3));
     }
 
     #[test]

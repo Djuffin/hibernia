@@ -125,12 +125,10 @@ fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
 pub fn parse_residual_block(
     input: &mut BitReader,
     coeff_level: &mut [i32],
-    //start_idx: usize,
-    //end_idx: usize,
     max_num_coeff: usize,
 ) -> ParseResult<()> {
     let nc = 0;
-    let next_16_bits = input.peek_u16(16).map_err(|e| "coeff_token".to_owned())?;
+    let next_16_bits = input.peek_u16(16).map_err(|e| "EOF at coeff_token".to_owned())?;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
     if (!coeff_token.is_valid()) {
         return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
@@ -195,7 +193,7 @@ pub fn parse_residual_block(
 
     // Section 9.2.3 Parsing process for run information
     let mut zeros_left = if total_coeffs < coeff_level.len() {
-        let next_16_bits = input.peek_u16(16).map_err(|e| "total_zeros".to_owned())?;
+        let next_16_bits = input.peek_u16(16).map_err(|e| "EOF at total_zeros".to_owned())?;
         let tz_vlc_index = total_coeffs as u8;
         let lookup_tz =
             if max_num_coeff == 4 { lookup_total_zeros_chroma } else { lookup_total_zeros };
@@ -216,7 +214,7 @@ pub fn parse_residual_block(
     let mut runs = [0; 16];
     for run in runs.iter_mut().take(total_coeffs - 1) {
         *run = if zeros_left > 0 {
-            let next_16_bits = input.peek_u16(16).map_err(|e| "run_before".to_owned())?;
+            let next_16_bits = input.peek_u16(16).map_err(|e| "EOF at run_before".to_owned())?;
             let (run_before, bits) = lookup_run_before(next_16_bits, zeros_left);
             if bits == 0 {
                 return Err(format!(
@@ -252,21 +250,32 @@ mod tests {
         value << (u16::BITS - bit_str.len() as u32)
     }
 
+    fn prepare_bit_vec(bit_str: &str) -> Vec<u8> {
+        let mut result = Vec::<u8>::new();
+        for byte in bit_str.split(' ') {
+            result.push(u8::from_str_radix(byte, 2).unwrap());
+        }
+
+        // Extra padding for input reader
+        result.push(0);
+        result.push(0);
+        result
+    }
+
     #[test]
     pub fn test_parse_residual() {
-        crate::diag::init(true);
-        let data = [0b00001000, 0b11100101, 0b11101101, 0, 0];
+        let data = prepare_bit_vec("00001000 11100101 11101101");
         let mut output = [0i32; 16];
 
         parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
         assert_eq!(output, [0, 3, 0, 1, -1, -1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
 
-        let data = [0b00000001, 0b10100010, 0b01000010, 0b11100110, 0b0, 0, 0];
+        let data = prepare_bit_vec("00000001 10100010 01000010 11100110 0");
         output.fill(0);
         parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
         assert_eq!(output, [-2, 4, 3, -3, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
-        let data = [0b00011100, 0b01110010, 0, 0];
+        let data = prepare_bit_vec("00011100 01110010");
         output.fill(0);
         parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
         assert_eq!(output, [0, 0, 0, 1, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0]);

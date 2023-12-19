@@ -66,7 +66,7 @@ pub fn se(input: &mut BitReader) -> ParseResult<i32> {
 #[macro_export]
 macro_rules! cast_or_error {
     ($dest:expr, $value:expr) => {
-        trace!("set {} = {}", stringify!($dest), $value);
+        trace!("parse {} = {}", stringify!($dest), $value);
         $dest = match $value.try_into() {
             Ok(v) => v,
             Err(e) => {

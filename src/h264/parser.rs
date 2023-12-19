@@ -1,9 +1,9 @@
+#![macro_use]
 use std::mem::MaybeUninit;
 
 use crate::h264::macroblock::PcmMb;
 use crate::h264::sps::FrameCrop;
 
-use super::cavlc;
 use super::decoder;
 use super::macroblock;
 use super::macroblock::MbAddr;
@@ -21,19 +21,20 @@ use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
+use super::cavlc::parse_residual_block;
 
 pub use bitreader::BitReader;
-type ParseResult<T> = Result<T, String>;
+pub type ParseResult<T> = Result<T, String>;
 
-fn f(input: &mut BitReader) -> ParseResult<bool> {
+pub fn f(input: &mut BitReader) -> ParseResult<bool> {
     input.read_bool().map_err(|e| "f(): end of stream".to_owned())
 }
 
-fn u(input: &mut BitReader, n: u8) -> ParseResult<u32> {
+pub fn u(input: &mut BitReader, n: u8) -> ParseResult<u32> {
     input.read_u32(n).map_err(|e| "u(): end of stream".to_owned())
 }
 
-fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
+pub fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
     // Parsing process for Exp-Golomb codes. Section 9.1
     if n > 32 {
         return Err(format!("ue(): too many ({}) bits requested", n));
@@ -55,13 +56,14 @@ fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
     Ok(result as u32)
 }
 
-fn se(input: &mut BitReader) -> ParseResult<i32> {
+pub fn se(input: &mut BitReader) -> ParseResult<i32> {
     // Mapping process for signed Exp-Golomb codes Section 9.1.1
     let value = ue(input, 32)?;
     let result = if value & 1 != 0 { ((value >> 1) + 1) as i32 } else { -((value >> 1) as i32) };
     Ok(result)
 }
 
+#[macro_export]
 macro_rules! cast_or_error {
     ($dest:expr, $value:expr) => {
         trace!("set {} = {}", stringify!($dest), $value);
@@ -74,6 +76,7 @@ macro_rules! cast_or_error {
     };
 }
 
+#[macro_export]
 macro_rules! expect_value {
     ($input:ident, $msg:expr, $expected:expr, $bits:expr) => {
         let error_handler = |e| format!("Not enough data for {}", $msg);
@@ -84,10 +87,11 @@ macro_rules! expect_value {
     };
 }
 
+#[macro_export]
 macro_rules! read_value {
     ($input:ident, $dest:expr, u, $bits:expr) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = u($input, $bits).map_err(error_handler)?;
+        let value = $crate::h264::parser::u($input, $bits).map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, ue) => {
@@ -95,17 +99,17 @@ macro_rules! read_value {
     };
     ($input:ident, $dest:expr, ue, $bits:expr) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = ue($input, $bits).map_err(error_handler)?;
+        let value = $crate::h264::parser::ue($input, $bits).map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, se) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = se($input).map_err(error_handler)?;
+        let value = $crate::h264::parser::se($input).map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, f) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = f($input).map_err(error_handler)?;
+        let value = $crate::h264::parser::f($input).map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
 }
@@ -579,104 +583,12 @@ pub fn parse_slice_header(
 }
 
 // Section 9.2.2.1 Parsing process for level_prefix
-fn parse_level_prefix(input: &mut BitReader) -> ParseResult<u32> {
+pub fn parse_level_prefix(input: &mut BitReader) -> ParseResult<u32> {
     let mut result = 0;
     while let false = input.read_bool().map_err(|e| "leadingZeroBits".to_owned())? {
         result += 1;
     }
     Ok(result)
-}
-
-pub fn parse_residual_cavlc(
-    input: &mut BitReader,
-    coeff_level: &mut [i32],
-    start_idx: usize,
-    end_idx: usize,
-    max_num_coeff: usize,
-) -> ParseResult<()> {
-    coeff_level[0..max_num_coeff].fill(0);
-    let nc = 0;
-    let next_16_bits = input.peek_u16(16).map_err(|e| "coeff_token".to_owned())?;
-    let coeff_token = cavlc::lookup_coeff_token(next_16_bits, nc);
-    if (!coeff_token.is_valid()) {
-        return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
-    }
-    input.skip(coeff_token.pattern_len as u64);
-    if coeff_token.total_coeffs == 0 {
-        return Ok(());
-    }
-
-    // Section 9.2.2 Parsing process for level information
-    let mut levels = [0; 16];
-    let (lower_levels, higher_levels) = levels.split_at_mut(coeff_token.trailing_ones as usize);
-    for level in lower_levels {
-        let trailing_ones_sign_flag: i32;
-        read_value!(input, trailing_ones_sign_flag, u, 1);
-        *level = 1 - 2 * trailing_ones_sign_flag;
-    }
-
-    let mut suffix_len =
-        if coeff_token.total_coeffs > 10 && coeff_token.trailing_ones < 3 { 1 } else { 0 };
-    for (i, level) in higher_levels.iter_mut().enumerate() {
-        let level_prefix = parse_level_prefix(input)?;
-        let level_suffix_size = if level_prefix == 14 && suffix_len == 0 {
-            4
-        } else if level_prefix >= 15 {
-            level_prefix - 3
-        } else {
-            suffix_len
-        };
-        let mut level_suffix = 0u32;
-        if level_suffix_size > 0 {
-            read_value!(input, level_suffix, u, level_suffix_size as u8);
-        }
-        let mut level_code = (std::cmp::min(15, level_prefix) << suffix_len) + level_suffix;
-        if level_prefix >= 15 && suffix_len == 0 {
-            level_code += 15;
-        }
-        if level_prefix >= 16 {
-            level_code += (1 << (level_prefix - 3)) - 4096;
-        }
-        if i == 0 && coeff_token.trailing_ones < 3 {
-            level_code += 2;
-        }
-        if level_code % 2 == 0 {
-            *level = (level_code as i32 + 2) >> 1;
-        } else {
-            *level = (-(level_code as i32) - 1) >> 1;
-        }
-        if suffix_len == 0 {
-            suffix_len = 1;
-        }
-        if suffix_len < 6 && level.abs() > (3 << (suffix_len - 1)) {
-            suffix_len += 1;
-        }
-    }
-
-    // Section 9.2.3 Parsing process for run information
-    let mut runs = [0; 16];
-    let zeros_left = if coeff_token.total_coeffs < (end_idx - start_idx + 1) as u8 {
-        let next_16_bits = input.peek_u16(16).map_err(|e| "total_zeros".to_owned())?;
-        let tz_vlc_index = coeff_token.total_coeffs;
-        let lookup_tz = if max_num_coeff == 4 {
-            cavlc::lookup_total_zeros_chroma
-        } else {
-            cavlc::lookup_total_zeros
-        };
-        let (total_zeros, bits) = lookup_tz(next_16_bits, tz_vlc_index);
-        if bits == 0 {
-            return Err(format!(
-                "Unknown total_zeros value: {:#016b} tz_vlc_index:{}",
-                next_16_bits, tz_vlc_index
-            ));
-        }
-        input.skip(bits as u64);
-        total_zeros
-    } else {
-        0
-    };
-
-    Ok(())
 }
 
 pub fn parse_macroblock(

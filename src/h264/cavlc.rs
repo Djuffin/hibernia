@@ -1,4 +1,7 @@
+use super::parser::{self, parse_level_prefix, BitReader, ParseResult};
 use super::tables;
+use crate::{cast_or_error, read_value};
+use log::trace;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct CoeffToken {
@@ -16,7 +19,7 @@ impl CoeffToken {
 pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
 
 // Naive implementation of Tables 9-7, 9-8 lookup for total_zeros patterns
-pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> (u8, u8) {
+fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> (u8, u8) {
     for row in tables::TABLE9_7AND8 {
         let (pattern, pattern_len) = match vlc_idx {
             1 => row.1,
@@ -49,7 +52,7 @@ pub fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> (u8, u8) {
 }
 
 // Naive implementation of Tables 9-9 total_zeros patterns
-pub fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
+fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
     for row in tables::TABLE9_9A {
         let (pattern, pattern_len) = match vlc_idx {
             1 => row.1,
@@ -70,7 +73,7 @@ pub fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
 }
 
 // Naive implementation of Table 9-10 – Tables for run_before
-pub fn lookup_run_before(bits: u16, zeros_left: u8) -> (u8, u8) {
+fn lookup_run_before(bits: u16, zeros_left: u8) -> (u8, u8) {
     for row in tables::TABLE9_10 {
         let (pattern, pattern_len) = match zeros_left {
             0 => (0, 0),
@@ -95,7 +98,7 @@ pub fn lookup_run_before(bits: u16, zeros_left: u8) -> (u8, u8) {
 }
 
 // Naive implementation of Table 9-5 lookup for coeff_token patterns
-pub fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
+fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
     for row in tables::TABLE95 {
         let (pattern, pattern_len) = match nc {
             0 | 1 => row.1,
@@ -117,6 +120,118 @@ pub fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
         }
     }
     CoeffToken::default()
+}
+
+pub fn parse_residual_block(
+    input: &mut BitReader,
+    coeff_level: &mut [i32],
+    //start_idx: usize,
+    //end_idx: usize,
+    max_num_coeff: usize,
+) -> ParseResult<()> {
+    //coeff_level.fill(0);
+    let nc = 0;
+    let next_16_bits = input.peek_u16(16).map_err(|e| "coeff_token".to_owned())?;
+    let coeff_token = lookup_coeff_token(next_16_bits, nc);
+    if (!coeff_token.is_valid()) {
+        return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
+    }
+    input.skip(coeff_token.pattern_len as u64);
+    let total_coeffs = coeff_token.total_coeffs as usize;
+    if total_coeffs == 0 {
+        return Ok(());
+    }
+
+    // Section 9.2.2 Parsing process for level information
+    let mut levels = [0; 16];
+    let (lower_levels, higher_levels) = levels.split_at_mut(coeff_token.trailing_ones as usize);
+    for level in lower_levels {
+        let trailing_ones_sign_flag: i32;
+        read_value!(input, trailing_ones_sign_flag, u, 1);
+        *level = 1 - 2 * trailing_ones_sign_flag;
+    }
+
+    let mut suffix_len = if total_coeffs > 10 && coeff_token.trailing_ones < 3 { 1 } else { 0 };
+    for (i, level) in higher_levels.iter_mut().enumerate() {
+        let level_prefix = parse_level_prefix(input)?;
+        let level_suffix_size = if level_prefix == 14 && suffix_len == 0 {
+            4
+        } else if level_prefix >= 15 {
+            level_prefix - 3
+        } else {
+            suffix_len
+        };
+        let mut level_suffix = 0u32;
+        if level_suffix_size > 0 {
+            read_value!(input, level_suffix, u, level_suffix_size as u8);
+        }
+        let mut level_code = (std::cmp::min(15, level_prefix) << suffix_len) + level_suffix;
+        if level_prefix >= 15 && suffix_len == 0 {
+            level_code += 15;
+        }
+        if level_prefix >= 16 {
+            level_code += (1 << (level_prefix - 3)) - 4096;
+        }
+        if i == 0 && coeff_token.trailing_ones < 3 {
+            level_code += 2;
+        }
+        if level_code % 2 == 0 {
+            *level = (level_code as i32 + 2) >> 1;
+        } else {
+            *level = (-(level_code as i32) - 1) >> 1;
+        }
+        if suffix_len == 0 {
+            suffix_len = 1;
+        }
+        if suffix_len < 6 && level.abs() > (3 << (suffix_len - 1)) {
+            suffix_len += 1;
+        }
+    }
+
+    // Section 9.2.3 Parsing process for run information
+    let mut zeros_left = if total_coeffs < coeff_level.len() {
+        let next_16_bits = input.peek_u16(16).map_err(|e| "total_zeros".to_owned())?;
+        let tz_vlc_index = total_coeffs as u8;
+        let lookup_tz =
+            if max_num_coeff == 4 { lookup_total_zeros_chroma } else { lookup_total_zeros };
+        let (total_zeros, bits) = lookup_tz(next_16_bits, tz_vlc_index);
+        if bits == 0 {
+            return Err(format!(
+                "Unknown total_zeros value: {:#016b} tz_vlc_index:{}",
+                next_16_bits, tz_vlc_index
+            ));
+        }
+        input.skip(bits as u64);
+        total_zeros
+    } else {
+        0
+    };
+
+    let mut runs = [0; 16];
+    for run in runs.iter_mut().take(total_coeffs - 1) {
+        *run = if zeros_left > 0 {
+            let next_16_bits = input.peek_u16(16).map_err(|e| "run_before".to_owned())?;
+            let (run_before, bits) = lookup_run_before(next_16_bits, zeros_left);
+            if bits == 0 {
+                return Err(format!(
+                    "Unknown run_before value: {:#016b} zeros_left:{}",
+                    next_16_bits, zeros_left
+                ));
+            }
+            zeros_left -= run_before;
+            run_before
+        } else {
+            0
+        }
+    }
+    runs[total_coeffs - 1] = zeros_left;
+    let mut coeff_num = -1isize;
+    for i in (0..total_coeffs).rev() {
+        coeff_num += (runs[i] + 1) as isize;
+        coeff_level[coeff_num as usize] = levels[i];
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

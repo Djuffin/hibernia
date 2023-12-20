@@ -135,12 +135,12 @@ pub fn parse_residual_block(
     nc: i32,
     max_num_coeff: usize,
 ) -> ParseResult<u8> {
-    let next_16_bits = input.peek_u16(16).map_err(|e| "EOF at coeff_token".to_owned())?;
+    let next_16_bits = input.read_u16(16).map_err(|e| "EOF at coeff_token".to_owned())?;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
     if (!coeff_token.is_valid()) {
         return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
     }
-    input.skip(coeff_token.pattern_len as u32);
+    input.go_back(16 - coeff_token.pattern_len as i64);
     let total_coeffs = coeff_token.total_coeffs as usize;
     trace!(
         "parse_residual_block() total_coeffs: {} trailing_ones: {}",
@@ -205,7 +205,7 @@ pub fn parse_residual_block(
 
     // Section 9.2.3 Parsing process for run information
     let mut zeros_left = if total_coeffs < coeff_level.len() {
-        let next_16_bits = input.peek_u16(16).map_err(|e| "EOF at total_zeros".to_owned())?;
+        let next_16_bits = input.read_u16(16).map_err(|e| "EOF at total_zeros".to_owned())?;
         let tz_vlc_index = total_coeffs as u8;
         let lookup_tz =
             if max_num_coeff == 4 { lookup_total_zeros_chroma } else { lookup_total_zeros };
@@ -216,7 +216,7 @@ pub fn parse_residual_block(
                 next_16_bits, tz_vlc_index
             ));
         }
-        input.skip(bits as u32);
+        input.go_back(16 - bits as i64);
         trace!("total_zeros: {}", total_zeros);
         total_zeros
     } else {
@@ -226,7 +226,7 @@ pub fn parse_residual_block(
     let mut runs = [0; 16];
     for run in runs.iter_mut().take(total_coeffs - 1) {
         *run = if zeros_left > 0 {
-            let next_16_bits = input.peek_u16(16).map_err(|e| "EOF at run_before".to_owned())?;
+            let next_16_bits = input.read_u16(16).map_err(|e| "EOF at run_before".to_owned())?;
             let (run_before, bits) = lookup_run_before(next_16_bits, zeros_left);
             if bits == 0 {
                 return Err(format!(
@@ -234,7 +234,7 @@ pub fn parse_residual_block(
                     next_16_bits, zeros_left
                 ));
             }
-            input.skip(bits as u32);
+            input.go_back(16 - bits as i64);
             zeros_left -= run_before;
             run_before
         } else {

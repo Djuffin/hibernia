@@ -32,20 +32,8 @@ impl<'a> RbspReader<'a> {
         self.reader.read(bits as u32)
     }
 
-    pub fn peek_u16(&mut self, bits: u8) -> Result<u16> {
-        let result = self.reader.read(bits as u32)?;
-        self.reader.seek_bits(SeekFrom::Current(-(bits as i64)))?;
-        Ok(result)
-    }
-
     pub fn read_u32(&mut self, bits: u8) -> Result<u32> {
         self.reader.read(bits as u32)
-    }
-
-    pub fn peek_u32(&mut self, bits: u8) -> Result<u32> {
-        let result = self.reader.read(bits as u32)?;
-        self.reader.seek_bits(SeekFrom::Current(-(bits as i64)))?;
-        Ok(result)
     }
 
     pub fn read_u64(&mut self, bits: u8) -> Result<u64> {
@@ -58,6 +46,10 @@ impl<'a> RbspReader<'a> {
 
     pub fn skip(&mut self, bits: u32) -> Result<()> {
         self.reader.skip(bits)
+    }
+
+    pub fn go_back(&mut self, bits: i64) -> Result<u64> {
+        self.reader.seek_bits(SeekFrom::Current(-bits))
     }
 
     pub fn read_till_one(&mut self) -> Result<u32> {

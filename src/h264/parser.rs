@@ -417,9 +417,9 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
 
 pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     let mut reader = BitReader::new(input);
-    while let Ok(bits) = reader.peek_u32(32) {
+    while let Ok(bits) = reader.read_u32(32) {
         if bits == 1 || (bits >> 8) == 1 {
-            return Some((reader.position() / 8) as usize);
+            return Some((reader.position() / 8 - 4) as usize);
         }
 
         let bytes_to_skip = match bits.leading_zeros() {
@@ -428,7 +428,7 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
             25..=31 => 4,
             _ => 1,
         };
-        reader.skip(bytes_to_skip * 8);
+        reader.go_back(32 - bytes_to_skip * 8);
     }
 
     None
@@ -474,11 +474,11 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
 
     // Skip zeros and the start code prefix.
     loop {
-        // Short start code: 0x00_00_00_01
-        if input.peek_u32(24).is_ok_and(|x| x == 1) {
-            input.read_u32(24).map_err(|e| "broken start code")?;
+        // Short start code: 0x00 0x00 0x01
+        if input.read_u32(24).is_ok_and(|x| x == 1) {
             break;
         }
+        input.go_back(24);
 
         expect_value!(input, "NAL start code zero_byte", 0, 8);
     }

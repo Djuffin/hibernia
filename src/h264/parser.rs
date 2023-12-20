@@ -4,9 +4,9 @@ use std::mem::MaybeUninit;
 use crate::h264::macroblock::PcmMb;
 use crate::h264::sps::FrameCrop;
 
+use super::cavlc;
 use super::decoder;
 use super::macroblock;
-use super::macroblock::MbAddr;
 use super::nal;
 use super::pps;
 use super::slice;
@@ -17,7 +17,7 @@ use super::cavlc::parse_residual_block;
 use super::{ChromaFormat, Profile};
 use decoder::DecoderContext;
 use log::trace;
-use macroblock::{IMb, IMbType, Macroblock, MbPredictionMode};
+use macroblock::{CodedBlockPattern, IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, Residual};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
@@ -582,13 +582,27 @@ pub fn parse_slice_header(
     Ok(Slice::new(sps.clone(), pps.clone(), header))
 }
 
-// Section 9.2.2.1 Parsing process for level_prefix
-pub fn parse_level_prefix(input: &mut BitReader) -> ParseResult<u32> {
-    let mut result = 0;
-    while let false = input.read_bool().map_err(|e| "leadingZeroBits".to_owned())? {
-        result += 1;
+pub fn parse_residual_luma(
+    input: &mut BitReader,
+    slice: &Slice,
+    block: &Macroblock,
+    residual: &mut Residual,
+    coded_block_pattern: CodedBlockPattern,
+) -> ParseResult<()> {
+    if block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
+    } else {
     }
-    Ok(result)
+    Ok(())
+}
+
+pub fn parse_residual(
+    input: &mut BitReader,
+    slice: &Slice,
+    block: &Macroblock,
+    residual: &mut Residual,
+    coded_block_pattern: CodedBlockPattern,
+) -> ParseResult<()> {
+    Ok(())
 }
 
 pub fn parse_macroblock(

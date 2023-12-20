@@ -1,4 +1,4 @@
-use super::parser::{self, parse_level_prefix, BitReader, ParseResult};
+use super::parser::{self, BitReader, ParseResult};
 use super::tables;
 use crate::{cast_or_error, read_value};
 use log::trace;
@@ -122,12 +122,23 @@ fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
     CoeffToken::default()
 }
 
+// Section 9.2.2.1 Parsing process for level_prefix
+fn parse_level_prefix(input: &mut BitReader) -> ParseResult<u32> {
+    let mut result = 0;
+    while let false = input.read_bool().map_err(|e| "leadingZeroBits".to_owned())? {
+        result += 1;
+    }
+    Ok(result)
+}
+
+// Parses a block of residual coefficients into `coeff_level` and returns
+// the number of non-zero coefficients.
 pub fn parse_residual_block(
     input: &mut BitReader,
     coeff_level: &mut [i32],
+    nc: i32,
     max_num_coeff: usize,
-) -> ParseResult<()> {
-    let nc = 0;
+) -> ParseResult<u8> {
     let next_16_bits = input.peek_u16(16).map_err(|e| "EOF at coeff_token".to_owned())?;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
     if (!coeff_token.is_valid()) {
@@ -136,7 +147,7 @@ pub fn parse_residual_block(
     input.skip(coeff_token.pattern_len as u64);
     let total_coeffs = coeff_token.total_coeffs as usize;
     if total_coeffs == 0 {
-        return Ok(());
+        return Ok(0);
     }
     trace!("total_coeffs: {} trailing_ones: {}", total_coeffs, coeff_token.trailing_ones);
 
@@ -229,6 +240,8 @@ pub fn parse_residual_block(
             0
         }
     }
+
+    // Section 9.2.4 Combining level and run information
     runs[total_coeffs - 1] = zeros_left;
     trace!("runs: {:?}", runs);
 
@@ -238,7 +251,7 @@ pub fn parse_residual_block(
         coeff_level[coeff_num as usize] = levels[i];
     }
     trace!("coeff_level: {:?}", coeff_level);
-    Ok(())
+    Ok(coeff_token.total_coeffs)
 }
 
 #[cfg(test)]
@@ -264,20 +277,31 @@ mod tests {
 
     #[test]
     pub fn test_parse_residual() {
+        // Examples from the book:
+        // The H.264 advanced video compression standard / Iain E. Richardson.
         let data = prepare_bit_vec("00001000 11100101 11101101");
         let mut output = [0i32; 16];
 
-        parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
+        assert_eq!(
+            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
+            5
+        );
         assert_eq!(output, [0, 3, 0, 1, -1, -1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
 
         let data = prepare_bit_vec("00000001 10100010 01000010 11100110 0");
         output.fill(0);
-        parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
+        assert_eq!(
+            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
+            5
+        );
         assert_eq!(output, [-2, 4, 3, -3, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
         let data = prepare_bit_vec("00011100 01110010");
         output.fill(0);
-        parse_residual_block(&mut BitReader::new(&data), &mut output, 16).unwrap();
+        assert_eq!(
+            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
+            3
+        );
         assert_eq!(output, [0, 0, 0, 1, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0]);
     }
 

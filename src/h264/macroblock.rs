@@ -143,6 +143,12 @@ impl CodedBlockPattern {
     }
 }
 
+pub struct Residual {
+    pub dc_level16x16: [i32; 16],
+    pub ac_level16x16: [i32; 16],
+    pub luma_level4x4: [i32; 16],
+}
+
 // Special case of I macroblock - raw pixels (IMbType::I_PCM)
 #[derive(Clone, Debug, Default)]
 pub struct PcmMb {
@@ -189,6 +195,17 @@ impl IMb {
             }
             IMbType::I_PCM => MbPredictionMode::None,
             _ => MbPredictionMode::Intra_16x16,
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+impl Macroblock {
+    #[inline]
+    pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
+        match self {
+            Macroblock::I(block) => block.MbPartPredMode(partition),
+            _ => MbPredictionMode::None,
         }
     }
 }

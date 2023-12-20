@@ -587,10 +587,32 @@ pub fn parse_residual_luma(
     slice: &Slice,
     block: &Macroblock,
     residual: &mut Residual,
-    coded_block_pattern: CodedBlockPattern,
 ) -> ParseResult<()> {
-    if block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
-    } else {
+    trace!("parse_residual_luma");
+    let pred_mode = block.MbPartPredMode(0);
+    if pred_mode == MbPredictionMode::Intra_16x16 {
+        let nc = 0;
+        parse_residual_block(input, &mut residual.dc_level16x16, nc, 16)?;
+    }
+    let coded_block_pattern = residual.coded_block_pattern;
+    for i8x8 in 0..4 {
+        for i4x4 in 0..4 {
+            let blk_idx = i8x8 * 4 + i4x4;
+            let nc = 0;
+            if coded_block_pattern.luma() & (1 << i8x8) != 0 {
+                if pred_mode == MbPredictionMode::Intra_16x16 {
+                    parse_residual_block(input, &mut residual.ac_level16x16[blk_idx], nc, 15)?;
+                } else {
+                    parse_residual_block(input, &mut residual.luma_level4x4[blk_idx], nc, 16)?;
+                }
+            } else {
+                if pred_mode == MbPredictionMode::Intra_16x16 {
+                    residual.ac_level16x16[blk_idx].fill(0);
+                } else {
+                    residual.luma_level4x4[blk_idx].fill(0);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -600,8 +622,33 @@ pub fn parse_residual(
     slice: &Slice,
     block: &Macroblock,
     residual: &mut Residual,
-    coded_block_pattern: CodedBlockPattern,
 ) -> ParseResult<()> {
+    trace!("parse_residual");
+    parse_residual_luma(input, slice, block, residual)?;
+    let coded_block_pattern = residual.coded_block_pattern;
+    if slice.sps.chroma_format_idc.is_chrome_subsampled() {
+        let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
+        if coded_block_pattern.chroma() & 3 != 0 {
+            parse_residual_block(input, &mut residual.chroma_cb_dc_level, nc, 4)?;
+            parse_residual_block(input, &mut residual.chroma_cr_dc_level, nc, 4)?;
+        } else {
+            residual.chroma_cb_dc_level.fill(0);
+            residual.chroma_cr_dc_level.fill(0);
+        }
+
+        for blk_idx in 0..4 {
+            if coded_block_pattern.chroma() & 2 != 0 {
+                let nc = 0;
+                parse_residual_block(input, &mut residual.chroma_cb_ac_level[blk_idx], nc, 15)?;
+                parse_residual_block(input, &mut residual.chroma_cr_ac_level[blk_idx], nc, 15)?;
+            } else {
+                residual.chroma_cb_ac_level[blk_idx].fill(0);
+                residual.chroma_cr_ac_level[blk_idx].fill(0);
+            }
+        }
+    } else {
+        todo!("i444");
+    }
     Ok(())
 }
 
@@ -619,8 +666,7 @@ pub fn parse_macroblock(
 
         let luma_samples =
             tables::MB_WIDTH * tables::MB_HEIGHT * tables::BIT_DEPTH / (u8::BITS as usize);
-        let chroma_shifts = slice.sps.chroma_format_idc.get_chroma_shift();
-        let chroma_samples = (luma_samples >> chroma_shifts.width) >> chroma_shifts.height;
+        let chroma_samples = luma_samples >> 2; // assuming i420
         block.pcm_sample_luma.reserve(luma_samples);
         for _ in 0..luma_samples {
             block.pcm_sample_luma.push(input.read_u8(8).map_err(|e| "Luma samples")?);
@@ -666,12 +712,17 @@ pub fn parse_macroblock(
                 tables::code_num_to_intra_coded_block_pattern(coded_block_pattern_num)
                     .ok_or("Invalid coded_block_pattern")?;
         }
-        if block.coded_block_pattern.non_zero()
+        if !block.coded_block_pattern.is_zero()
             || block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16
         {
             read_value!(input, block.mb_qp_delta, se);
         }
-        return Ok(Macroblock::I(block));
+
+        let mut residual = Residual::default();
+        residual.coded_block_pattern = block.coded_block_pattern;
+        let result = Macroblock::I(block.clone());
+        parse_residual(input, slice, &result, &mut residual)?;
+        return Ok(result);
     }
 
     Err("Unknown macroblock".to_owned())
@@ -687,6 +738,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
     assert!(slice.pps.slice_group.is_none(), "slice groups not implemented yet");
+    assert_eq!(slice.sps.chroma_format_idc.get_chroma_shift(), super::Size { width: 1, height: 1 });
 
     if slice.pps.entropy_coding_mode_flag {
         input.align(1);
@@ -772,6 +824,7 @@ mod tests {
 
     #[test]
     pub fn test_slice() {
+        crate::diag::init(true);
         let sps = SequenceParameterSet {
             profile: Profile::Baseline,
             constraint_set0_flag: true,

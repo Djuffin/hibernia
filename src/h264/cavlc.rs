@@ -146,10 +146,15 @@ pub fn parse_residual_block(
     }
     input.skip(coeff_token.pattern_len as u64);
     let total_coeffs = coeff_token.total_coeffs as usize;
+    trace!(
+        "parse_residual_block() total_coeffs: {} trailing_ones: {}",
+        total_coeffs,
+        coeff_token.trailing_ones
+    );
+
     if total_coeffs == 0 {
         return Ok(0);
     }
-    trace!("total_coeffs: {} trailing_ones: {}", total_coeffs, coeff_token.trailing_ones);
 
     // Section 9.2.2 Parsing process for level information
     let mut levels = [0; 16];

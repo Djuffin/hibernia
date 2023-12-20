@@ -138,15 +138,24 @@ impl CodedBlockPattern {
     }
 
     #[inline]
-    pub const fn non_zero(&self) -> bool {
-        self.0 != 0
+    pub const fn is_zero(&self) -> bool {
+        self.0 == 0
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Residual {
     pub dc_level16x16: [i32; 16],
-    pub ac_level16x16: [i32; 16],
-    pub luma_level4x4: [i32; 16],
+    pub ac_level16x16: [[i32; 15]; 16],
+    pub luma_level4x4: [[i32; 16]; 16],
+
+    pub chroma_cb_dc_level: [i32; 4],
+    pub chroma_cr_dc_level: [i32; 4],
+
+    pub chroma_cb_ac_level: [[i32; 15]; 4],
+    pub chroma_cr_ac_level: [[i32; 15]; 4],
+
+    pub coded_block_pattern: CodedBlockPattern,
 }
 
 // Special case of I macroblock - raw pixels (IMbType::I_PCM)

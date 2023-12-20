@@ -124,11 +124,7 @@ fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
 
 // Section 9.2.2.1 Parsing process for level_prefix
 fn parse_level_prefix(input: &mut BitReader) -> ParseResult<u32> {
-    let mut result = 0;
-    while let false = input.read_bool().map_err(|e| "leadingZeroBits".to_owned())? {
-        result += 1;
-    }
-    Ok(result)
+    input.read_till_one().map_err(|e| "leadingZeroBits".to_owned())
 }
 
 // Parses a block of residual coefficients into `coeff_level` and returns

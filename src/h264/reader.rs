@@ -60,6 +60,10 @@ impl<'a> RbspReader<'a> {
         self.reader.skip(bits)
     }
 
+    pub fn read_till_one(&mut self) -> Result<u32> {
+        self.reader.read_unary1()
+    }
+
     pub fn remaining(&mut self) -> u64 {
         let mut reader = self.reader.clone();
         reader.seek_bits(SeekFrom::End(0)).expect("seek error");

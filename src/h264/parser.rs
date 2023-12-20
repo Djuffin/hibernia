@@ -42,15 +42,12 @@ pub fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
         return Err(format!("ue(): too many ({}) bits requested", n));
     }
 
-    let mut zero_bits = 0u8;
-    while !input.read_bool().map_err(|e| "ue() end of stream".to_owned())? {
-        zero_bits += 1;
-        if (zero_bits > n) {
-            return Err(format!("ue(): too many ({}) leading zeros", zero_bits));
-        }
+    let zero_bits = input.read_till_one().map_err(|e| "ue() end of stream".to_owned())?;
+    if (zero_bits > n as u32) {
+        return Err(format!("ue(): too many ({}) leading zeros", zero_bits));
     }
 
-    let x = input.read_u64(zero_bits).map_err(|e| "ue(): end of stream".to_owned())?;
+    let x = input.read_u64(zero_bits as u8).map_err(|e| "ue(): end of stream".to_owned())?;
     let result = (1u64 << zero_bits) - 1 + x;
     if result >= 1u64 << n {
         return Err(format!("ue(): value ({}) is too large to fit the variable", result));

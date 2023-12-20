@@ -144,7 +144,7 @@ pub fn parse_residual_block(
     if (!coeff_token.is_valid()) {
         return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
     }
-    input.skip(coeff_token.pattern_len as u64);
+    input.skip(coeff_token.pattern_len as u32);
     let total_coeffs = coeff_token.total_coeffs as usize;
     trace!(
         "parse_residual_block() total_coeffs: {} trailing_ones: {}",
@@ -220,7 +220,7 @@ pub fn parse_residual_block(
                 next_16_bits, tz_vlc_index
             ));
         }
-        input.skip(bits as u64);
+        input.skip(bits as u32);
         trace!("total_zeros: {}", total_zeros);
         total_zeros
     } else {
@@ -238,7 +238,7 @@ pub fn parse_residual_block(
                     next_16_bits, zeros_left
                 ));
             }
-            input.skip(bits as u64);
+            input.skip(bits as u32);
             zeros_left -= run_before;
             run_before
         } else {

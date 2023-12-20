@@ -62,7 +62,7 @@ impl Decoder {
             }
             info!("---------------------------------------------------");
             let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
-            assert!(input.is_aligned(1));
+            assert!(input.is_aligned());
             info!("NAL {:?}", nal);
             let cur_byte_index = (input.position() / 8) as usize;
             let nal_size_bytes =
@@ -78,7 +78,7 @@ impl Decoder {
             } else {
                 parser::BitReader::new(nal_vec.as_slice())
             };
-            input.skip((nal_size_bytes * 8) as u64);
+            input.skip((nal_size_bytes * 8) as u32);
 
             match nal.nal_unit_type {
                 NalUnitType::Unspecified => {}

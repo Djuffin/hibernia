@@ -9,6 +9,7 @@ use super::decoder;
 use super::macroblock;
 use super::nal;
 use super::pps;
+use super::reader;
 use super::slice;
 use super::sps;
 use super::tables;
@@ -20,10 +21,11 @@ use log::trace;
 use macroblock::{CodedBlockPattern, IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, Residual};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
+use reader::RbspReader;
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
 
-pub use bitreader::BitReader;
+pub type BitReader<'a> = RbspReader<'a>;
 pub type ParseResult<T> = Result<T, String>;
 
 pub fn f(input: &mut BitReader) -> ParseResult<bool> {
@@ -118,7 +120,7 @@ macro_rules! read_value {
 fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
     // 1-bit at the end
     expect_value!(input, "rbsp_trailing_bits", 1, 1);
-    input.align(1).map_err(|e| "can't align in rbsp_trailing_bits")?;
+    input.align();
     Ok(())
 }
 
@@ -128,7 +130,7 @@ fn more_rbsp_data(input: &mut BitReader) -> bool {
         return false;
     }
 
-    let mut tmp_reader = input.relative_reader();
+    let mut tmp_reader = input.clone();
     if rbsp_trailing_bits(&mut tmp_reader).is_err() {
         return true;
     }
@@ -471,12 +473,12 @@ pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
 pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
     let mut forbidden_zero_bit = true;
     let mut header = NalHeader::default();
-    input.align(1).map_err(|e| "can't align for NAL header")?;
+    input.align();
 
     // Skip zeros and the start code prefix.
     loop {
         // Short start code: 0x00_00_00_01
-        if input.peek_u32(24) == Ok(1) {
+        if input.peek_u32(24).is_ok_and(|x| x == 1) {
             input.read_u32(24).map_err(|e| "broken start code")?;
             break;
         }
@@ -662,7 +664,7 @@ pub fn parse_macroblock(
 
     if mb_type == IMbType::I_PCM {
         let mut block = PcmMb::default();
-        input.align(1).map_err(|e| "pcm_alignment_zero_bit")?;
+        input.align();
 
         let luma_samples =
             tables::MB_WIDTH * tables::MB_HEIGHT * tables::BIT_DEPTH / (u8::BITS as usize);
@@ -741,7 +743,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     assert_eq!(slice.sps.chroma_format_idc.get_chroma_shift(), super::Size { width: 1, height: 1 });
 
     if slice.pps.entropy_coding_mode_flag {
-        input.align(1);
+        input.align();
     }
 
     if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {

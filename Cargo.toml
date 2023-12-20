@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bitreader = "0.3.8"
+bitstream-io = "2.2.0"
 num-traits = "0.2.17"
 num-derive = "0.4.1"
 v_frame = "0.3.6"

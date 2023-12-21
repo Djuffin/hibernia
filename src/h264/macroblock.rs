@@ -1,6 +1,50 @@
+use std::num::NonZeroU32;
+
+use super::slice::Slice;
 use num_traits::cast::FromPrimitive;
 
 pub type MbAddr = u32;
+pub const INVALID_MB: MbAddr = u32::MAX;
+
+pub enum NeighborNames {
+    A = 1, // left
+    B = 2, // above
+    C = 3, // above-right
+    D = 4, // above-left
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct MbNeighbors {
+    a: Option<NonZeroU32>, // left
+    b: Option<NonZeroU32>, // above
+    c: Option<NonZeroU32>, // above-right
+    d: Option<NonZeroU32>, // above-left
+}
+
+impl MbNeighbors {
+    pub fn get(&self, mb_name: NeighborNames) -> Option<MbAddr> {
+        match mb_name {
+            NeighborNames::A => self.a,
+            NeighborNames::B => self.b,
+            NeighborNames::C => self.c,
+            NeighborNames::D => self.d,
+        }
+        .map(|addr| addr.get() - 1)
+    }
+}
+
+// Section 6.4.8 Derivation process of the availability for macroblock addresses
+// Section 6.4.9 Derivation process for neighboring macroblock addresses and their availability
+pub fn get_neighbor_mbs(slice: &Slice, addr: MbAddr) -> MbNeighbors {
+    let width = slice.sps.pic_width_in_mbs() as u32;
+    let first_block_addr = slice.header.first_mb_in_slice;
+    // 1 added to all block addresses values to avoid zeros
+    let a = if addr % width == 0 { None } else { NonZeroU32::new(addr) };
+    let b = if addr < first_block_addr + width { None } else { NonZeroU32::new(addr - width + 1) };
+    let c = None; // todo: calculate
+    let d = None; // todo: calculate
+    MbNeighbors { a, b, c, d }
+}
 
 // Table 7-11 – Macroblock types for I slices
 #[allow(non_camel_case_types)]

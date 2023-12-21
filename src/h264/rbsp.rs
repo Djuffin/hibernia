@@ -1,5 +1,5 @@
 use bitstream_io::{BigEndian, BitRead, BitReader};
-use std::io::{self, Cursor, Read, Result, SeekFrom};
+use std::io::{self, Cursor, SeekFrom};
 
 pub type ParseResult<T> = std::result::Result<T, String>;
 
@@ -41,12 +41,12 @@ impl<'a> RbspReader<'a> {
         }
 
         let error_handler = |e: io::Error| e.to_string();
-        let zero_bits = self.read_till_one().map_err(error_handler)?;
-        if (zero_bits > n as u32) {
+        let zero_bits = self.read_till_one()?;
+        if zero_bits > n as u32 {
             return Err(format!("ue(): too many ({}) leading zeros", zero_bits));
         }
 
-        let x: u64 = self.reader.read(zero_bits as u32).map_err(error_handler)?;
+        let x: u64 = self.reader.read(zero_bits).map_err(error_handler)?;
         let result = (1u64 << zero_bits) - 1 + x;
         if result >= 1u64 << n {
             return Err(format!("ue(): value ({}) is too large to fit the variable", result));
@@ -66,16 +66,16 @@ impl<'a> RbspReader<'a> {
         self.reader.position_in_bits().expect("position_in_bits() error")
     }
 
-    pub fn skip(&mut self, bits: u32) -> Result<()> {
-        self.reader.skip(bits)
+    pub fn skip(&mut self, bits: u32) -> ParseResult<()> {
+        self.reader.skip(bits).map_err(map_io_error)
     }
 
-    pub fn go_back(&mut self, bits: i64) -> Result<u64> {
-        self.reader.seek_bits(SeekFrom::Current(-bits))
+    pub fn go_back(&mut self, bits: i64) -> ParseResult<u64> {
+        self.reader.seek_bits(SeekFrom::Current(-bits)).map_err(map_io_error)
     }
 
-    pub fn read_till_one(&mut self) -> Result<u32> {
-        self.reader.read_unary1()
+    pub fn read_till_one(&mut self) -> ParseResult<u32> {
+        self.reader.read_unary1().map_err(map_io_error)
     }
 
     pub fn remaining(&mut self) -> u64 {
@@ -89,7 +89,6 @@ impl<'a> RbspReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diag;
 
     pub fn reader(bytes: &[u8]) -> RbspReader {
         RbspReader::new(bytes)

@@ -1,7 +1,3 @@
-use std::mem::{self, MaybeUninit};
-
-use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use super::sps::{SequenceParameterSet, VuiParameters};
 use num_traits::cast::FromPrimitive;
 
 pub type MbAddr = u32;
@@ -196,7 +192,7 @@ impl IMb {
     pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self.mb_type {
             IMbType::I_NxN => {
-                if (self.transform_size_8x8_flag) {
+                if self.transform_size_8x8_flag {
                     MbPredictionMode::Intra_8x8
                 } else {
                     MbPredictionMode::Intra_4x4

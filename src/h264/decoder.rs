@@ -1,6 +1,6 @@
-use super::macroblock::{Macroblock, MbAddr};
+use super::macroblock::Macroblock;
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
-use log::{info, trace};
+use log::info;
 use slice::Slice;
 use v_frame::frame;
 use v_frame::plane::PlaneOffset;
@@ -56,7 +56,7 @@ impl Decoder {
         let mut input = parser::BitReader::new(data);
         let parse_error_handler = |e| DecodingError::MisformedData(e);
         loop {
-            if (input.remaining() < 4 * 8) {
+            if input.remaining() < 4 * 8 {
                 info!("End of data");
                 break;
             }
@@ -78,7 +78,7 @@ impl Decoder {
             } else {
                 parser::BitReader::new(nal_vec.as_slice())
             };
-            input.skip((nal_size_bytes * 8) as u32);
+            input.skip((nal_size_bytes * 8) as u32).map_err(parse_error_handler)?;
 
             match nal.nal_unit_type {
                 NalUnitType::Unspecified => {}

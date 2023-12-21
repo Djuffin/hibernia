@@ -9,8 +9,7 @@ pub mod slice;
 pub mod sps;
 pub mod tables;
 
-use log::{info, trace};
-use num_traits::{cast::FromPrimitive, ops::bytes};
+use num_traits::cast::FromPrimitive;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum Profile {

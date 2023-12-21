@@ -1,4 +1,4 @@
-use super::parser::{self, BitReader, ParseResult};
+use super::parser::{BitReader, ParseResult};
 use super::tables;
 use crate::{cast_or_error, read_value};
 use log::trace;
@@ -124,7 +124,7 @@ fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
 
 // Section 9.2.2.1 Parsing process for level_prefix
 fn parse_level_prefix(input: &mut BitReader) -> ParseResult<u32> {
-    input.read_till_one().map_err(|e| "leadingZeroBits".to_owned())
+    input.read_till_one().map_err(|_e| "leadingZeroBits".to_owned())
 }
 
 // Parses a block of residual coefficients into `coeff_level` and returns
@@ -137,10 +137,10 @@ pub fn parse_residual_block(
 ) -> ParseResult<u8> {
     let next_16_bits = input.u(16).map_err(|e| "coeff_token: ".to_owned() + &e)? as u16;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
-    if (!coeff_token.is_valid()) {
+    if !coeff_token.is_valid() {
         return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
     }
-    input.go_back(16 - coeff_token.pattern_len as i64);
+    input.go_back(16 - coeff_token.pattern_len as i64)?;
     let total_coeffs = coeff_token.total_coeffs as usize;
     trace!(
         "parse_residual_block() total_coeffs: {} trailing_ones: {}",
@@ -216,7 +216,7 @@ pub fn parse_residual_block(
                 next_16_bits, tz_vlc_index
             ));
         }
-        input.go_back(16 - bits as i64);
+        input.go_back(16 - bits as i64)?;
         trace!("total_zeros: {}", total_zeros);
         total_zeros
     } else {
@@ -234,7 +234,7 @@ pub fn parse_residual_block(
                     next_16_bits, zeros_left
                 ));
             }
-            input.go_back(16 - bits as i64);
+            input.go_back(16 - bits as i64)?;
             zeros_left -= run_before;
             run_before
         } else {

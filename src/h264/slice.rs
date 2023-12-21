@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::fmt;
 
 use super::macroblock::{Macroblock, MbAddr};
-use super::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use super::sps::{SequenceParameterSet, VuiParameters};
-use super::{tables, Point, Profile};
+use super::pps::PicParameterSet;
+use super::sps::SequenceParameterSet;
+use super::{tables, Point};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum SliceType {

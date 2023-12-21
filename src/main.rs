@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![allow(unused_variables)]
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::needless_late_init)]
@@ -9,7 +9,7 @@ extern crate num_derive;
 pub mod diag;
 pub mod h264;
 
-use image::{GenericImage, GenericImageView, ImageBuffer, RgbImage};
+use image::ImageBuffer;
 use std::env;
 use std::fs;
 
@@ -24,10 +24,10 @@ fn main() {
         let frame = decoder.get_frame_buffer().unwrap();
         let y_plane = &frame.planes[0];
 
-        let mut img =
+        let img =
             ImageBuffer::from_fn(y_plane.cfg.width as u32, y_plane.cfg.height as u32, |x, y| {
                 image::Luma([y_plane.p(x as usize, y as usize)])
             });
-        img.save("output.png");
+        let _ = img.save("output.png");
     }
 }

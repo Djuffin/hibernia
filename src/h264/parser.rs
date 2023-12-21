@@ -1,10 +1,8 @@
 #![macro_use]
-use std::mem::MaybeUninit;
 
 use crate::h264::macroblock::PcmMb;
 use crate::h264::sps::FrameCrop;
 
-use super::cavlc;
 use super::decoder;
 use super::macroblock;
 use super::nal;
@@ -18,7 +16,7 @@ use super::cavlc::parse_residual_block;
 use super::{ChromaFormat, Profile};
 use decoder::DecoderContext;
 use log::trace;
-use macroblock::{CodedBlockPattern, IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, Residual};
+use macroblock::{IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, Residual};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
@@ -37,6 +35,7 @@ macro_rules! cast_or_error {
                 return Err(format!("Error casting '{}': {}", stringify!($dest), e));
             }
         };
+        let _ = $dest; // to let compiler know that $dest is used
     };
 }
 
@@ -100,7 +99,7 @@ fn more_rbsp_data(input: &mut BitReader) -> bool {
     loop {
         match tmp_reader.u(8) {
             Ok(value) if value > 0 => return true,
-            Ok(value) => {}
+            Ok(_) => {}
             Err(_) => return false,
         }
     }
@@ -149,13 +148,13 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
         read_value!(input, vui.fixed_frame_rate_flag, f);
     }
 
-    let mut nal_hrd_parameters_present = false;
+    let nal_hrd_parameters_present: bool;
     read_value!(input, nal_hrd_parameters_present, f);
     if nal_hrd_parameters_present {
         todo!("NAL HDR");
     }
 
-    let mut vcl_hrd_parameters_present = false;
+    let vcl_hrd_parameters_present: bool;
     read_value!(input, vcl_hrd_parameters_present, f);
     if vcl_hrd_parameters_present {
         todo!("VCL HDR");
@@ -218,7 +217,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
             read_value!(input, sps.offset_for_non_ref_pic, se);
             read_value!(input, sps.offset_for_top_to_bottom_field, se);
 
-            let mut cnt_cycle = 0;
+            let cnt_cycle: u8;
             read_value!(input, cnt_cycle, ue, 8);
             for _ in 0..cnt_cycle {
                 let offset: i32 = input.se()?;
@@ -263,7 +262,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
         });
     }
 
-    let mut vui_parameters_present = false;
+    let vui_parameters_present: bool;
     read_value!(input, vui_parameters_present, f);
     if vui_parameters_present {
         sps.vui_parameters = Some(parse_vui(input)?);
@@ -276,8 +275,8 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
 fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
     let mut slice_group: Option<SliceGroup> = None;
 
-    let mut num_slice_groups_minus1: usize = 0;
-    let mut slice_group_map_type: u8 = 0;
+    let num_slice_groups_minus1: usize;
+    let slice_group_map_type: u8;
 
     read_value!(input, num_slice_groups_minus1, ue);
     if num_slice_groups_minus1 > 0 {
@@ -308,8 +307,8 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
                         unreachable!();
                     }
                 };
-                let mut slice_group_change_direction_flag: bool = false;
-                let mut slice_group_change_rate_minus1: u32 = 0;
+                let slice_group_change_direction_flag: bool;
+                let slice_group_change_rate_minus1: u32;
                 read_value!(input, slice_group_change_direction_flag, f);
                 read_value!(input, slice_group_change_rate_minus1, ue, 32);
 
@@ -321,7 +320,7 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
                 })
             }
             6 => {
-                let mut pic_size_in_map_units_minus1: usize = 0;
+                let pic_size_in_map_units_minus1: usize;
                 read_value!(input, pic_size_in_map_units_minus1, ue);
 
                 let slice_group_id_bits = 1 + num_slice_groups_minus1.ilog2() as u8;
@@ -366,7 +365,7 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
 
     if more_rbsp_data(input) {
         read_value!(input, pps.transform_8x8_mode_flag, f);
-        let mut pic_scaling_matrix_present_flag = false;
+        let pic_scaling_matrix_present_flag: bool;
         read_value!(input, pic_scaling_matrix_present_flag, f);
         if pic_scaling_matrix_present_flag {
             todo!("scaling matrix");
@@ -393,7 +392,7 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
             25..=31 => 4,
             _ => 1,
         };
-        reader.go_back(32 - bytes_to_skip * 8);
+        let _ = reader.go_back(32 - bytes_to_skip * 8);
     }
 
     None
@@ -433,7 +432,6 @@ pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
 }
 
 pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
-    let mut forbidden_zero_bit = true;
     let mut header = NalHeader::default();
     input.align();
 
@@ -443,7 +441,7 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
         if input.u(24).is_ok_and(|x| x == 1) {
             break;
         }
-        input.go_back(24);
+        input.go_back(24)?;
 
         expect_value!(input, "NAL start code zero_byte", 0, 8);
     }
@@ -481,7 +479,7 @@ pub fn parse_slice_header(
     };
 
     if sps.separate_colour_plane_flag {
-        let mut colour_plane_id: u8 = 0;
+        let colour_plane_id: u8;
         read_value!(input, colour_plane_id, u, 2);
         header.colour_plane = match colour_plane_id {
             0 => Some(ColourPlane::Y),
@@ -498,7 +496,7 @@ pub fn parse_slice_header(
     } else {
         read_value!(input, header.field_pic_flag, f);
         if header.field_pic_flag {
-            let mut bottom_field_flag = false;
+            let bottom_field_flag: bool;
             read_value!(input, bottom_field_flag, f);
             header.bottom_field_flag = Some(bottom_field_flag);
         }
@@ -511,7 +509,7 @@ pub fn parse_slice_header(
 
     if sps.pic_order_cnt_type == 0 {
         read_value!(input, header.pic_order_cnt_lsb, u, sps.bits_in_max_pic_order_cnt());
-        if (pps.bottom_field_pic_order_in_frame_present_flag && !header.field_pic_flag) {
+        if pps.bottom_field_pic_order_in_frame_present_flag && !header.field_pic_flag {
             read_value!(input, header.delta_pic_order_cnt_bottom, se);
         }
     } else {
@@ -522,9 +520,9 @@ pub fn parse_slice_header(
     }
 
     if nal.nal_ref_idc != 0 {
-        if (idr_pic_flag) {
-            let mut no_output_of_prior_pics_flag = false;
-            let mut long_term_reference_flag = false;
+        if idr_pic_flag {
+            let no_output_of_prior_pics_flag: bool;
+            let long_term_reference_flag: bool;
             read_value!(input, no_output_of_prior_pics_flag, f);
             read_value!(input, long_term_reference_flag, f);
         } else {
@@ -536,8 +534,8 @@ pub fn parse_slice_header(
     if pps.deblocking_filter_control_present_flag {
         read_value!(input, header.disable_deblocking_filter_idc, ue, 8);
         if header.disable_deblocking_filter_idc != 1 {
-            let mut slice_alpha_c0_offset_div2: i32 = 0;
-            let mut slice_beta_offset_div2: i32 = 0;
+            let slice_alpha_c0_offset_div2: i32;
+            let slice_beta_offset_div2: i32;
             read_value!(input, slice_alpha_c0_offset_div2, se);
             read_value!(input, slice_beta_offset_div2, se);
         }
@@ -651,7 +649,7 @@ pub fn parse_macroblock(
         match block.MbPartPredMode(0) {
             MbPredictionMode::Intra_4x4 => {
                 for mode in block.rem_intra4x4_pred_mode.iter_mut() {
-                    let mut prev_intra4x4_pred_mode_flag = false;
+                    let prev_intra4x4_pred_mode_flag: bool;
                     read_value!(input, prev_intra4x4_pred_mode_flag, f);
                     if !prev_intra4x4_pred_mode_flag {
                         let rem_intra4x4_pred_mode: macroblock::Intra_4x4_SamplePredictionMode;
@@ -670,7 +668,7 @@ pub fn parse_macroblock(
             block.coded_block_pattern = tables::mb_type_to_coded_block_pattern(block.mb_type)
                 .ok_or("Invalid coded_block_pattern")?;
         } else {
-            let mut coded_block_pattern_num: u8;
+            let coded_block_pattern_num: u8;
             read_value!(input, coded_block_pattern_num, ue, 8);
             block.coded_block_pattern =
                 tables::code_num_to_intra_coded_block_pattern(coded_block_pattern_num)
@@ -688,14 +686,12 @@ pub fn parse_macroblock(
         parse_residual(input, slice, &result, &mut residual)?;
         return Ok(result);
     }
-
-    Err("Unknown macroblock".to_owned())
 }
 
 // Section 7.3.4 Slice data syntax
 pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
     // Baseline profile features
-    if (slice.sps.profile != Profile::Baseline) {
+    if slice.sps.profile != Profile::Baseline {
         todo!("profiles above baseline");
     }
     assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
@@ -714,12 +710,11 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
 
     let mut curr_mb_addr = slice.header.first_mb_in_slice * (1 + slice.MbaffFrameFlag() as u32);
     let mut more_data = true;
-    let mut prev_mb_skipped = false;
     let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
     while more_data {
         let block = parse_macroblock(input, slice, curr_mb_addr)?;
         slice.put_mb(curr_mb_addr, block);
-        if (curr_mb_addr < pic_size_in_mbs) {
+        if curr_mb_addr < pic_size_in_mbs {
             curr_mb_addr += 1;
             more_data = more_rbsp_data(input);
         } else {
@@ -732,7 +727,6 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diag;
 
     pub fn reader(bytes: &[u8]) -> BitReader {
         BitReader::new(bytes)
@@ -811,7 +805,7 @@ mod tests {
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.disable_deblocking_filter_idc, 0);
 
-        parse_slice_data(&mut input, &mut slice); //.expect("blocks parsing failed");
+        let _ = parse_slice_data(&mut input, &mut slice); //.expect("blocks parsing failed");
     }
 
     #[test]

@@ -102,7 +102,7 @@ impl Decoder {
                     let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
                     info!("SPS: {:#?}", sps);
                     info!("Data {:?}", nal_buffer);
-                    assert_eq!(sps.chroma_format_idc, ChromaFormat::YUV420);
+                    assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
                     let frame = VideoFrame::new_with_padding(
                         sps.pic_width(),
                         sps.pic_hight(),

@@ -588,7 +588,7 @@ pub fn parse_residual(
     trace!("parse_residual");
     parse_residual_luma(input, slice, block, residual)?;
     let coded_block_pattern = residual.coded_block_pattern;
-    if slice.sps.chroma_format_idc.is_chrome_subsampled() {
+    if slice.sps.ChromaArrayType().is_chrome_subsampled() {
         let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
         if coded_block_pattern.chroma() & 3 != 0 {
             parse_residual_block(input, &mut residual.chroma_cb_dc_level, nc, 4)?;
@@ -698,7 +698,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
     assert!(slice.pps.slice_group.is_none(), "slice groups not implemented yet");
-    assert_eq!(slice.sps.chroma_format_idc.get_chroma_shift(), super::Size { width: 1, height: 1 });
+    assert_eq!(slice.sps.ChromaArrayType().get_chroma_shift(), super::Size { width: 1, height: 1 });
 
     if slice.pps.entropy_coding_mode_flag {
         input.align();

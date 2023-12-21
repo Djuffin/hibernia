@@ -598,14 +598,15 @@ pub fn parse_residual(
             residual.chroma_cr_dc_level.fill(0);
         }
 
-        for blk_idx in 0..4 {
-            if coded_block_pattern.chroma() & 2 != 0 {
-                let nc = 0;
-                parse_residual_block(input, &mut residual.chroma_cb_ac_level[blk_idx], nc, 15)?;
-                parse_residual_block(input, &mut residual.chroma_cr_ac_level[blk_idx], nc, 15)?;
-            } else {
-                residual.chroma_cb_ac_level[blk_idx].fill(0);
-                residual.chroma_cr_ac_level[blk_idx].fill(0);
+        for chroma_ac_level in [&mut residual.chroma_cb_ac_level, &mut residual.chroma_cr_ac_level]
+        {
+            for blk_idx in 0..4 {
+                if coded_block_pattern.chroma() & 2 != 0 {
+                    let nc = 0;
+                    parse_residual_block(input, &mut chroma_ac_level[blk_idx], nc, 15)?;
+                } else {
+                    chroma_ac_level[blk_idx].fill(0);
+                }
             }
         }
     } else {

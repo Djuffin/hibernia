@@ -9,7 +9,7 @@ use super::decoder;
 use super::macroblock;
 use super::nal;
 use super::pps;
-use super::reader;
+use super::rbsp;
 use super::slice;
 use super::sps;
 use super::tables;
@@ -21,46 +21,11 @@ use log::trace;
 use macroblock::{CodedBlockPattern, IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, Residual};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use reader::RbspReader;
 use slice::{ColourPlane, Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
 
-pub type BitReader<'a> = RbspReader<'a>;
-pub type ParseResult<T> = Result<T, String>;
-
-pub fn f(input: &mut BitReader) -> ParseResult<bool> {
-    input.read_bool().map_err(|e| "f(): end of stream".to_owned())
-}
-
-pub fn u(input: &mut BitReader, n: u8) -> ParseResult<u32> {
-    input.read_u32(n).map_err(|e| "u(): end of stream".to_owned())
-}
-
-pub fn ue(input: &mut BitReader, n: u8) -> ParseResult<u32> {
-    // Parsing process for Exp-Golomb codes. Section 9.1
-    if n > 32 {
-        return Err(format!("ue(): too many ({}) bits requested", n));
-    }
-
-    let zero_bits = input.read_till_one().map_err(|e| "ue() end of stream".to_owned())?;
-    if (zero_bits > n as u32) {
-        return Err(format!("ue(): too many ({}) leading zeros", zero_bits));
-    }
-
-    let x = input.read_u64(zero_bits as u8).map_err(|e| "ue(): end of stream".to_owned())?;
-    let result = (1u64 << zero_bits) - 1 + x;
-    if result >= 1u64 << n {
-        return Err(format!("ue(): value ({}) is too large to fit the variable", result));
-    }
-    Ok(result as u32)
-}
-
-pub fn se(input: &mut BitReader) -> ParseResult<i32> {
-    // Mapping process for signed Exp-Golomb codes Section 9.1.1
-    let value = ue(input, 32)?;
-    let result = if value & 1 != 0 { ((value >> 1) + 1) as i32 } else { -((value >> 1) as i32) };
-    Ok(result)
-}
+pub type BitReader<'a> = rbsp::RbspReader<'a>;
+pub type ParseResult<T> = rbsp::ParseResult<T>;
 
 #[macro_export]
 macro_rules! cast_or_error {
@@ -78,8 +43,8 @@ macro_rules! cast_or_error {
 #[macro_export]
 macro_rules! expect_value {
     ($input:ident, $msg:expr, $expected:expr, $bits:expr) => {
-        let error_handler = |e| format!("Not enough data for {}", $msg);
-        let value = $input.read_u32($bits).map_err(error_handler)?;
+        let error_handler = |e| format!("Error while parsing '{}': {}", $msg, e);
+        let value = $input.u($bits).map_err(error_handler)?;
         if value != $expected {
             return Err(format!("Unexpected value of {}: {} vs {}", $msg, value, $expected));
         }
@@ -90,7 +55,7 @@ macro_rules! expect_value {
 macro_rules! read_value {
     ($input:ident, $dest:expr, u, $bits:expr) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $crate::h264::parser::u($input, $bits).map_err(error_handler)?;
+        let value = $input.u($bits).map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, ue) => {
@@ -98,17 +63,17 @@ macro_rules! read_value {
     };
     ($input:ident, $dest:expr, ue, $bits:expr) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $crate::h264::parser::ue($input, $bits).map_err(error_handler)?;
+        let value = $input.ue($bits).map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, se) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $crate::h264::parser::se($input).map_err(error_handler)?;
+        let value = $input.se().map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
     ($input:ident, $dest:expr, f) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $crate::h264::parser::f($input).map_err(error_handler)?;
+        let value = $input.f().map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
 }
@@ -123,17 +88,17 @@ fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
 
 // Section 7.2
 fn more_rbsp_data(input: &mut BitReader) -> bool {
-    if input.remaining() == 0 {
+    let mut tmp_reader = input.clone();
+    if tmp_reader.remaining() == 0 {
         return false;
     }
 
-    let mut tmp_reader = input.clone();
     if rbsp_trailing_bits(&mut tmp_reader).is_err() {
         return true;
     }
 
     loop {
-        match tmp_reader.read_u8(8) {
+        match tmp_reader.u(8) {
             Ok(value) if value > 0 => return true,
             Ok(value) => {}
             Err(_) => return false,
@@ -256,7 +221,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
             let mut cnt_cycle = 0;
             read_value!(input, cnt_cycle, ue, 8);
             for _ in 0..cnt_cycle {
-                let offset: i32 = se(input)?;
+                let offset: i32 = input.se()?;
                 sps.offset_for_ref_frame.push(offset);
             }
         }
@@ -417,7 +382,7 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
 
 pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     let mut reader = BitReader::new(input);
-    while let Ok(bits) = reader.read_u32(32) {
+    while let Ok(bits) = reader.u(32) {
         if bits == 1 || (bits >> 8) == 1 {
             return Some((reader.position() / 8 - 4) as usize);
         }
@@ -475,7 +440,7 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
     // Skip zeros and the start code prefix.
     loop {
         // Short start code: 0x00 0x00 0x01
-        if input.read_u32(24).is_ok_and(|x| x == 1) {
+        if input.u(24).is_ok_and(|x| x == 1) {
             break;
         }
         input.go_back(24);
@@ -668,14 +633,14 @@ pub fn parse_macroblock(
         let chroma_samples = luma_samples >> 2; // assuming i420
         block.pcm_sample_luma.reserve(luma_samples);
         for _ in 0..luma_samples {
-            block.pcm_sample_luma.push(input.read_u8(8).map_err(|e| "Luma samples")?);
+            block.pcm_sample_luma.push(input.u(8)? as u8);
         }
         block.pcm_sample_chroma_cb.reserve(chroma_samples);
         for _ in 0..chroma_samples {
-            block.pcm_sample_chroma_cb.push(input.read_u8(8).map_err(|e| "ChromaCB samples")?);
+            block.pcm_sample_chroma_cb.push(input.u(8)? as u8);
         }
         for _ in 0..chroma_samples {
-            block.pcm_sample_chroma_cr.push(input.read_u8(8).map_err(|e| "ChromaCR samples")?);
+            block.pcm_sample_chroma_cr.push(input.u(8)? as u8);
         }
         return Ok(Macroblock::PCM(block));
     } else {
@@ -771,46 +736,6 @@ mod tests {
 
     pub fn reader(bytes: &[u8]) -> BitReader {
         BitReader::new(bytes)
-    }
-
-    #[test]
-    pub fn test_ue() {
-        assert_eq!(0, ue(&mut reader(&[0b10000000]), 8).unwrap());
-        assert_eq!(1, ue(&mut reader(&[0b01000000]), 8).unwrap());
-        assert_eq!(2, ue(&mut reader(&[0b01100000]), 8).unwrap());
-        assert_eq!(3, ue(&mut reader(&[0b00100000]), 8).unwrap());
-        assert_eq!(4, ue(&mut reader(&[0b00101000]), 8).unwrap());
-        assert_eq!(5, ue(&mut reader(&[0b00110000]), 8).unwrap());
-        assert_eq!(6, ue(&mut reader(&[0b00111000]), 8).unwrap());
-        assert_eq!(7, ue(&mut reader(&[0b00010000]), 8).unwrap());
-        assert_eq!(8, ue(&mut reader(&[0b00010010]), 8).unwrap());
-        assert_eq!(9, ue(&mut reader(&[0b00010100]), 8).unwrap());
-        assert_eq!(255, ue(&mut reader(&[0b00000000, 0b10000000, 0]), 8).unwrap());
-        assert_eq!(
-            u32::MAX,
-            ue(
-                &mut reader(&[
-                    0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b00000000,
-                    0b00000000, 0b00000000, 0
-                ]),
-                32
-            )
-            .unwrap()
-        );
-    }
-
-    #[test]
-    pub fn test_se() {
-        assert_eq!(0, se(&mut reader(&[0b10000000])).unwrap());
-        assert_eq!(1, se(&mut reader(&[0b01000000])).unwrap());
-        assert_eq!(-1, se(&mut reader(&[0b01100000])).unwrap());
-        assert_eq!(2, se(&mut reader(&[0b00100000])).unwrap());
-        assert_eq!(-2, se(&mut reader(&[0b00101000])).unwrap());
-        assert_eq!(3, se(&mut reader(&[0b00110000])).unwrap());
-        assert_eq!(-3, se(&mut reader(&[0b00111000])).unwrap());
-        assert_eq!(4, se(&mut reader(&[0b00010000])).unwrap());
-        assert_eq!(-4, se(&mut reader(&[0b00010010])).unwrap());
-        assert_eq!(5, se(&mut reader(&[0b00010100])).unwrap());
     }
 
     fn parse_sps_test(data: &[u8]) -> SequenceParameterSet {

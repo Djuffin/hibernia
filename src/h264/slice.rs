@@ -4,7 +4,7 @@ use std::fmt;
 use super::macroblock::{Macroblock, MbAddr};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
-use super::{tables, Point, ColorPlane};
+use super::{tables, ColorPlane, Point};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum SliceType {
@@ -68,6 +68,8 @@ pub struct Slice {
     pub pps: PicParameterSet,
     pub header: SliceHeader,
 
+    pub last_mb_addr: MbAddr,
+
     mb_addr_to_mb: HashMap<MbAddr, Macroblock>,
 }
 
@@ -81,7 +83,7 @@ impl fmt::Debug for Slice {
 impl Slice {
     pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
         let mb_count = sps.pic_size_in_mbs();
-        Slice { sps, pps, header, mb_addr_to_mb: HashMap::with_capacity(mb_count) }
+        Slice { sps, pps, header, last_mb_addr: 0, mb_addr_to_mb: HashMap::with_capacity(mb_count) }
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {

@@ -1,6 +1,6 @@
 #![macro_use]
 
-use crate::h264::macroblock::PcmMb;
+use crate::h264::macroblock::get_neighbor_mbs;
 use crate::h264::sps::FrameCrop;
 
 use super::decoder;
@@ -13,10 +13,12 @@ use super::sps;
 use super::tables;
 
 use super::cavlc::parse_residual_block;
-use super::{ChromaFormat, Profile, ColorPlane};
+use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
-use macroblock::{IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, Residual};
+use macroblock::{
+    IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, NeighborNames, PcmMb, Residual,
+};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{Slice, SliceHeader, SliceType};
@@ -559,19 +561,49 @@ pub fn parse_residual_luma(
     let coded_block_pattern = residual.coded_block_pattern;
     for i8x8 in 0..4 {
         for i4x4 in 0..4 {
-            let blk_idx = i8x8 * 4 + i4x4;
-            let nc = 0;
+            let blk_idx: usize = i8x8 * 4 + i4x4;
+            let curr_mb_addr = slice.last_mb_addr;
+            let mut nc = 0;
+            let mut nc_counted = 0;
+            let mbs_next_to_us = get_neighbor_mbs(
+                slice.sps.pic_width_in_mbs() as u32,
+                slice.header.first_mb_in_slice,
+                curr_mb_addr,
+            );
+            for neighbor in [NeighborNames::A, NeighborNames::B] {
+                let (idx, n) = macroblock::get_4x4block_neighbor(blk_idx as u8, neighbor);
+                if let Some(mb_neighbor) = n {
+                    if let Some(addr) = mbs_next_to_us.get(mb_neighbor) {
+                        if let Some(mb) = slice.get_mb(addr) {
+                            nc += mb.get_nc(idx, ColorPlane::Y) as i32;
+                            nc_counted += 1;
+                        }
+                    }
+                } else {
+                    nc += residual.get_nc(idx, ColorPlane::Y, pred_mode) as i32;
+                    nc_counted += 1;
+                }
+            }
+            if nc_counted == 2 {
+                nc /= 2;
+            }
             if coded_block_pattern.luma() & (1 << i8x8) != 0 {
                 if pred_mode == MbPredictionMode::Intra_16x16 {
-                    parse_residual_block(input, &mut residual.ac_level16x16[blk_idx], nc, 15)?;
+                    let total_coeffs =
+                        parse_residual_block(input, &mut residual.ac_level16x16[blk_idx], nc, 15)?;
+                    residual.ac_level16x16_nc[blk_idx] = total_coeffs;
                 } else {
-                    parse_residual_block(input, &mut residual.luma_level4x4[blk_idx], nc, 16)?;
+                    let total_coeffs =
+                        parse_residual_block(input, &mut residual.luma_level4x4[blk_idx], nc, 16)?;
+                    residual.luma_level4x4_nc[blk_idx] = total_coeffs;
                 }
             } else {
                 if pred_mode == MbPredictionMode::Intra_16x16 {
                     residual.ac_level16x16[blk_idx].fill(0);
+                    residual.ac_level16x16_nc[blk_idx] = 0;
                 } else {
                     residual.luma_level4x4[blk_idx].fill(0);
+                    residual.luma_level4x4_nc[blk_idx] = 0;
                 }
             }
         }
@@ -598,14 +630,27 @@ pub fn parse_residual(
             residual.chroma_cr_dc_level.fill(0);
         }
 
-        for chroma_ac_level in [&mut residual.chroma_cb_ac_level, &mut residual.chroma_cr_ac_level]
-        {
+        for (chroma_ac_level, plane) in [
+            (&mut residual.chroma_cb_ac_level, ColorPlane::Cb),
+            (&mut residual.chroma_cr_ac_level, ColorPlane::Cr),
+        ] {
             for blk_idx in 0..4 {
                 if coded_block_pattern.chroma() & 2 != 0 {
                     let nc = 0;
-                    parse_residual_block(input, &mut chroma_ac_level[blk_idx], nc, 15)?;
+                    let total_coeffs =
+                        parse_residual_block(input, &mut chroma_ac_level[blk_idx], nc, 15)?;
+                    if plane == ColorPlane::Cb {
+                        residual.chroma_cb_level4x4_nc[blk_idx] = total_coeffs;
+                    } else {
+                        residual.chroma_cr_level4x4_nc[blk_idx] = total_coeffs;
+                    }
                 } else {
                     chroma_ac_level[blk_idx].fill(0);
+                    if plane == ColorPlane::Cb {
+                        residual.chroma_cb_level4x4_nc[blk_idx] = 0;
+                    } else {
+                        residual.chroma_cr_level4x4_nc[blk_idx] = 0;
+                    }
                 }
             }
         }
@@ -699,6 +744,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
     assert!(slice.pps.slice_group.is_none(), "slice groups not implemented yet");
+    assert!(!slice.pps.constrained_intra_pred_flag);
     assert_eq!(slice.sps.ChromaArrayType().get_chroma_shift(), super::Size { width: 1, height: 1 });
 
     if slice.pps.entropy_coding_mode_flag {
@@ -713,6 +759,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     let mut more_data = true;
     let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
     while more_data {
+        slice.last_mb_addr = curr_mb_addr;
         let block = parse_macroblock(input, slice, curr_mb_addr)?;
         slice.put_mb(curr_mb_addr, block);
         if curr_mb_addr < pic_size_in_mbs {

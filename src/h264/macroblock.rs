@@ -1,8 +1,8 @@
 use num_traits::cast::FromPrimitive;
 use std::num::NonZeroU32;
 
-use super::Point;
 use super::tables::{MB_HEIGHT, MB_WIDTH};
+use super::{ColorPlane, Point};
 
 pub type MbAddr = u32;
 
@@ -58,7 +58,7 @@ pub fn get_neighbor_mbs(width_in_mbs: u32, first_addr: MbAddr, addr: MbAddr) -> 
     };
 
     // Above-left
-    let d = if addr - 1 < first_addr + width_in_mbs || w_rem == 0 {
+    let d = if addr < first_addr + width_in_mbs + 1 || w_rem == 0 {
         None
     } else {
         wrap(addr - width_in_mbs - 1)
@@ -267,13 +267,18 @@ impl CodedBlockPattern {
 pub struct Residual {
     pub dc_level16x16: [i32; 16],
     pub ac_level16x16: [[i32; 15]; 16],
+    pub ac_level16x16_nc: [u8; 16],
     pub luma_level4x4: [[i32; 16]; 16],
+    pub luma_level4x4_nc: [u8; 16],
 
     pub chroma_cb_dc_level: [i32; 4],
     pub chroma_cr_dc_level: [i32; 4],
 
     pub chroma_cb_ac_level: [[i32; 15]; 4],
     pub chroma_cr_ac_level: [[i32; 15]; 4],
+
+    pub chroma_cb_level4x4_nc: [u8; 4],
+    pub chroma_cr_level4x4_nc: [u8; 4],
 
     pub coded_block_pattern: CodedBlockPattern,
 }
@@ -295,6 +300,7 @@ pub struct IMb {
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
+    pub residual: Residual,
 }
 
 // Macroblock of type P
@@ -328,13 +334,44 @@ impl IMb {
     }
 }
 
+impl Residual {
+    // Calculates nC for the block withing the macroblock
+    pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane, mode: MbPredictionMode) -> u8 {
+        match plane {
+            ColorPlane::Y => match mode {
+                MbPredictionMode::None => todo!(),
+                MbPredictionMode::Intra_8x8 => todo!(),
+                MbPredictionMode::Intra_4x4 => self.luma_level4x4_nc[blk_idx as usize],
+                MbPredictionMode::Intra_16x16 => self.ac_level16x16_nc[blk_idx as usize],
+                MbPredictionMode::Pred_L0 => todo!(),
+                MbPredictionMode::Pred_L1 => todo!(),
+            },
+
+            ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx as usize],
+            ColorPlane::Cr => self.chroma_cr_level4x4_nc[blk_idx as usize],
+        }
+    }
+}
+
 #[allow(non_snake_case)]
 impl Macroblock {
     #[inline]
     pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self {
-            Macroblock::I(block) => block.MbPartPredMode(partition),
+            Macroblock::I(mb) => mb.MbPartPredMode(partition),
             _ => MbPredictionMode::None,
+        }
+    }
+
+    // Calculates nC for the block withing the macroblock
+    pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
+        // Section 9.2.1
+        match self {
+            Macroblock::I(mb) => mb.residual.get_nc(blk_idx, plane, self.MbPartPredMode(0)),
+            Macroblock::PCM(_) => 16,
+            Macroblock::P(_) => {
+                todo!("P blocks")
+            }
         }
     }
 }

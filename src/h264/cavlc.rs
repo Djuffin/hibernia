@@ -143,7 +143,8 @@ pub fn parse_residual_block(
     input.go_back(16 - coeff_token.pattern_len as i64)?;
     let total_coeffs = coeff_token.total_coeffs as usize;
     trace!(
-        "parse_residual_block() total_coeffs: {} trailing_ones: {}",
+        "parse_residual_block() nc:{} total_coeffs: {} trailing_ones: {}",
+        nc,
         total_coeffs,
         coeff_token.trailing_ones
     );

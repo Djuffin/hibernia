@@ -57,7 +57,7 @@ pub struct PicParameterSet {
     pub deblocking_filter_control_present_flag: bool,
 
     // False specifies that intra prediction allows usage of residual data and decoded samples
-    // of neighbouring macroblocks coded using Inter macroblock prediction modes for the
+    // of neighboring macroblocks coded using Inter macroblock prediction modes for the
     // prediction of macroblocks coded using Intra macroblock prediction modes.
     // True specifies constrained intra prediction, in which case prediction of macroblocks coded
     // using Intra macroblock prediction modes only uses residual data and decoded samples

@@ -4,7 +4,7 @@ use std::fmt;
 use super::macroblock::{Macroblock, MbAddr};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
-use super::{tables, Point};
+use super::{tables, Point, ColorPlane};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum SliceType {
@@ -30,20 +30,13 @@ impl TryFrom<u32> for SliceType {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ColourPlane {
-    Y,
-    Cb,
-    Cr,
-}
-
 // Section 7.4.3 Slice header semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SliceHeader {
     pub first_mb_in_slice: MbAddr,
     pub slice_type: SliceType,
     pub pic_parameter_set_id: u8,
-    pub colour_plane: Option<ColourPlane>,
+    pub color_plane: Option<ColorPlane>,
     pub frame_num: u16,
 
     // True specifies that the slice is a slice of a coded field.

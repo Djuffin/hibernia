@@ -13,13 +13,13 @@ use super::sps;
 use super::tables;
 
 use super::cavlc::parse_residual_block;
-use super::{ChromaFormat, Profile};
+use super::{ChromaFormat, Profile, ColorPlane};
 use decoder::DecoderContext;
 use log::trace;
 use macroblock::{IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, Residual};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use slice::{ColourPlane, Slice, SliceHeader, SliceType};
+use slice::{Slice, SliceHeader, SliceType};
 use sps::{SequenceParameterSet, VuiParameters};
 
 pub type BitReader<'a> = rbsp::RbspReader<'a>;
@@ -479,12 +479,12 @@ pub fn parse_slice_header(
     };
 
     if sps.separate_colour_plane_flag {
-        let colour_plane_id: u8;
-        read_value!(input, colour_plane_id, u, 2);
-        header.colour_plane = match colour_plane_id {
-            0 => Some(ColourPlane::Y),
-            1 => Some(ColourPlane::Cb),
-            2 => Some(ColourPlane::Cr),
+        let color_plane_id: u8;
+        read_value!(input, color_plane_id, u, 2);
+        header.color_plane = match color_plane_id {
+            0 => Some(ColorPlane::Y),
+            1 => Some(ColorPlane::Cb),
+            2 => Some(ColorPlane::Cr),
             _ => None,
         };
     }

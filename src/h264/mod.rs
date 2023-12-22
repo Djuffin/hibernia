@@ -60,6 +60,13 @@ pub enum ChromaFormat {
     YUV444 = 3,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ColorPlane {
+    Y,
+    Cb,
+    Cr,
+}
+
 impl ChromaFormat {
     #[inline]
     pub fn is_chrome_subsampled(&self) -> bool {

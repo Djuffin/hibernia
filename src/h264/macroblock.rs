@@ -1,10 +1,14 @@
-use std::num::NonZeroU32;
 use num_traits::cast::FromPrimitive;
+use std::num::NonZeroU32;
+
+use super::Point;
+use super::tables::{MB_HEIGHT, MB_WIDTH};
 
 pub type MbAddr = u32;
-pub const INVALID_MB: MbAddr = u32::MAX;
 
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum NeighborNames {
+    #[default]
     A = 1, // left
     B = 2, // above
     C = 3, // above-right
@@ -60,6 +64,66 @@ pub fn get_neighbor_mbs(width_in_mbs: u32, first_addr: MbAddr, addr: MbAddr) -> 
         wrap(addr - width_in_mbs - 1)
     };
     MbNeighbors { a, b, c, d }
+}
+
+#[inline(always)]
+fn inverse_raster_scan(a: u32, b: u32, c: u32, d: u32, e: bool) -> u32 {
+    if e {
+        (a / (d / b)) * c
+    } else {
+        (a % (d / b)) * b
+    }
+}
+
+/*
+    4x4 luma block indexes:
+
+    +--+--+--+--+
+    |00|01|04|05|
+    +--+--+--+--+
+    |02|03|06|07|
+    +--+--+--+--+
+    |08|09|12|13|
+    +--+--+--+--+
+    |10|11|14|15|
+    +--+--+--+--+
+*/
+
+// Section 6.4.3 Inverse 4x4 luma block scanning process
+fn get_4x4luma_block_location(idx: u8) -> Point {
+    let idx = idx as u32;
+    let x = inverse_raster_scan(idx / 4, 8, 8, 16, false)
+        + inverse_raster_scan(idx % 4, 4, 4, 8, false);
+    let y =
+        inverse_raster_scan(idx / 4, 8, 8, 16, true) + inverse_raster_scan(idx % 4, 4, 4, 8, true);
+    Point { x, y }
+}
+
+// Section 6.4.13.1 Derivation process for 4x4 luma block indices
+fn get_4x4luma_block_index(p: Point) -> u8 {
+    let idx = 8 * (p.y / 8) + 4 * (p.x / 8) + 2 * ((p.y % 8) / 4) + ((p.x % 8) / 4);
+    idx as u8
+}
+
+// Section 6.4.11.4 Derivation process for neighboring 4x4 luma blocks
+pub fn get_4x4block_neighbor(idx: u8, n: NeighborNames) -> (u8, Option<NeighborNames>) {
+    let p = get_4x4luma_block_location(idx);
+    let (x, y) = match n {
+        NeighborNames::A => (p.x as i8 - 1, p.y as i8),
+        NeighborNames::B => (p.x as i8, p.y as i8 - 1),
+        NeighborNames::C => (p.x as i8 + 1, p.y as i8),
+        NeighborNames::D => (p.x as i8 - 1, p.y as i8 - 1),
+    };
+    let (w, h) = (MB_WIDTH as i8, MB_HEIGHT as i8);
+    let (xn, yn) = ((x + w) % w, (y + h) % h);
+    let p = Point { x: x as u32, y: y as u32 };
+    let np = Point { x: xn as u32, y: yn as u32 };
+    let idx = get_4x4luma_block_index(np);
+    if p == np {
+        (idx, None)
+    } else {
+        (idx, Some(n))
+    }
 }
 
 // Table 7-11 – Macroblock types for I slices
@@ -275,11 +339,53 @@ impl Macroblock {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     pub use super::*;
+
+    #[test]
+    pub fn test_get_4x4block_neighbor() {
+        let (a, b) = (NeighborNames::A, NeighborNames::B);
+        assert_eq!(get_4x4block_neighbor(0, a), (5, Some(a)));
+        assert_eq!(get_4x4block_neighbor(2, a), (7, Some(a)));
+        assert_eq!(get_4x4block_neighbor(8, a), (13, Some(a)));
+        assert_eq!(get_4x4block_neighbor(10, a), (15, Some(a)));
+
+        assert_eq!(get_4x4block_neighbor(1, a), (0, None));
+        assert_eq!(get_4x4block_neighbor(3, a), (2, None));
+        assert_eq!(get_4x4block_neighbor(9, a), (8, None));
+        assert_eq!(get_4x4block_neighbor(11, a), (10, None));
+
+        assert_eq!(get_4x4block_neighbor(4, a), (1, None));
+        assert_eq!(get_4x4block_neighbor(6, a), (3, None));
+        assert_eq!(get_4x4block_neighbor(12, a), (9, None));
+        assert_eq!(get_4x4block_neighbor(14, a), (11, None));
+
+        assert_eq!(get_4x4block_neighbor(5, a), (4, None));
+        assert_eq!(get_4x4block_neighbor(7, a), (6, None));
+        assert_eq!(get_4x4block_neighbor(13, a), (12, None));
+        assert_eq!(get_4x4block_neighbor(15, a), (14, None));
+
+        assert_eq!(get_4x4block_neighbor(0, b), (10, Some(b)));
+        assert_eq!(get_4x4block_neighbor(1, b), (11, Some(b)));
+        assert_eq!(get_4x4block_neighbor(4, b), (14, Some(b)));
+        assert_eq!(get_4x4block_neighbor(5, b), (15, Some(b)));
+
+        assert_eq!(get_4x4block_neighbor(2, b), (0, None));
+        assert_eq!(get_4x4block_neighbor(3, b), (1, None));
+        assert_eq!(get_4x4block_neighbor(6, b), (4, None));
+        assert_eq!(get_4x4block_neighbor(7, b), (5, None));
+
+        assert_eq!(get_4x4block_neighbor(8, b), (2, None));
+        assert_eq!(get_4x4block_neighbor(9, b), (3, None));
+        assert_eq!(get_4x4block_neighbor(12, b), (6, None));
+        assert_eq!(get_4x4block_neighbor(13, b), (7, None));
+
+        assert_eq!(get_4x4block_neighbor(10, b), (8, None));
+        assert_eq!(get_4x4block_neighbor(11, b), (9, None));
+        assert_eq!(get_4x4block_neighbor(14, b), (12, None));
+        assert_eq!(get_4x4block_neighbor(15, b), (13, None));
+    }
 
     #[test]
     pub fn test_get_neighbor_mbs() {

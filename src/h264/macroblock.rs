@@ -1,6 +1,4 @@
 use std::num::NonZeroU32;
-
-use super::slice::Slice;
 use num_traits::cast::FromPrimitive;
 
 pub type MbAddr = u32;
@@ -35,14 +33,32 @@ impl MbNeighbors {
 
 // Section 6.4.8 Derivation process of the availability for macroblock addresses
 // Section 6.4.9 Derivation process for neighboring macroblock addresses and their availability
-pub fn get_neighbor_mbs(slice: &Slice, addr: MbAddr) -> MbNeighbors {
-    let width = slice.sps.pic_width_in_mbs() as u32;
-    let first_block_addr = slice.header.first_mb_in_slice;
-    // 1 added to all block addresses values to avoid zeros
-    let a = if addr % width == 0 { None } else { NonZeroU32::new(addr) };
-    let b = if addr < first_block_addr + width { None } else { NonZeroU32::new(addr - width + 1) };
-    let c = None; // todo: calculate
-    let d = None; // todo: calculate
+pub fn get_neighbor_mbs(width_in_mbs: u32, first_addr: MbAddr, addr: MbAddr) -> MbNeighbors {
+    pub fn wrap(addr: MbAddr) -> Option<NonZeroU32> {
+        // 1 added to all block addresses values to avoid zeros
+        NonZeroU32::new(addr + 1)
+    }
+
+    let w_rem = addr % width_in_mbs;
+    // Left
+    let a = if w_rem == 0 || addr <= first_addr { None } else { wrap(addr - 1) };
+
+    // Above
+    let b = if addr < first_addr + width_in_mbs { None } else { wrap(addr - width_in_mbs) };
+
+    // Above-right
+    let c = if addr + 1 < first_addr + width_in_mbs || w_rem + 1 == width_in_mbs {
+        None
+    } else {
+        wrap(addr - width_in_mbs + 1)
+    };
+
+    // Above-left
+    let d = if addr - 1 < first_addr + width_in_mbs || w_rem == 0 {
+        None
+    } else {
+        wrap(addr - width_in_mbs - 1)
+    };
     MbNeighbors { a, b, c, d }
 }
 
@@ -256,5 +272,45 @@ impl Macroblock {
             Macroblock::I(block) => block.MbPartPredMode(partition),
             _ => MbPredictionMode::None,
         }
+    }
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    pub use super::*;
+
+    #[test]
+    pub fn test_get_neighbor_mbs() {
+        let nbs = get_neighbor_mbs(16, 0, 20);
+        assert_eq!(nbs.get(NeighborNames::A), Some(19));
+        assert_eq!(nbs.get(NeighborNames::B), Some(4));
+        assert_eq!(nbs.get(NeighborNames::C), Some(5));
+        assert_eq!(nbs.get(NeighborNames::D), Some(3));
+
+        let nbs = get_neighbor_mbs(8, 0, 15);
+        assert_eq!(nbs.get(NeighborNames::A), Some(14));
+        assert_eq!(nbs.get(NeighborNames::B), Some(7));
+        assert_eq!(nbs.get(NeighborNames::C), None);
+        assert_eq!(nbs.get(NeighborNames::D), Some(6));
+
+        let nbs = get_neighbor_mbs(8, 0, 32);
+        assert_eq!(nbs.get(NeighborNames::A), None);
+        assert_eq!(nbs.get(NeighborNames::B), Some(24));
+        assert_eq!(nbs.get(NeighborNames::C), Some(25));
+        assert_eq!(nbs.get(NeighborNames::D), None);
+
+        let nbs = get_neighbor_mbs(8, 25, 33);
+        assert_eq!(nbs.get(NeighborNames::A), Some(32));
+        assert_eq!(nbs.get(NeighborNames::B), Some(25));
+        assert_eq!(nbs.get(NeighborNames::C), Some(26));
+        assert_eq!(nbs.get(NeighborNames::D), None);
+
+        let nbs = get_neighbor_mbs(10, 1, 1);
+        assert!(nbs.get(NeighborNames::A).is_none());
+        assert!(nbs.get(NeighborNames::B).is_none());
+        assert!(nbs.get(NeighborNames::C).is_none());
+        assert!(nbs.get(NeighborNames::D).is_none());
     }
 }

@@ -60,13 +60,6 @@ pub enum ChromaFormat {
     YUV444 = 3,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ColorPlane {
-    Y,
-    Cb,
-    Cr,
-}
-
 impl ChromaFormat {
     #[inline]
     pub fn is_chrome_subsampled(&self) -> bool {
@@ -80,6 +73,19 @@ impl ChromaFormat {
             ChromaFormat::YUV422 => Size { width: 1, height: 0 },
             _ => Size { width: 0, height: 0 },
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ColorPlane {
+    Y,
+    Cb,
+    Cr,
+}
+
+impl ColorPlane {
+    pub fn is_luma(&self) -> bool {
+        *self == ColorPlane::Y
     }
 }
 

@@ -99,14 +99,28 @@ fn get_4x4luma_block_location(idx: u8) -> Point {
     Point { x, y }
 }
 
+// Section 6.4.7 Inverse 4x4 chroma block scanning process
+fn get_4x4chroma_block_location(idx: u8) -> Point {
+    let idx = idx as u32;
+    let x = inverse_raster_scan(idx, 4, 4, 8, false);
+    let y = inverse_raster_scan(idx, 4, 4, 8, true);
+    Point { x, y }
+}
+
 // Section 6.4.13.1 Derivation process for 4x4 luma block indices
 fn get_4x4luma_block_index(p: Point) -> u8 {
     let idx = 8 * (p.y / 8) + 4 * (p.x / 8) + 2 * ((p.y % 8) / 4) + ((p.x % 8) / 4);
     idx as u8
 }
 
+// Section 6.4.13.2 Derivation process for 4x4 chroma block indices
+fn get_4x4chroma_block_index(p: Point) -> u8 {
+    let idx = 2 * (p.y / 4) + (p.x / 4);
+    idx as u8
+}
+
 // Section 6.4.11.4 Derivation process for neighboring 4x4 luma blocks
-pub fn get_4x4block_neighbor(idx: u8, n: NeighborNames) -> (u8, Option<NeighborNames>) {
+pub fn get_4x4luma_block_neighbor(idx: u8, n: NeighborNames) -> (u8, Option<NeighborNames>) {
     let p = get_4x4luma_block_location(idx);
     let (x, y) = match n {
         NeighborNames::A => (p.x as i8 - 1, p.y as i8),
@@ -119,6 +133,27 @@ pub fn get_4x4block_neighbor(idx: u8, n: NeighborNames) -> (u8, Option<NeighborN
     let p = Point { x: x as u32, y: y as u32 };
     let np = Point { x: xn as u32, y: yn as u32 };
     let idx = get_4x4luma_block_index(np);
+    if p == np {
+        (idx, None)
+    } else {
+        (idx, Some(n))
+    }
+}
+
+// Section 6.4.11.5 Derivation process for neighboring 4x4 chroma blocks
+pub fn get_4x4chroma_block_neighbor(idx: u8, n: NeighborNames) -> (u8, Option<NeighborNames>) {
+    let p = get_4x4chroma_block_location(idx);
+    let (x, y) = match n {
+        NeighborNames::A => (p.x as i8 - 1, p.y as i8),
+        NeighborNames::B => (p.x as i8, p.y as i8 - 1),
+        NeighborNames::C => (p.x as i8 + 1, p.y as i8),
+        NeighborNames::D => (p.x as i8 - 1, p.y as i8 - 1),
+    };
+    let (w, h) = (8, 8);
+    let (xn, yn) = ((x + w) % w, (y + h) % h);
+    let p = Point { x: x as u32, y: y as u32 };
+    let np = Point { x: xn as u32, y: yn as u32 };
+    let idx = get_4x4chroma_block_index(np);
     if p == np {
         (idx, None)
     } else {
@@ -283,6 +318,72 @@ pub struct Residual {
     pub coded_block_pattern: CodedBlockPattern,
 }
 
+impl Residual {
+    pub fn get_dc_levels_for(&mut self, plane: ColorPlane, pred: MbPredictionMode) -> &mut [i32] {
+        let nc: &mut u8;
+        match plane {
+            ColorPlane::Y => {
+                if pred == MbPredictionMode::Intra_16x16 {
+                    self.dc_level16x16.as_mut_slice()
+                } else {
+                    &mut []
+                }
+            }
+            ColorPlane::Cb => self.chroma_cb_dc_level.as_mut_slice(),
+            ColorPlane::Cr => self.chroma_cr_dc_level.as_mut_slice(),
+        }
+    }
+
+    pub fn get_ac_levels_for(
+        &mut self,
+        blk_idx: u8,
+        plane: ColorPlane,
+        pred: MbPredictionMode,
+    ) -> (&mut [i32], &mut u8) {
+        let levels: &mut [i32];
+        let nc: &mut u8;
+        let blk_idx = blk_idx as usize;
+        match plane {
+            ColorPlane::Y => {
+                if pred == MbPredictionMode::Intra_16x16 {
+                    levels = self.ac_level16x16[blk_idx].as_mut_slice();
+                    nc = &mut self.ac_level16x16_nc[blk_idx];
+                } else {
+                    levels = self.luma_level4x4[blk_idx].as_mut_slice();
+                    nc = &mut self.luma_level4x4_nc[blk_idx];
+                }
+            }
+            ColorPlane::Cb => {
+                levels = self.chroma_cb_ac_level[blk_idx].as_mut_slice();
+                nc = &mut self.chroma_cb_level4x4_nc[blk_idx];
+            }
+            ColorPlane::Cr => {
+                levels = self.chroma_cr_ac_level[blk_idx].as_mut_slice();
+                nc = &mut self.chroma_cr_level4x4_nc[blk_idx];
+            }
+        }
+        (levels, nc)
+    }
+
+    // Calculates nC for the block withing the macroblock
+    pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane, mode: MbPredictionMode) -> u8 {
+        let blk_idx = blk_idx as usize;
+        match plane {
+            ColorPlane::Y => match mode {
+                MbPredictionMode::None => todo!(),
+                MbPredictionMode::Intra_8x8 => todo!(),
+                MbPredictionMode::Intra_4x4 => self.luma_level4x4_nc[blk_idx],
+                MbPredictionMode::Intra_16x16 => self.ac_level16x16_nc[blk_idx],
+                MbPredictionMode::Pred_L0 => todo!(),
+                MbPredictionMode::Pred_L1 => todo!(),
+            },
+
+            ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx],
+            ColorPlane::Cr => self.chroma_cr_level4x4_nc[blk_idx],
+        }
+    }
+}
+
 // Special case of I macroblock - raw pixels (IMbType::I_PCM)
 #[derive(Clone, Debug, Default)]
 pub struct PcmMb {
@@ -334,25 +435,6 @@ impl IMb {
     }
 }
 
-impl Residual {
-    // Calculates nC for the block withing the macroblock
-    pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane, mode: MbPredictionMode) -> u8 {
-        match plane {
-            ColorPlane::Y => match mode {
-                MbPredictionMode::None => todo!(),
-                MbPredictionMode::Intra_8x8 => todo!(),
-                MbPredictionMode::Intra_4x4 => self.luma_level4x4_nc[blk_idx as usize],
-                MbPredictionMode::Intra_16x16 => self.ac_level16x16_nc[blk_idx as usize],
-                MbPredictionMode::Pred_L0 => todo!(),
-                MbPredictionMode::Pred_L1 => todo!(),
-            },
-
-            ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx as usize],
-            ColorPlane::Cr => self.chroma_cr_level4x4_nc[blk_idx as usize],
-        }
-    }
-}
-
 #[allow(non_snake_case)]
 impl Macroblock {
     #[inline]
@@ -381,47 +463,61 @@ mod tests {
     pub use super::*;
 
     #[test]
-    pub fn test_get_4x4block_neighbor() {
+    pub fn test_get_4x4luma_block_neighbor() {
         let (a, b) = (NeighborNames::A, NeighborNames::B);
-        assert_eq!(get_4x4block_neighbor(0, a), (5, Some(a)));
-        assert_eq!(get_4x4block_neighbor(2, a), (7, Some(a)));
-        assert_eq!(get_4x4block_neighbor(8, a), (13, Some(a)));
-        assert_eq!(get_4x4block_neighbor(10, a), (15, Some(a)));
+        assert_eq!(get_4x4luma_block_neighbor(0, a), (5, Some(a)));
+        assert_eq!(get_4x4luma_block_neighbor(2, a), (7, Some(a)));
+        assert_eq!(get_4x4luma_block_neighbor(8, a), (13, Some(a)));
+        assert_eq!(get_4x4luma_block_neighbor(10, a), (15, Some(a)));
 
-        assert_eq!(get_4x4block_neighbor(1, a), (0, None));
-        assert_eq!(get_4x4block_neighbor(3, a), (2, None));
-        assert_eq!(get_4x4block_neighbor(9, a), (8, None));
-        assert_eq!(get_4x4block_neighbor(11, a), (10, None));
+        assert_eq!(get_4x4luma_block_neighbor(1, a), (0, None));
+        assert_eq!(get_4x4luma_block_neighbor(3, a), (2, None));
+        assert_eq!(get_4x4luma_block_neighbor(9, a), (8, None));
+        assert_eq!(get_4x4luma_block_neighbor(11, a), (10, None));
 
-        assert_eq!(get_4x4block_neighbor(4, a), (1, None));
-        assert_eq!(get_4x4block_neighbor(6, a), (3, None));
-        assert_eq!(get_4x4block_neighbor(12, a), (9, None));
-        assert_eq!(get_4x4block_neighbor(14, a), (11, None));
+        assert_eq!(get_4x4luma_block_neighbor(4, a), (1, None));
+        assert_eq!(get_4x4luma_block_neighbor(6, a), (3, None));
+        assert_eq!(get_4x4luma_block_neighbor(12, a), (9, None));
+        assert_eq!(get_4x4luma_block_neighbor(14, a), (11, None));
 
-        assert_eq!(get_4x4block_neighbor(5, a), (4, None));
-        assert_eq!(get_4x4block_neighbor(7, a), (6, None));
-        assert_eq!(get_4x4block_neighbor(13, a), (12, None));
-        assert_eq!(get_4x4block_neighbor(15, a), (14, None));
+        assert_eq!(get_4x4luma_block_neighbor(5, a), (4, None));
+        assert_eq!(get_4x4luma_block_neighbor(7, a), (6, None));
+        assert_eq!(get_4x4luma_block_neighbor(13, a), (12, None));
+        assert_eq!(get_4x4luma_block_neighbor(15, a), (14, None));
 
-        assert_eq!(get_4x4block_neighbor(0, b), (10, Some(b)));
-        assert_eq!(get_4x4block_neighbor(1, b), (11, Some(b)));
-        assert_eq!(get_4x4block_neighbor(4, b), (14, Some(b)));
-        assert_eq!(get_4x4block_neighbor(5, b), (15, Some(b)));
+        assert_eq!(get_4x4luma_block_neighbor(0, b), (10, Some(b)));
+        assert_eq!(get_4x4luma_block_neighbor(1, b), (11, Some(b)));
+        assert_eq!(get_4x4luma_block_neighbor(4, b), (14, Some(b)));
+        assert_eq!(get_4x4luma_block_neighbor(5, b), (15, Some(b)));
 
-        assert_eq!(get_4x4block_neighbor(2, b), (0, None));
-        assert_eq!(get_4x4block_neighbor(3, b), (1, None));
-        assert_eq!(get_4x4block_neighbor(6, b), (4, None));
-        assert_eq!(get_4x4block_neighbor(7, b), (5, None));
+        assert_eq!(get_4x4luma_block_neighbor(2, b), (0, None));
+        assert_eq!(get_4x4luma_block_neighbor(3, b), (1, None));
+        assert_eq!(get_4x4luma_block_neighbor(6, b), (4, None));
+        assert_eq!(get_4x4luma_block_neighbor(7, b), (5, None));
 
-        assert_eq!(get_4x4block_neighbor(8, b), (2, None));
-        assert_eq!(get_4x4block_neighbor(9, b), (3, None));
-        assert_eq!(get_4x4block_neighbor(12, b), (6, None));
-        assert_eq!(get_4x4block_neighbor(13, b), (7, None));
+        assert_eq!(get_4x4luma_block_neighbor(8, b), (2, None));
+        assert_eq!(get_4x4luma_block_neighbor(9, b), (3, None));
+        assert_eq!(get_4x4luma_block_neighbor(12, b), (6, None));
+        assert_eq!(get_4x4luma_block_neighbor(13, b), (7, None));
 
-        assert_eq!(get_4x4block_neighbor(10, b), (8, None));
-        assert_eq!(get_4x4block_neighbor(11, b), (9, None));
-        assert_eq!(get_4x4block_neighbor(14, b), (12, None));
-        assert_eq!(get_4x4block_neighbor(15, b), (13, None));
+        assert_eq!(get_4x4luma_block_neighbor(10, b), (8, None));
+        assert_eq!(get_4x4luma_block_neighbor(11, b), (9, None));
+        assert_eq!(get_4x4luma_block_neighbor(14, b), (12, None));
+        assert_eq!(get_4x4luma_block_neighbor(15, b), (13, None));
+    }
+
+    #[test]
+    pub fn test_get_4x4chroma_block_neighbor() {
+        let (a, b) = (NeighborNames::A, NeighborNames::B);
+        assert_eq!(get_4x4chroma_block_neighbor(0, a), (1, Some(a)));
+        assert_eq!(get_4x4chroma_block_neighbor(1, a), (0, None));
+        assert_eq!(get_4x4chroma_block_neighbor(2, a), (3, Some(a)));
+        assert_eq!(get_4x4chroma_block_neighbor(3, a), (2, None));
+
+        assert_eq!(get_4x4chroma_block_neighbor(0, b), (2, Some(b)));
+        assert_eq!(get_4x4chroma_block_neighbor(1, b), (3, Some(b)));
+        assert_eq!(get_4x4chroma_block_neighbor(2, b), (0, None));
+        assert_eq!(get_4x4chroma_block_neighbor(3, b), (1, None));
     }
 
     #[test]

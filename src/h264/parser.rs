@@ -5,6 +5,7 @@ use crate::h264::sps::FrameCrop;
 
 use super::decoder;
 use super::macroblock;
+use super::macroblock::MbNeighbors;
 use super::nal;
 use super::pps;
 use super::rbsp;
@@ -546,65 +547,67 @@ pub fn parse_slice_header(
     Ok(Slice::new(sps.clone(), pps.clone(), header))
 }
 
+fn calculate_nc(
+    slice: &Slice,
+    neighbor_mbs: &MbNeighbors,
+    blk_idx: u8,
+    residual: &Residual,
+    pred_mode: MbPredictionMode,
+    plane: ColorPlane,
+) -> i32 {
+    let get_block_neighbor = if plane.is_luma() {
+        macroblock::get_4x4luma_block_neighbor
+    } else {
+        macroblock::get_4x4chroma_block_neighbor
+    };
+
+    let mut nc = 0;
+    let mut nc_counted = 0;
+    for neighbor in [NeighborNames::A, NeighborNames::B] {
+        let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx as u8, neighbor);
+        if let Some(mb_neighbor) = mb_neighbor {
+            if let Some(addr) = neighbor_mbs.get(mb_neighbor) {
+                if let Some(mb) = slice.get_mb(addr) {
+                    nc += mb.get_nc(block_neighbor_idx, plane) as i32;
+                    nc_counted += 1;
+                }
+            }
+        } else {
+            nc += residual.get_nc(block_neighbor_idx, plane, pred_mode) as i32;
+            nc_counted += 1;
+        }
+    }
+    if nc_counted == 2 {
+        nc /= 2;
+    }
+    nc
+}
+
 pub fn parse_residual_luma(
     input: &mut BitReader,
     slice: &Slice,
     block: &Macroblock,
+    neighbor_mbs: &MbNeighbors,
     residual: &mut Residual,
 ) -> ParseResult<()> {
     trace!("parse_residual_luma");
     let pred_mode = block.MbPartPredMode(0);
     if pred_mode == MbPredictionMode::Intra_16x16 {
-        let nc = 0;
-        parse_residual_block(input, &mut residual.dc_level16x16, nc, 16)?;
+        let levels = residual.get_dc_levels_for(ColorPlane::Y, pred_mode);
+        parse_residual_block(input, levels, /* nC = */ 0, levels.len())?;
     }
     let coded_block_pattern = residual.coded_block_pattern;
     for i8x8 in 0..4 {
         for i4x4 in 0..4 {
-            let blk_idx: usize = i8x8 * 4 + i4x4;
-            let curr_mb_addr = slice.last_mb_addr;
-            let mut nc = 0;
-            let mut nc_counted = 0;
-            let mbs_next_to_us = get_neighbor_mbs(
-                slice.sps.pic_width_in_mbs() as u32,
-                slice.header.first_mb_in_slice,
-                curr_mb_addr,
-            );
-            for neighbor in [NeighborNames::A, NeighborNames::B] {
-                let (idx, n) = macroblock::get_4x4block_neighbor(blk_idx as u8, neighbor);
-                if let Some(mb_neighbor) = n {
-                    if let Some(addr) = mbs_next_to_us.get(mb_neighbor) {
-                        if let Some(mb) = slice.get_mb(addr) {
-                            nc += mb.get_nc(idx, ColorPlane::Y) as i32;
-                            nc_counted += 1;
-                        }
-                    }
-                } else {
-                    nc += residual.get_nc(idx, ColorPlane::Y, pred_mode) as i32;
-                    nc_counted += 1;
-                }
-            }
-            if nc_counted == 2 {
-                nc /= 2;
-            }
+            let blk_idx = i8x8 * 4 + i4x4;
+            let nc = calculate_nc(slice, neighbor_mbs, blk_idx, residual, pred_mode, ColorPlane::Y);
+            let (levels_ref, total_coeff_ref) =
+                residual.get_ac_levels_for(blk_idx, ColorPlane::Y, pred_mode);
             if coded_block_pattern.luma() & (1 << i8x8) != 0 {
-                if pred_mode == MbPredictionMode::Intra_16x16 {
-                    let total_coeffs =
-                        parse_residual_block(input, &mut residual.ac_level16x16[blk_idx], nc, 15)?;
-                    residual.ac_level16x16_nc[blk_idx] = total_coeffs;
-                } else {
-                    let total_coeffs =
-                        parse_residual_block(input, &mut residual.luma_level4x4[blk_idx], nc, 16)?;
-                    residual.luma_level4x4_nc[blk_idx] = total_coeffs;
-                }
+                *total_coeff_ref = parse_residual_block(input, levels_ref, nc, levels_ref.len())?;
             } else {
-                if pred_mode == MbPredictionMode::Intra_16x16 {
-                    residual.ac_level16x16[blk_idx].fill(0);
-                    residual.ac_level16x16_nc[blk_idx] = 0;
-                } else {
-                    residual.luma_level4x4[blk_idx].fill(0);
-                    residual.luma_level4x4_nc[blk_idx] = 0;
-                }
+                levels_ref.fill(0);
+                *total_coeff_ref = 0;
             }
         }
     }
@@ -618,39 +621,37 @@ pub fn parse_residual(
     residual: &mut Residual,
 ) -> ParseResult<()> {
     trace!("parse_residual");
-    parse_residual_luma(input, slice, block, residual)?;
     let coded_block_pattern = residual.coded_block_pattern;
+    let neighbor_mbs = get_neighbor_mbs(
+        slice.sps.pic_width_in_mbs() as u32,
+        slice.header.first_mb_in_slice,
+        slice.last_mb_addr
+    );
+    parse_residual_luma(input, slice, block, &neighbor_mbs, residual)?;
+    let pred_mode = block.MbPartPredMode(0);
     if slice.sps.ChromaArrayType().is_chrome_subsampled() {
-        let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
-        if coded_block_pattern.chroma() & 3 != 0 {
-            parse_residual_block(input, &mut residual.chroma_cb_dc_level, nc, 4)?;
-            parse_residual_block(input, &mut residual.chroma_cr_dc_level, nc, 4)?;
-        } else {
-            residual.chroma_cb_dc_level.fill(0);
-            residual.chroma_cr_dc_level.fill(0);
+        for plane in [ColorPlane::Cb, ColorPlane::Cr] {
+            let levels = residual.get_dc_levels_for(plane, pred_mode);
+            if coded_block_pattern.chroma() & 3 != 0 {
+                let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
+                parse_residual_block(input, levels, nc, levels.len())?;
+            } else {
+                levels.fill(0);
+            }
         }
 
-        for (chroma_ac_level, plane) in [
-            (&mut residual.chroma_cb_ac_level, ColorPlane::Cb),
-            (&mut residual.chroma_cr_ac_level, ColorPlane::Cr),
-        ] {
+        for plane in [ColorPlane::Cb, ColorPlane::Cr] {
             for blk_idx in 0..4 {
+                let nc = calculate_nc(slice, &neighbor_mbs, blk_idx, residual, pred_mode, plane);
+                let (levels_ref, total_coeff_ref) =
+                    residual.get_ac_levels_for(blk_idx, plane, pred_mode);
                 if coded_block_pattern.chroma() & 2 != 0 {
                     let nc = 0;
-                    let total_coeffs =
-                        parse_residual_block(input, &mut chroma_ac_level[blk_idx], nc, 15)?;
-                    if plane == ColorPlane::Cb {
-                        residual.chroma_cb_level4x4_nc[blk_idx] = total_coeffs;
-                    } else {
-                        residual.chroma_cr_level4x4_nc[blk_idx] = total_coeffs;
-                    }
+                    *total_coeff_ref =
+                        parse_residual_block(input, levels_ref, nc, levels_ref.len())?;
                 } else {
-                    chroma_ac_level[blk_idx].fill(0);
-                    if plane == ColorPlane::Cb {
-                        residual.chroma_cb_level4x4_nc[blk_idx] = 0;
-                    } else {
-                        residual.chroma_cr_level4x4_nc[blk_idx] = 0;
-                    }
+                    levels_ref.fill(0);
+                    *total_coeff_ref = 0;
                 }
             }
         }
@@ -853,7 +854,7 @@ mod tests {
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.disable_deblocking_filter_idc, 0);
 
-        let _ = parse_slice_data(&mut input, &mut slice); //.expect("blocks parsing failed");
+        let _ = parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
     }
 
     #[test]

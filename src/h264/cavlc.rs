@@ -135,6 +135,7 @@ pub fn parse_residual_block(
     nc: i32,
     max_num_coeff: usize,
 ) -> ParseResult<u8> {
+    trace!("parse_residual_block() max_num_coeff = {} nc = {}", max_num_coeff, nc);
     let next_16_bits = input.u(16).map_err(|e| "coeff_token: ".to_owned() + &e)? as u16;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
     if !coeff_token.is_valid() {
@@ -143,10 +144,10 @@ pub fn parse_residual_block(
     input.go_back(16 - coeff_token.pattern_len as i64)?;
     let total_coeffs = coeff_token.total_coeffs as usize;
     trace!(
-        "parse_residual_block() nc:{} total_coeffs: {} trailing_ones: {}",
-        nc,
+        "coeff_token total_coeffs: {} t1s: {}, bits:{}",
         total_coeffs,
-        coeff_token.trailing_ones
+        coeff_token.trailing_ones,
+        coeff_token.pattern_len
     );
 
     if total_coeffs == 0 {
@@ -200,9 +201,8 @@ pub fn parse_residual_block(
         if suffix_len < 6 && level.abs() > (3 << (suffix_len - 1)) {
             suffix_len += 1;
         }
-        trace!("level: {}", *level);
+        trace!("coeff_level: {}", *level);
     }
-    trace!("levels: {:?}", levels);
 
     // Section 9.2.3 Parsing process for run information
     let mut zeros_left = if total_coeffs < coeff_level.len() {
@@ -218,7 +218,7 @@ pub fn parse_residual_block(
             ));
         }
         input.go_back(16 - bits as i64)?;
-        trace!("total_zeros: {}", total_zeros);
+        trace!("total_zeros: {} bits:{}", total_zeros, bits);
         total_zeros
     } else {
         0
@@ -237,6 +237,7 @@ pub fn parse_residual_block(
             }
             input.go_back(16 - bits as i64)?;
             zeros_left -= run_before;
+            trace!("run_before: {} bits:{}", run_before, bits);
             run_before
         } else {
             0

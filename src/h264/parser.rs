@@ -18,7 +18,7 @@ use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
-    IMb, IMbType, Macroblock, MbAddr, MbPredictionMode, NeighborNames, PcmMb, Residual,
+    IMb, IMbType, Macroblock, MbPredictionMode, NeighborNames, PcmMb, Residual,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -561,29 +561,35 @@ fn calculate_nc(
         macroblock::get_4x4chroma_block_neighbor
     };
 
-    let mut nc = 0;
+    trace!("  calc NC plane:{:?} blk:{}", plane, blk_idx);
+    let mut total_nc = 0;
     let mut nc_counted = 0;
     for neighbor in [NeighborNames::A, NeighborNames::B] {
         let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx as u8, neighbor);
         if let Some(mb_neighbor) = mb_neighbor {
             if let Some(addr) = neighbor_mbs.get(mb_neighbor) {
                 if let Some(mb) = slice.get_mb(addr) {
-                    nc += mb.get_nc(block_neighbor_idx, plane) as i32;
+                    let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
+                    trace!("    MB: {} blk: {}  nC: {}", addr, block_neighbor_idx, nc);
+                    total_nc += nc;
                     nc_counted += 1;
                 }
             }
         } else {
-            nc += residual.get_nc(block_neighbor_idx, plane, pred_mode) as i32;
+            let nc = residual.get_nc(block_neighbor_idx, plane, pred_mode) as i32;
+            trace!("    same MB blk: {}  nC: {}", block_neighbor_idx, nc);
+            total_nc += nc;
             nc_counted += 1;
         }
+
     }
     if nc_counted == 2 {
-        nc /= 2;
+        total_nc = (total_nc + 1) / 2;
     }
-    nc
+    total_nc
 }
 
-pub fn parse_residual_luma(
+fn parse_residual_luma(
     input: &mut BitReader,
     slice: &Slice,
     block: &Macroblock,
@@ -593,13 +599,15 @@ pub fn parse_residual_luma(
     trace!("parse_residual_luma");
     let pred_mode = block.MbPartPredMode(0);
     if pred_mode == MbPredictionMode::Intra_16x16 {
+        trace!(" luma DC");
         let levels = residual.get_dc_levels_for(ColorPlane::Y, pred_mode);
         parse_residual_block(input, levels, /* nC = */ 0, levels.len())?;
     }
-    let coded_block_pattern = residual.coded_block_pattern;
+    let coded_block_pattern = block.get_coded_block_pattern();
     for i8x8 in 0..4 {
         for i4x4 in 0..4 {
             let blk_idx = i8x8 * 4 + i4x4;
+            trace!(" luma BK {}", blk_idx);
             let nc = calculate_nc(slice, neighbor_mbs, blk_idx, residual, pred_mode, ColorPlane::Y);
             let (levels_ref, total_coeff_ref) =
                 residual.get_ac_levels_for(blk_idx, ColorPlane::Y, pred_mode);
@@ -621,7 +629,7 @@ pub fn parse_residual(
     residual: &mut Residual,
 ) -> ParseResult<()> {
     trace!("parse_residual");
-    let coded_block_pattern = residual.coded_block_pattern;
+    let coded_block_pattern = block.get_coded_block_pattern();
     let neighbor_mbs = get_neighbor_mbs(
         slice.sps.pic_width_in_mbs() as u32,
         slice.header.first_mb_in_slice,
@@ -633,6 +641,7 @@ pub fn parse_residual(
         for plane in [ColorPlane::Cb, ColorPlane::Cr] {
             let levels = residual.get_dc_levels_for(plane, pred_mode);
             if coded_block_pattern.chroma() & 3 != 0 {
+                trace!(" chroma {:?} DC", plane);
                 let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
                 parse_residual_block(input, levels, nc, levels.len())?;
             } else {
@@ -646,7 +655,7 @@ pub fn parse_residual(
                 let (levels_ref, total_coeff_ref) =
                     residual.get_ac_levels_for(blk_idx, plane, pred_mode);
                 if coded_block_pattern.chroma() & 2 != 0 {
-                    let nc = 0;
+                    trace!(" chroma {:?} BK {}", plane, blk_idx);
                     *total_coeff_ref =
                         parse_residual_block(input, levels_ref, nc, levels_ref.len())?;
                 } else {
@@ -664,7 +673,6 @@ pub fn parse_residual(
 pub fn parse_macroblock(
     input: &mut BitReader,
     slice: &Slice,
-    addr: MbAddr,
 ) -> ParseResult<Macroblock> {
     let mb_type: IMbType;
     read_value!(input, mb_type, ue);
@@ -728,8 +736,7 @@ pub fn parse_macroblock(
         }
 
         let mut residual = Residual::default();
-        residual.coded_block_pattern = block.coded_block_pattern;
-        let result = Macroblock::I(block.clone());
+        let result = Macroblock::I(block);
         parse_residual(input, slice, &result, &mut residual)?;
         return Ok(result);
     }
@@ -760,8 +767,9 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     let mut more_data = true;
     let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
     while more_data {
+        trace!("Parsing macroblock: {}", curr_mb_addr);
         slice.last_mb_addr = curr_mb_addr;
-        let block = parse_macroblock(input, slice, curr_mb_addr)?;
+        let block = parse_macroblock(input, slice)?;
         slice.put_mb(curr_mb_addr, block);
         if curr_mb_addr < pic_size_in_mbs {
             curr_mb_addr += 1;

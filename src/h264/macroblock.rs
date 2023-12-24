@@ -1,3 +1,4 @@
+use log::trace;
 use num_traits::cast::FromPrimitive;
 use std::num::NonZeroU32;
 
@@ -314,8 +315,6 @@ pub struct Residual {
 
     pub chroma_cb_level4x4_nc: [u8; 4],
     pub chroma_cr_level4x4_nc: [u8; 4],
-
-    pub coded_block_pattern: CodedBlockPattern,
 }
 
 impl Residual {
@@ -451,6 +450,16 @@ impl Macroblock {
         match self {
             Macroblock::I(mb) => mb.residual.get_nc(blk_idx, plane, self.MbPartPredMode(0)),
             Macroblock::PCM(_) => 16,
+            Macroblock::P(_) => {
+                todo!("P blocks")
+            }
+        }
+    }
+
+    pub fn get_coded_block_pattern(&self) -> CodedBlockPattern {
+        match self {
+            Macroblock::I(mb) => mb.coded_block_pattern,
+            Macroblock::PCM(_) => CodedBlockPattern::default(),
             Macroblock::P(_) => {
                 todo!("P blocks")
             }

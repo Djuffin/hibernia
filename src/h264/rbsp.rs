@@ -1,4 +1,5 @@
 use bitstream_io::{BigEndian, BitRead, BitReader};
+use log::trace;
 use std::io::{self, Cursor, SeekFrom};
 
 pub type ParseResult<T> = std::result::Result<T, String>;
@@ -62,6 +63,40 @@ impl<'a> RbspReader<'a> {
         Ok(result)
     }
 
+    pub fn peek_or_pad16(&mut self) -> ParseResult<u16> {
+        if self.remaining() >= 16 {
+            let result = self.reader.read(16).map_err(map_io_error)?;
+            self.go_back(16)?;
+            Ok(result)
+        } else {
+            let mut result = 0;
+            let mut bits_read = 0;
+            loop {
+                match self.reader.read_bit() {
+                    Ok(true) => {
+                        result = (result << 1) | 1;
+                    }
+                    Ok(false) => {
+                        result <<= 1;
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                        if bits_read == 0 {
+                            return Err(map_io_error(e));
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        return Err(map_io_error(e));
+                    }
+                }
+                bits_read += 1;
+            }
+            self.go_back(bits_read)?;
+            result <<= 16 - bits_read;
+            Ok(result)
+        }
+    }
+
     pub fn position(&mut self) -> u64 {
         self.reader.position_in_bits().expect("position_in_bits() error")
     }
@@ -80,8 +115,7 @@ impl<'a> RbspReader<'a> {
 
     pub fn remaining(&mut self) -> u64 {
         let mut reader = self.reader.clone();
-        reader.seek_bits(SeekFrom::End(0)).expect("seek error");
-        let pos = reader.position_in_bits().expect("position_in_bits() error");
+        let pos = reader.seek_bits(SeekFrom::End(0)).expect("seek error");
         pos - self.position()
     }
 }
@@ -130,5 +164,26 @@ mod tests {
         assert_eq!(4, reader(&[0b00010000]).se().unwrap());
         assert_eq!(-4, reader(&[0b00010010]).se().unwrap());
         assert_eq!(5, reader(&[0b00010100]).se().unwrap());
+    }
+
+    #[test]
+    pub fn test_peek_or_pad16() {
+        crate::diag::init(true);
+        let mut r = reader(&[0b11100111, 0b11100011]);
+        assert_eq!(r.peek_or_pad16().unwrap(), 0b11100111_11100011);
+
+        let mut r = reader(&[0b11100111]);
+        assert_eq!(r.remaining(), 8);
+        assert_eq!(r.peek_or_pad16().unwrap(), 0b11100111_00000000);
+        assert_eq!(r.remaining(), 8);
+
+        let mut r = reader(&[0b11100111]);
+        assert_eq!(r.u(7).unwrap(), 0b1110011);
+        assert_eq!(r.remaining(), 1);
+        assert_eq!(r.peek_or_pad16().unwrap(), 0b10000000_00000000);
+        assert_eq!(r.remaining(), 1);
+
+        let mut r = reader(&[]);
+        assert!(r.peek_or_pad16().is_err());
     }
 }

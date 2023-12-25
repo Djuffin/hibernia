@@ -136,12 +136,12 @@ pub fn parse_residual_block(
     max_num_coeff: usize,
 ) -> ParseResult<u8> {
     trace!("parse_residual_block() max_num_coeff = {} nc = {}", max_num_coeff, nc);
-    let next_16_bits = input.u(16).map_err(|e| "coeff_token: ".to_owned() + &e)? as u16;
+    let next_16_bits = input.peek_or_pad16().map_err(|e| "coeff_token: ".to_owned() + &e)? as u16;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
     if !coeff_token.is_valid() {
         return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
     }
-    input.go_back(16 - coeff_token.pattern_len as i64)?;
+    input.skip(coeff_token.pattern_len as u32)?;
     let total_coeffs = coeff_token.total_coeffs as usize;
     trace!(
         "coeff_token total_coeffs: {} t1s: {}, bits:{}",
@@ -206,7 +206,8 @@ pub fn parse_residual_block(
 
     // Section 9.2.3 Parsing process for run information
     let mut zeros_left = if total_coeffs < coeff_level.len() {
-        let next_16_bits = input.u(16).map_err(|e| "total_zeros: ".to_owned() + &e)? as u16;
+        let next_16_bits =
+            input.peek_or_pad16().map_err(|e| "total_zeros: ".to_owned() + &e)? as u16;
         let tz_vlc_index = total_coeffs as u8;
         let lookup_tz =
             if max_num_coeff == 4 { lookup_total_zeros_chroma } else { lookup_total_zeros };
@@ -217,7 +218,7 @@ pub fn parse_residual_block(
                 next_16_bits, tz_vlc_index
             ));
         }
-        input.go_back(16 - bits as i64)?;
+        input.skip(bits as u32)?;
         trace!("total_zeros: {} bits:{}", total_zeros, bits);
         total_zeros
     } else {
@@ -227,7 +228,8 @@ pub fn parse_residual_block(
     let mut runs = [0; 16];
     for run in runs.iter_mut().take(total_coeffs - 1) {
         *run = if zeros_left > 0 {
-            let next_16_bits = input.u(16).map_err(|e| "run_before: ".to_owned() + &e)? as u16;
+            let next_16_bits =
+                input.peek_or_pad16().map_err(|e| "run_before: ".to_owned() + &e)? as u16;
             let (run_before, bits) = lookup_run_before(next_16_bits, zeros_left);
             if bits == 0 {
                 return Err(format!(
@@ -235,7 +237,7 @@ pub fn parse_residual_block(
                     next_16_bits, zeros_left
                 ));
             }
-            input.go_back(16 - bits as i64)?;
+            input.skip(bits as u32)?;
             zeros_left -= run_before;
             trace!("run_before: {} bits:{}", run_before, bits);
             run_before
@@ -272,9 +274,6 @@ mod tests {
             result.push(u8::from_str_radix(byte, 2).unwrap());
         }
 
-        // Extra padding for input reader
-        result.push(0);
-        result.push(0);
         result
     }
 

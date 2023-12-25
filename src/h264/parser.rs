@@ -443,7 +443,6 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
             break;
         }
         input.go_back(24)?;
-
         expect_value!(input, "NAL start code zero_byte", 0, 8);
     }
 
@@ -559,7 +558,7 @@ fn calculate_nc(
         macroblock::get_4x4chroma_block_neighbor
     };
 
-    trace!("  calc NC plane:{:?} blk:{}", plane, blk_idx);
+    //trace!("  calc NC plane:{:?} blk:{}", plane, blk_idx);
     let mut total_nc = 0;
     let mut nc_counted = 0;
     for neighbor in [NeighborNames::A, NeighborNames::B] {
@@ -568,14 +567,14 @@ fn calculate_nc(
             if let Some(addr) = neighbor_mbs.get(mb_neighbor) {
                 if let Some(mb) = slice.get_mb(addr) {
                     let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
-                    trace!("    MB: {} blk: {}  nC: {}", addr, block_neighbor_idx, nc);
+                    //trace!("    MB: {} blk: {}  nC: {}", addr, block_neighbor_idx, nc);
                     total_nc += nc;
                     nc_counted += 1;
                 }
             }
         } else {
             let nc = residual.get_nc(block_neighbor_idx, plane, pred_mode) as i32;
-            trace!("    same MB blk: {}  nC: {}", block_neighbor_idx, nc);
+            //trace!("    same MB blk: {}  nC: {}", block_neighbor_idx, nc);
             total_nc += nc;
             nc_counted += 1;
         }
@@ -762,7 +761,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     let mut more_data = true;
     let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
     while more_data {
-        trace!("=============== Parsing macroblock: {}", slice.current_mb_address);
+        trace!("=============== Parsing macroblock: {} ===============", slice.current_mb_address);
         let block = parse_macroblock(input, slice)?;
         slice.put_mb(slice.current_mb_address, block);
         if slice.current_mb_address < pic_size_in_mbs {
@@ -840,8 +839,6 @@ mod tests {
             0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04, 0x00, 0x00, 0x09, 0xFF, 0xFF, 0xF8,
             0x7A, 0x28, 0x00, 0x08, 0x24, 0x79, 0x31, 0x72, 0x72, 0x75, 0x8B, 0xAE, 0xBA, 0xEB,
             0xAE, 0xBA, 0xEB, 0xAE, 0xBA, 0xF0,
-
-            0x00, 0x00, // TODO: Remove this extra padding. It's to make 16 bit read ahead possible
         ];
         let mut input = reader(&slice_data);
         let nal_header = parse_nal_header(&mut input).expect("NAL unit");

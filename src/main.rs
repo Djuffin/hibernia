@@ -1,4 +1,5 @@
 #![allow(unused_variables)]
+#![allow(unused_imports)]
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::needless_late_init)]

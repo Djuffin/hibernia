@@ -558,23 +558,20 @@ fn calculate_nc(
         macroblock::get_4x4chroma_block_neighbor
     };
 
-    //trace!("  calc NC plane:{:?} blk:{}", plane, blk_idx);
     let mut total_nc = 0;
     let mut nc_counted = 0;
     for neighbor in [NeighborNames::A, NeighborNames::B] {
-        let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx as u8, neighbor);
+        let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx, neighbor);
         if let Some(mb_neighbor) = mb_neighbor {
             if let Some(addr) = neighbor_mbs.get(mb_neighbor) {
                 if let Some(mb) = slice.get_mb(addr) {
                     let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
-                    //trace!("    MB: {} blk: {}  nC: {}", addr, block_neighbor_idx, nc);
                     total_nc += nc;
                     nc_counted += 1;
                 }
             }
         } else {
             let nc = residual.get_nc(block_neighbor_idx, plane, pred_mode) as i32;
-            //trace!("    same MB blk: {}  nC: {}", block_neighbor_idx, nc);
             total_nc += nc;
             nc_counted += 1;
         }
@@ -688,7 +685,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         for _ in 0..chroma_samples {
             block.pcm_sample_chroma_cr.push(input.u(8)? as u8);
         }
-        return Ok(Macroblock::PCM(block));
+        Ok(Macroblock::PCM(block))
     } else {
         let mut block = IMb { mb_type, ..IMb::default() };
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
@@ -732,7 +729,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         let mut result = Macroblock::I(block);
         parse_residual(input, slice, &result, &mut residual)?;
         result.set_residual(Some(residual));
-        return Ok(result);
+        Ok(result)
     }
 }
 

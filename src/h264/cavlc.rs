@@ -136,7 +136,7 @@ pub fn parse_residual_block(
     max_num_coeff: usize,
 ) -> ParseResult<u8> {
     trace!("parse_residual_block() max_num_coeff = {} nc = {}", max_num_coeff, nc);
-    let next_16_bits = input.peek_or_pad16().map_err(|e| "coeff_token: ".to_owned() + &e)? as u16;
+    let next_16_bits = input.peek_or_pad16().map_err(|e| "coeff_token: ".to_owned() + &e)?;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
     if !coeff_token.is_valid() {
         return Err(format!("Unknown coeff_token value: {:#016b} nc:{}", next_16_bits, nc));
@@ -207,7 +207,7 @@ pub fn parse_residual_block(
     // Section 9.2.3 Parsing process for run information
     let mut zeros_left = if total_coeffs < coeff_level.len() {
         let next_16_bits =
-            input.peek_or_pad16().map_err(|e| "total_zeros: ".to_owned() + &e)? as u16;
+            input.peek_or_pad16().map_err(|e| "total_zeros: ".to_owned() + &e)?;
         let tz_vlc_index = total_coeffs as u8;
         let lookup_tz =
             if max_num_coeff == 4 { lookup_total_zeros_chroma } else { lookup_total_zeros };
@@ -229,7 +229,7 @@ pub fn parse_residual_block(
     for run in runs.iter_mut().take(total_coeffs - 1) {
         *run = if zeros_left > 0 {
             let next_16_bits =
-                input.peek_or_pad16().map_err(|e| "run_before: ".to_owned() + &e)? as u16;
+                input.peek_or_pad16().map_err(|e| "run_before: ".to_owned() + &e)?;
             let (run_before, bits) = lookup_run_before(next_16_bits, zeros_left);
             if bits == 0 {
                 return Err(format!(

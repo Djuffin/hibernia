@@ -381,21 +381,23 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
 }
 
 pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
-    let mut reader = BitReader::new(input);
-    while let Ok(bits) = reader.u(32) {
-        if bits == 1 || (bits >> 8) == 1 {
-            return Some((reader.position() / 8 - 4) as usize);
+    let mut zeros = 0;
+    for (idx, byte) in input.iter().enumerate() {
+        let value = *byte;
+        if value == 0 {
+            zeros += 1;
+        } else if value == 1 {
+            if zeros >= 3 {
+                return Some(idx - 3);
+            }
+            if zeros == 2 {
+                return Some(idx - 2);
+            }
+            zeros = 0;
+        } else {
+            zeros = 0;
         }
-
-        let bytes_to_skip = match bits.leading_zeros() {
-            9..=16 => 2,
-            17..=24 => 3,
-            25..=31 => 4,
-            _ => 1,
-        };
-        let _ = reader.go_back(32 - bytes_to_skip * 8);
     }
-
     None
 }
 
@@ -436,14 +438,18 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
     let mut header = NalHeader::default();
     input.align();
 
-    // Skip zeros and the start code prefix.
-    loop {
-        // Short start code: 0x00 0x00 0x01
-        if input.u(24).is_ok_and(|x| x == 1) {
+    let mut zeros = 0;
+    while let Ok(value) = input.u(8) {
+        if value == 0 {
+            zeros += 1;
+        } else if value == 1 {
+            if zeros < 2 {
+                return Err(format!("Not enough zeros ({zeros}) in NAL header."));
+            }
             break;
+        } else {
+            return Err(format!("Unexpected value in NAL header: {value}"));
         }
-        input.go_back(24)?;
-        expect_value!(input, "NAL start code zero_byte", 0, 8);
     }
 
     expect_value!(input, "forbidden_zero_bit", 0, 1);

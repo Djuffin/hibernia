@@ -64,15 +64,15 @@ impl<'a> RbspReader<'a> {
     }
 
     pub fn peek_or_pad16(&mut self) -> ParseResult<u16> {
+        let mut tmp_reader = self.reader.clone();
         if self.remaining() >= 16 {
-            let result = self.reader.read(16).map_err(map_io_error)?;
-            self.go_back(16)?;
+            let result = tmp_reader.read(16).map_err(map_io_error)?;
             Ok(result)
         } else {
             let mut result = 0;
             let mut bits_read = 0;
             loop {
-                match self.reader.read_bit() {
+                match tmp_reader.read_bit() {
                     Ok(true) => {
                         result = (result << 1) | 1;
                     }
@@ -91,7 +91,6 @@ impl<'a> RbspReader<'a> {
                 }
                 bits_read += 1;
             }
-            self.go_back(bits_read)?;
             result <<= 16 - bits_read;
             Ok(result)
         }
@@ -103,10 +102,6 @@ impl<'a> RbspReader<'a> {
 
     pub fn skip(&mut self, bits: u32) -> ParseResult<()> {
         self.reader.skip(bits).map_err(map_io_error)
-    }
-
-    pub fn go_back(&mut self, bits: i64) -> ParseResult<u64> {
-        self.reader.seek_bits(SeekFrom::Current(-bits)).map_err(map_io_error)
     }
 
     pub fn read_till_one(&mut self) -> ParseResult<u32> {

@@ -20,7 +20,7 @@ const CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN: [u8; 48] = [
 pub fn code_num_to_intra_coded_block_pattern(x: u8) -> Option<CodedBlockPattern> {
     let result = CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN
                     .get(x as usize).map(|x| CodedBlockPattern(*x));
-    trace!("coded_block_pattern num: {:#08b} pattern: {:?}", x, result);
+    trace!("coded_block_pattern num: {} pattern: {:?}", x, result);
     result
 }
 

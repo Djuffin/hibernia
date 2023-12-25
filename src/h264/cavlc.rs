@@ -315,8 +315,13 @@ mod tests {
         }
 
         assert_eq!(lookup_run_before(prepare_bits("010"), 5), (3, 3));
-        assert_eq!(lookup_run_before(prepare_bits("000000000001"), 7), (14, 12));
+        assert_eq!(lookup_run_before(prepare_bits("0000001"), 7), (10, 7));
+        assert_eq!(lookup_run_before(prepare_bits("0000000001"), 7), (13, 10));
+        assert_eq!(lookup_run_before(prepare_bits("00000000001"), 7), (14, 11));
         assert_eq!(lookup_run_before(prepare_bits("110"), 7), (1, 3));
+        assert_eq!(lookup_run_before(prepare_bits("10"), 5), (1, 2));
+        assert_eq!(lookup_run_before(prepare_bits("101"), 6), (5, 3));
+        assert_eq!(lookup_run_before(prepare_bits("00"), 2), (2, 2));
     }
 
     #[test]

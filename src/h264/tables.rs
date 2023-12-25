@@ -111,4 +111,4 @@ pub const TABLE9_10: [(
     BitPattern,
     BitPattern,
     BitPattern,
-); 16] = include!("table_9-10.rs");
+); 15] = include!("table_9-10.rs");

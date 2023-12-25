@@ -306,6 +306,25 @@ mod tests {
             3
         );
         assert_eq!(output, [0, 0, 0, 1, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0]);
+
+        /*
+            @254F: coeff_token (total_coeff =  5 / t1s =  3) :     : (5)  : [00110]
+            @2554: trailing_ones_sign                        :  -1 : (1)  : [1]
+            @2555: trailing_ones_sign                        :  -1 : (1)  : [1]
+            @2556: trailing_ones_sign                        :   1 : (1)  : [0]
+            @2557: coeff_level                               :  -1 : (2)  : [01]
+            @2559: coeff_level                               :  -2 : (3)  : [011]
+            @255C: total_zeros                               :  10 : (4)  : [0001]
+            @2560: run_before                                :  10 : (7)  : [0000001]
+        */
+        let data = prepare_bit_vec("00110110 01011000 10000001");
+        output.fill(0);
+        assert_eq!(
+            parse_residual_block(&mut BitReader::new(&data), &mut output, 2, 16).unwrap(),
+            5
+        );
+        // Output might be not 100% accurate :\
+        assert_eq!(output, [-2, -1, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0]);
     }
 
     #[test]

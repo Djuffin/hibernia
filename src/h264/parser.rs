@@ -735,9 +735,10 @@ pub fn parse_macroblock(
             read_value!(input, block.mb_qp_delta, se);
         }
 
-        let mut residual = Residual::default();
-        let result = Macroblock::I(block);
+        let mut residual = Box::<Residual>::default();
+        let mut result = Macroblock::I(block);
         parse_residual(input, slice, &result, &mut residual)?;
+        result.set_residual(Some(residual));
         return Ok(result);
     }
 }

@@ -400,7 +400,7 @@ pub struct IMb {
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
-    pub residual: Residual,
+    pub residual: Option<Box<Residual>>,
 }
 
 // Macroblock of type P
@@ -448,7 +448,12 @@ impl Macroblock {
     pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         // Section 9.2.1
         match self {
-            Macroblock::I(mb) => mb.residual.get_nc(blk_idx, plane, self.MbPartPredMode(0)),
+            Macroblock::I(mb) => {
+                match &mb.residual {
+                    Some(r) => r.get_nc(blk_idx, plane, self.MbPartPredMode(0)),
+                    None => 0
+                }
+            }
             Macroblock::PCM(_) => 16,
             Macroblock::P(_) => {
                 todo!("P blocks")
@@ -460,6 +465,18 @@ impl Macroblock {
         match self {
             Macroblock::I(mb) => mb.coded_block_pattern,
             Macroblock::PCM(_) => CodedBlockPattern::default(),
+            Macroblock::P(_) => {
+                todo!("P blocks")
+            }
+        }
+    }
+
+    pub fn set_residual(&mut self, r: Option<Box<Residual>>) {
+        match self {
+            Macroblock::I(mb) => {
+                mb.residual = r;
+            },
+            Macroblock::PCM(_) => {},
             Macroblock::P(_) => {
                 todo!("P blocks")
             }

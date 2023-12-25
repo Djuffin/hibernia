@@ -17,9 +17,7 @@ use super::cavlc::parse_residual_block;
 use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
-use macroblock::{
-    IMb, IMbType, Macroblock, MbPredictionMode, NeighborNames, PcmMb, Residual,
-};
+use macroblock::{IMb, IMbType, Macroblock, MbPredictionMode, NeighborNames, PcmMb, Residual};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{Slice, SliceHeader, SliceType};
@@ -581,7 +579,6 @@ fn calculate_nc(
             total_nc += nc;
             nc_counted += 1;
         }
-
     }
     if nc_counted == 2 {
         total_nc = (total_nc + 1) / 2;
@@ -633,7 +630,7 @@ pub fn parse_residual(
     let neighbor_mbs = get_neighbor_mbs(
         slice.sps.pic_width_in_mbs() as u32,
         slice.header.first_mb_in_slice,
-        slice.last_mb_addr
+        slice.current_mb_address,
     );
     parse_residual_luma(input, slice, block, &neighbor_mbs, residual)?;
     let pred_mode = block.MbPartPredMode(0);
@@ -670,10 +667,7 @@ pub fn parse_residual(
     Ok(())
 }
 
-pub fn parse_macroblock(
-    input: &mut BitReader,
-    slice: &Slice,
-) -> ParseResult<Macroblock> {
+pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
     let mb_type: IMbType;
     read_value!(input, mb_type, ue);
 
@@ -764,16 +758,15 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
         todo!("non I-slices");
     }
 
-    let mut curr_mb_addr = slice.header.first_mb_in_slice * (1 + slice.MbaffFrameFlag() as u32);
+    slice.current_mb_address = slice.header.first_mb_in_slice;
     let mut more_data = true;
     let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
     while more_data {
-        trace!("=============== Parsing macroblock: {}", curr_mb_addr);
-        slice.last_mb_addr = curr_mb_addr;
+        trace!("=============== Parsing macroblock: {}", slice.current_mb_address);
         let block = parse_macroblock(input, slice)?;
-        slice.put_mb(curr_mb_addr, block);
-        if curr_mb_addr < pic_size_in_mbs {
-            curr_mb_addr += 1;
+        slice.put_mb(slice.current_mb_address, block);
+        if slice.current_mb_address < pic_size_in_mbs {
+            slice.current_mb_address += 1;
             more_data = more_rbsp_data(input);
         } else {
             more_data = false;
@@ -800,7 +793,6 @@ mod tests {
 
     #[test]
     pub fn test_slice() {
-        crate::diag::init(true);
         let sps = SequenceParameterSet {
             profile: Profile::Baseline,
             constraint_set0_flag: true,
@@ -848,6 +840,8 @@ mod tests {
             0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04, 0x00, 0x00, 0x09, 0xFF, 0xFF, 0xF8,
             0x7A, 0x28, 0x00, 0x08, 0x24, 0x79, 0x31, 0x72, 0x72, 0x75, 0x8B, 0xAE, 0xBA, 0xEB,
             0xAE, 0xBA, 0xEB, 0xAE, 0xBA, 0xF0,
+
+            0x00, 0x00, // TODO: Remove this extra padding. It's to make 16 bit read ahead possible
         ];
         let mut input = reader(&slice_data);
         let nal_header = parse_nal_header(&mut input).expect("NAL unit");
@@ -863,7 +857,16 @@ mod tests {
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.disable_deblocking_filter_idc, 0);
 
-        let _ = parse_slice_data(&mut input, &mut slice);//.expect("blocks parsing failed");
+        parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
+        assert_eq!(slice.get_block_count(), 16);
+        if let Some(Macroblock::I(block)) = slice.get_mb(0) {
+            assert_eq!(block.mb_type, IMbType::I_NxN);
+            assert_eq!(block.coded_block_pattern, macroblock::CodedBlockPattern(1));
+            assert_eq!(block.mb_qp_delta, 0);
+            assert_eq!(block.residual.is_some(), true);
+        } else {
+            assert!(false, "Should be I-block")
+        }
     }
 
     #[test]

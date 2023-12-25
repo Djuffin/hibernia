@@ -68,7 +68,7 @@ pub struct Slice {
     pub pps: PicParameterSet,
     pub header: SliceHeader,
 
-    pub last_mb_addr: MbAddr,
+    pub current_mb_address: MbAddr,
 
     mb_addr_to_mb: HashMap<MbAddr, Macroblock>,
 }
@@ -83,7 +83,9 @@ impl fmt::Debug for Slice {
 impl Slice {
     pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
         let mb_count = sps.pic_size_in_mbs();
-        Slice { sps, pps, header, last_mb_addr: 0, mb_addr_to_mb: HashMap::with_capacity(mb_count) }
+        let current_mb_address = header.first_mb_in_slice;
+        let mb_addr_to_mb = HashMap::with_capacity(mb_count);
+        Slice { sps, pps, header, current_mb_address, mb_addr_to_mb }
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {

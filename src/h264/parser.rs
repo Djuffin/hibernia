@@ -598,17 +598,15 @@ fn parse_residual_luma(
     }
     let coded_block_pattern = block.get_coded_block_pattern();
     for i8x8 in 0..4 {
-        for i4x4 in 0..4 {
-            let blk_idx = i8x8 * 4 + i4x4;
-            trace!(" luma BK {}", blk_idx);
-            let nc = calculate_nc(slice, neighbor_mbs, blk_idx, residual, pred_mode, ColorPlane::Y);
-            let (levels_ref, total_coeff_ref) =
-                residual.get_ac_levels_for(blk_idx, ColorPlane::Y, pred_mode);
-            if coded_block_pattern.luma() & (1 << i8x8) != 0 {
+        if coded_block_pattern.luma() & (1 << i8x8) != 0 {
+            for i4x4 in 0..4 {
+                let blk_idx = i8x8 * 4 + i4x4;
+                trace!(" luma BK {}", blk_idx);
+                let nc =
+                    calculate_nc(slice, neighbor_mbs, blk_idx, residual, pred_mode, ColorPlane::Y);
+                let (levels_ref, total_coeff_ref) =
+                    residual.get_ac_levels_for(blk_idx, ColorPlane::Y, pred_mode);
                 *total_coeff_ref = parse_residual_block(input, levels_ref, nc, levels_ref.len())?;
-            } else {
-                levels_ref.fill(0);
-                *total_coeff_ref = 0;
             }
         }
     }
@@ -631,29 +629,26 @@ pub fn parse_residual(
     parse_residual_luma(input, slice, block, &neighbor_mbs, residual)?;
     let pred_mode = block.MbPartPredMode(0);
     if slice.sps.ChromaArrayType().is_chrome_subsampled() {
-        for plane in [ColorPlane::Cb, ColorPlane::Cr] {
-            let levels = residual.get_dc_levels_for(plane, pred_mode);
-            if coded_block_pattern.chroma() & 3 != 0 {
+        if coded_block_pattern.chroma() & 3 != 0 {
+            for plane in [ColorPlane::Cb, ColorPlane::Cr] {
+                let levels = residual.get_dc_levels_for(plane, pred_mode);
                 trace!(" chroma {:?} DC", plane);
                 let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
                 parse_residual_block(input, levels, nc, levels.len())?;
-            } else {
-                levels.fill(0);
             }
         }
 
         for plane in [ColorPlane::Cb, ColorPlane::Cr] {
-            for blk_idx in 0..4 {
-                let nc = calculate_nc(slice, &neighbor_mbs, blk_idx, residual, pred_mode, plane);
-                let (levels_ref, total_coeff_ref) =
-                    residual.get_ac_levels_for(blk_idx, plane, pred_mode);
-                if coded_block_pattern.chroma() & 2 != 0 {
+            if coded_block_pattern.chroma() & 2 != 0 {
+                for blk_idx in 0..4 {
+                    let nc =
+                        calculate_nc(slice, &neighbor_mbs, blk_idx, residual, pred_mode, plane);
+                    let (levels_ref, total_coeff_ref) =
+                        residual.get_ac_levels_for(blk_idx, plane, pred_mode);
+
                     trace!(" chroma {:?} BK {}", plane, blk_idx);
                     *total_coeff_ref =
                         parse_residual_block(input, levels_ref, nc, levels_ref.len())?;
-                } else {
-                    levels_ref.fill(0);
-                    *total_coeff_ref = 0;
                 }
             }
         }
@@ -861,6 +856,7 @@ mod tests {
         } else {
             assert!(false, "Should be I-block")
         }
+        assert!(input.remaining() < 8);
     }
 
     #[test]

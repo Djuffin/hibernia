@@ -161,9 +161,7 @@ impl Decoder {
                                 .copy_from_slice(&block.pcm_sample_luma[row_range]);
                         }
                     }
-                    Macroblock::I(block) => {
-
-                    }
+                    Macroblock::I(block) => {}
                     Macroblock::P(block) => {
                         todo!("implement P blocks!");
                     }

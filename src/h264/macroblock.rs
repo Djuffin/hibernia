@@ -279,7 +279,7 @@ impl TryFrom<u32> for Intra_Chroma_Pred_Mode {
 pub struct CodedBlockPattern(pub u8);
 
 impl CodedBlockPattern {
-    pub const fn new(luma: u8, chroma: u8) -> CodedBlockPattern {
+    pub const fn new(chroma: u8, luma: u8) -> CodedBlockPattern {
         CodedBlockPattern((luma & 0b1111) | (chroma << 4))
     }
 

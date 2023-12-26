@@ -599,8 +599,10 @@ fn parse_residual_luma(
     let pred_mode = block.MbPartPredMode(0);
     if pred_mode == MbPredictionMode::Intra_16x16 {
         trace!(" luma DC");
+        let nc = calculate_nc(slice, neighbor_mbs, 0, residual,
+            pred_mode, ColorPlane::Y);
         let levels = residual.get_dc_levels_for(ColorPlane::Y, pred_mode);
-        parse_residual_block(input, levels, /* nC = */ 0, levels.len())?;
+        parse_residual_block(input, levels, nc, levels.len())?;
     }
     let coded_block_pattern = block.get_coded_block_pattern();
     for i8x8 in 0..4 {
@@ -720,16 +722,20 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
                 tables::code_num_to_intra_coded_block_pattern(coded_block_pattern_num)
                     .ok_or("Invalid coded_block_pattern")?;
         }
+
+        let mut result;
         if !block.coded_block_pattern.is_zero()
             || block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16
         {
             read_value!(input, block.mb_qp_delta, se);
+            result = Macroblock::I(block);
+            let mut residual = Box::<Residual>::default();
+            parse_residual(input, slice, &result, &mut residual)?;
+            result.set_residual(Some(residual));
+        } else {
+            result = Macroblock::I(block);
         }
 
-        let mut residual = Box::<Residual>::default();
-        let mut result = Macroblock::I(block);
-        parse_residual(input, slice, &result, &mut residual)?;
-        result.set_residual(Some(residual));
         Ok(result)
     }
 }

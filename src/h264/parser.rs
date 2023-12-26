@@ -532,7 +532,11 @@ pub fn parse_slice_header(
             read_value!(input, no_output_of_prior_pics_flag, f);
             read_value!(input, long_term_reference_flag, f);
         } else {
-            todo!("non IDR slice");
+            let adaptive_ref_pic_marking_mode_flag: bool;
+            read_value!(input, adaptive_ref_pic_marking_mode_flag, f);
+            if adaptive_ref_pic_marking_mode_flag {
+                todo!("memory_management_control_operation");
+            }
         }
     }
 
@@ -599,8 +603,7 @@ fn parse_residual_luma(
     let pred_mode = block.MbPartPredMode(0);
     if pred_mode == MbPredictionMode::Intra_16x16 {
         trace!(" luma DC");
-        let nc = calculate_nc(slice, neighbor_mbs, 0, residual,
-            pred_mode, ColorPlane::Y);
+        let nc = calculate_nc(slice, neighbor_mbs, 0, residual, pred_mode, ColorPlane::Y);
         let levels = residual.get_dc_levels_for(ColorPlane::Y, pred_mode);
         parse_residual_block(input, levels, nc, levels.len())?;
     }

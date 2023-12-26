@@ -1,3 +1,5 @@
+use crate::h264::slice::SliceType;
+
 use super::macroblock::Macroblock;
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
@@ -85,7 +87,20 @@ impl Decoder {
                 NalUnitType::SliceDataA => {}
                 NalUnitType::SliceDataB => {}
                 NalUnitType::SliceDataC => {}
-                NalUnitType::NonIDRSlice => {}
+                NalUnitType::NonIDRSlice => {
+                    let mut slice =
+                        parser::parse_slice_header(&self.context, &nal, &mut unit_input)
+                            .map_err(parse_error_handler)?;
+
+                    info!("non-IDR Slice: {:#?}", slice);
+                    if slice.header.slice_type != SliceType::I {
+                        break;
+                    }
+                    parser::parse_slice_data(&mut unit_input, &mut slice)
+                        .map_err(parse_error_handler)?;
+                    info!("Blocks: {:#?}", slice.get_block_count());
+                    self.process_slice(&mut slice);
+                }
                 NalUnitType::IDRSlice => {
                     let mut slice =
                         parser::parse_slice_header(&self.context, &nal, &mut unit_input)

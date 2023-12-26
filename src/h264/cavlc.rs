@@ -303,7 +303,10 @@ mod tests {
             3
         );
         assert_eq!(output, [0, 0, 0, 1, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0]);
+    }
 
+    #[test]
+    pub fn test_parse_residual_refcase1() {
         /*
             @254F: coeff_token (total_coeff =  5 / t1s =  3) :     : (5)  : [00110]
             @2554: trailing_ones_sign                        :  -1 : (1)  : [1]
@@ -315,13 +318,35 @@ mod tests {
             @2560: run_before                                :  10 : (7)  : [0000001]
         */
         let data = prepare_bit_vec("00110110 01011000 10000001");
-        output.fill(0);
+        let mut output = [0i32; 16];
         assert_eq!(
             parse_residual_block(&mut BitReader::new(&data), &mut output, 2, 16).unwrap(),
             5
         );
         // Output might be not 100% accurate :\
         assert_eq!(output, [-2, -1, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0]);
+    }
+
+    #[test]
+    pub fn test_parse_residual_refcase2() {
+        /*
+            @68  : coeff_token (total_coeff =  4 / t1s =  1) :     : (9)  : [000000110]
+            @71  : trailing_ones_sign                        :  -1 : (1)  : [1]
+            @72  : coeff_level                               :  -5 : (10) : [0000000001]
+            @7C  : coeff_level                               : -19 : (12) : [000000000101]
+            @88  : coeff_level                               :   6 : (5)  : [01010]
+            @8D  : total_zeros                               :   3 : (4)  : [0100]
+            @91  : run_before                                :   0 : (2)  : [11]
+            @93  : run_before                                :   3 : (2)  : [00]
+        */
+        let data = prepare_bit_vec("00000011 01000000 00010000 00000101 01010010 01100000");
+        let mut output = [0i32; 16];
+        assert_eq!(
+            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
+            4
+        );
+        // Output might be not 100% accurate :\
+        assert_eq!(output, [6, -19, 0, 0, 0, -6, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

@@ -163,7 +163,6 @@ mod tests {
 
     #[test]
     pub fn test_peek_or_pad16() {
-        crate::diag::init(true);
         let mut r = reader(&[0b11100111, 0b11100011]);
         assert_eq!(r.peek_or_pad16().unwrap(), 0b11100111_11100011);
 

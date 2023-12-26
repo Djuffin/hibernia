@@ -303,6 +303,28 @@ mod tests {
             3
         );
         assert_eq!(output, [0, 0, 0, 1, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0]);
+
+        // Example from the article:
+        // VHDL Implementation of an Efficient Context Adaptive
+        // Variable Length Coding Algorithm of H.264 Video Codec
+        let data = prepare_bit_vec("01101000 10001111 11001001 11011110 0");
+        output.fill(0);
+        assert_eq!(
+            parse_residual_block(&mut BitReader::new(&data), &mut output, 5, 16).unwrap(),
+            8
+        );
+        assert_eq!(output, [1, 1, -2, -4, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0]);
+
+        // Examples from the article:
+        // IMPLEMENTATION OF CONTEXT ADAPTIVE VARIABLE LENGTH CODING AND DECODING
+        // ALGORITHM FOR H.264 VIDEO CODEC USING MATLAB
+        let data = prepare_bit_vec("01000100 01001000 01011100 11000000");
+        output.fill(0);
+        assert_eq!(
+            parse_residual_block(&mut BitReader::new(&data), &mut output, 4, 16).unwrap(),
+            5
+        );
+        assert_eq!(output, [-2, 4, 3, -3, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

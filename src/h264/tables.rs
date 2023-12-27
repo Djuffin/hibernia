@@ -9,6 +9,12 @@ pub const MB_WIDTH: usize = 16;
 pub const MB_HEIGHT: usize = 16;
 pub const BIT_DEPTH: usize = 8;
 
+// Table 7-3 – Specification of default scaling lists Default_4x4_Intra and Default_4x4_Inter
+pub const DEFAULT_SCALING_LIST_4X4_INTRA: [u8; 16] =
+    [6, 13, 13, 20, 20, 20, 28, 28, 28, 28, 32, 32, 32, 37, 37, 42];
+pub const DEFAULT_SCALING_LIST_4X4_INTER: [u8; 16] =
+    [10, 14, 14, 20, 20, 20, 24, 24, 24, 24, 27, 27, 27, 30, 30, 34];
+
 // Table 9-4 – Assignment of codeNum to values of coded_block_pattern for
 // macroblock prediction modes
 const CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN: [u8; 48] = [

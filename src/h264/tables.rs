@@ -15,6 +15,26 @@ pub const DEFAULT_SCALING_LIST_4X4_INTRA: [u8; 16] =
 pub const DEFAULT_SCALING_LIST_4X4_INTER: [u8; 16] =
     [10, 14, 14, 20, 20, 20, 24, 24, 24, 24, 27, 27, 27, 30, 30, 34];
 
+// Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
+pub const ZIG_ZAG_IDX_TO_XY: [(u8, u8); 16] = [
+    (0, 0),
+    (0, 1),
+    (1, 0),
+    (2, 0),
+    (1, 1),
+    (0, 2),
+    (0, 3),
+    (1, 2),
+    (2, 1),
+    (3, 0),
+    (3, 1),
+    (2, 2),
+    (1, 3),
+    (2, 3),
+    (3, 2),
+    (3, 3)
+];
+
 // Table 9-4 – Assignment of codeNum to values of coded_block_pattern for
 // macroblock prediction modes
 const CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN: [u8; 48] = [

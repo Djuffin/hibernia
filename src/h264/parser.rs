@@ -605,7 +605,7 @@ fn parse_residual_luma(
         trace!(" luma DC");
         let nc = calculate_nc(slice, neighbor_mbs, 0, residual, pred_mode, ColorPlane::Y);
         let levels = residual.get_dc_levels_for(ColorPlane::Y, pred_mode);
-        parse_residual_block(input, levels, nc, levels.len())?;
+        parse_residual_block(input, levels, nc)?;
     }
     let coded_block_pattern = block.get_coded_block_pattern();
     for i8x8 in 0..4 {
@@ -617,7 +617,7 @@ fn parse_residual_luma(
                     calculate_nc(slice, neighbor_mbs, blk_idx, residual, pred_mode, ColorPlane::Y);
                 let (levels_ref, total_coeff_ref) =
                     residual.get_ac_levels_for(blk_idx, ColorPlane::Y, pred_mode);
-                *total_coeff_ref = parse_residual_block(input, levels_ref, nc, levels_ref.len())?;
+                *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
             }
         }
     }
@@ -645,7 +645,7 @@ pub fn parse_residual(
                 let levels = residual.get_dc_levels_for(plane, pred_mode);
                 trace!(" chroma {:?} DC", plane);
                 let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
-                parse_residual_block(input, levels, nc, levels.len())?;
+                parse_residual_block(input, levels, nc)?;
             }
         }
 
@@ -658,8 +658,7 @@ pub fn parse_residual(
                         residual.get_ac_levels_for(blk_idx, plane, pred_mode);
 
                     trace!(" chroma {:?} BK {}", plane, blk_idx);
-                    *total_coeff_ref =
-                        parse_residual_block(input, levels_ref, nc, levels_ref.len())?;
+                    *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
                 }
             }
         }

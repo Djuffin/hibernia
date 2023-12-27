@@ -133,9 +133,9 @@ pub fn parse_residual_block(
     input: &mut BitReader,
     coeff_level: &mut [i32],
     nc: i32,
-    max_num_coeff: usize,
 ) -> ParseResult<u8> {
-    trace!("parse_residual_block() max_num_coeff = {} nc = {}", max_num_coeff, nc);
+    trace!("CAVLC residual_block: len: {} nc: {}", coeff_level.len(), nc);
+    let max_num_coeff = coeff_level.len();
     let next_16_bits = input.peek_or_pad16().map_err(|e| "coeff_token: ".to_owned() + &e)?;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);
     if !coeff_token.is_valid() {
@@ -167,7 +167,6 @@ pub fn parse_residual_block(
     let mut suffix_len = if total_coeffs > 10 && coeff_token.trailing_ones < 3 { 1 } else { 0 };
     for (i, level) in higher_levels.iter_mut().enumerate() {
         let level_prefix = parse_level_prefix(input)?;
-        trace!("i: {} level_prefix: {}", i, level_prefix);
         let level_suffix_size = if level_prefix == 14 && suffix_len == 0 {
             4
         } else if level_prefix >= 15 {
@@ -175,7 +174,7 @@ pub fn parse_residual_block(
         } else {
             suffix_len
         };
-        trace!("level_suffix_size: {} suffix_len: {}", level_suffix_size, suffix_len);
+
         let mut level_suffix = 0u32;
         if level_suffix_size > 0 {
             read_value!(input, level_suffix, u, level_suffix_size as u8);
@@ -201,11 +200,15 @@ pub fn parse_residual_block(
         if suffix_len < 6 && level.abs() > (3 << (suffix_len - 1)) {
             suffix_len += 1;
         }
-        trace!("coeff_level: {}", *level);
+        trace!(
+            "i: {i} level_prefix: {level_prefix} level_suffix_size: {level_suffix_size} \
+                suffix_len: {suffix_len} coeff_level: {}",
+            *level
+        );
     }
 
     // Section 9.2.3 Parsing process for run information
-    let mut zeros_left = if total_coeffs < coeff_level.len() {
+    let mut zeros_left = if total_coeffs < max_num_coeff {
         let next_16_bits = input.peek_or_pad16().map_err(|e| "total_zeros: ".to_owned() + &e)?;
         let tz_vlc_index = total_coeffs as u8;
         let lookup_tz =
@@ -246,7 +249,6 @@ pub fn parse_residual_block(
 
     // Section 9.2.4 Combining level and run information
     runs[total_coeffs - 1] = zeros_left;
-    trace!("runs: {:?}", runs);
 
     let mut coeff_num = -1isize;
     for i in (0..total_coeffs).rev() {
@@ -282,26 +284,17 @@ mod tests {
         let data = prepare_bit_vec("00001000 11100101 11101101");
         let mut output = [0i32; 16];
 
-        assert_eq!(
-            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
-            5
-        );
+        assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 0).unwrap(), 5);
         assert_eq!(output, [0, 3, 0, 1, -1, -1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
 
         let data = prepare_bit_vec("00000001 10100010 01000010 11100110 0");
         output.fill(0);
-        assert_eq!(
-            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
-            5
-        );
+        assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 0).unwrap(), 5);
         assert_eq!(output, [-2, 4, 3, -3, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
         let data = prepare_bit_vec("00011100 01110010");
         output.fill(0);
-        assert_eq!(
-            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
-            3
-        );
+        assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 0).unwrap(), 3);
         assert_eq!(output, [0, 0, 0, 1, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0]);
 
         // Example from the article:
@@ -309,10 +302,7 @@ mod tests {
         // Variable Length Coding Algorithm of H.264 Video Codec
         let data = prepare_bit_vec("01101000 10001111 11001001 11011110 0");
         output.fill(0);
-        assert_eq!(
-            parse_residual_block(&mut BitReader::new(&data), &mut output, 5, 16).unwrap(),
-            8
-        );
+        assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 5).unwrap(), 8);
         assert_eq!(output, [1, 1, -2, -4, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0]);
 
         // Examples from the article:
@@ -320,10 +310,7 @@ mod tests {
         // ALGORITHM FOR H.264 VIDEO CODEC USING MATLAB
         let data = prepare_bit_vec("01000100 01001000 01011100 11000000");
         output.fill(0);
-        assert_eq!(
-            parse_residual_block(&mut BitReader::new(&data), &mut output, 4, 16).unwrap(),
-            5
-        );
+        assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 4).unwrap(), 5);
         assert_eq!(output, [-2, 4, 3, -3, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
@@ -341,10 +328,7 @@ mod tests {
         */
         let data = prepare_bit_vec("00110110 01011000 10000001");
         let mut output = [0i32; 16];
-        assert_eq!(
-            parse_residual_block(&mut BitReader::new(&data), &mut output, 2, 16).unwrap(),
-            5
-        );
+        assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 2).unwrap(), 5);
         // Output might be not 100% accurate :\
         assert_eq!(output, [-2, -1, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0]);
     }
@@ -363,10 +347,7 @@ mod tests {
         */
         let data = prepare_bit_vec("00000011 01000000 00010000 00000101 01010010 01100000");
         let mut output = [0i32; 16];
-        assert_eq!(
-            parse_residual_block(&mut BitReader::new(&data), &mut output, 0, 16).unwrap(),
-            4
-        );
+        assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 0).unwrap(), 4);
         // Output might be not 100% accurate :\
         assert_eq!(output, [6, -19, 0, 0, 0, -6, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }

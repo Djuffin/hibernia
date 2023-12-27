@@ -135,7 +135,7 @@ pub fn parse_residual_block(
     nc: i32,
 ) -> ParseResult<u8> {
     trace!("CAVLC residual_block: len: {} nc: {}", coeff_level.len(), nc);
-    assert!(matches!(coeff_level.len(), 4 | 15 | 16));
+    debug_assert!(matches!(coeff_level.len(), 4 | 15 | 16));
     let max_num_coeff = coeff_level.len();
     let next_16_bits = input.peek_or_pad16().map_err(|e| "coeff_token: ".to_owned() + &e)?;
     let coeff_token = lookup_coeff_token(next_16_bits, nc);

@@ -17,6 +17,7 @@ pub const DEFAULT_SCALING_LIST_4X4_INTER: [u8; 16] =
 
 // Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
 pub const ZIG_ZAG_IDX_TO_XY: [(u8, u8); 16] = [
+    // (row, column)
     (0, 0),
     (0, 1),
     (1, 0),
@@ -32,7 +33,7 @@ pub const ZIG_ZAG_IDX_TO_XY: [(u8, u8); 16] = [
     (1, 3),
     (2, 3),
     (3, 2),
-    (3, 3)
+    (3, 3),
 ];
 
 // Table 9-4 – Assignment of codeNum to values of coded_block_pattern for

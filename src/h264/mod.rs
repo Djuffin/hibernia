@@ -5,6 +5,7 @@ pub mod nal;
 pub mod parser;
 pub mod pps;
 pub mod rbsp;
+pub mod scaling;
 pub mod slice;
 pub mod sps;
 pub mod tables;

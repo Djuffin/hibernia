@@ -5,10 +5,10 @@ pub mod nal;
 pub mod parser;
 pub mod pps;
 pub mod rbsp;
-pub mod transform;
 pub mod slice;
 pub mod sps;
 pub mod tables;
+pub mod transform;
 
 use num_traits::cast::FromPrimitive;
 

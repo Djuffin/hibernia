@@ -10,9 +10,10 @@ extern crate num_derive;
 pub mod diag;
 pub mod h264;
 
-use image::ImageBuffer;
+use png;
 use std::env;
 use std::fs;
+use std::io;
 
 fn main() {
     diag::init(false);
@@ -25,10 +26,13 @@ fn main() {
         let frame = decoder.get_frame_buffer().unwrap();
         let y_plane = &frame.planes[0];
 
-        let img =
-            ImageBuffer::from_fn(y_plane.cfg.width as u32, y_plane.cfg.height as u32, |x, y| {
-                image::Luma([y_plane.p(x as usize, y as usize)])
-            });
-        let _ = img.save("output.png");
+        let w = y_plane.cfg.width as u32;
+        let h = y_plane.cfg.height as u32;
+
+        let mut writer = io::BufWriter::new(fs::File::create("output.png").unwrap());
+        let mut encoder = png::Encoder::new(&mut writer, w, h);
+        encoder.set_color(png::ColorType::Grayscale);
+        let mut pixel_writer = encoder.write_header().unwrap();
+        let _ = pixel_writer.write_image_data(&y_plane.data);
     }
 }

@@ -1,7 +1,8 @@
 use crate::h264::slice::SliceType;
 
 use super::macroblock::Macroblock;
-use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
+use super::transform::{level_scale_4x4_block, transform_4x4};
+use super::{nal, parser, pps, slice, sps, tables, transform, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
 use v_frame::frame;
@@ -176,7 +177,21 @@ impl Decoder {
                                 .copy_from_slice(&block.pcm_sample_luma[row_range]);
                         }
                     }
-                    Macroblock::I(block) => {}
+                    Macroblock::I(block) => {
+                        let qp = slice.pps.pic_init_qp_minus26
+                            + 26
+                            + slice.header.slice_qp_delta
+                            + block.mb_qp_delta;
+
+                        if let Some(residusal) = block.residual.as_ref() {
+                            let mut luma4x4: [i32; 16];
+                            for luma_blk in residusal.luma_level4x4 {
+                                luma4x4 = luma_blk;
+                                level_scale_4x4_block(&mut luma4x4, true, qp.try_into().unwrap());
+                                let residual_matrix = transform_4x4(&luma4x4);
+                            }
+                        }
+                    }
                     Macroblock::P(block) => {
                         todo!("implement P blocks!");
                     }

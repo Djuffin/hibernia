@@ -1,6 +1,6 @@
 use super::tables;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Block4x4 {
     pub samples: [[i32; 4]; 4],
 }
@@ -54,7 +54,7 @@ pub const fn zig_zag_4x4(row: usize, column: usize) -> usize {
 }
 
 #[inline]
-fn norm_adjust_4x4(m: u8, idx: usize) -> u8 {
+const fn norm_adjust_4x4(m: u8, idx: usize) -> u8 {
     const IDX_TO_V_COLUMN: [u8; 16] = [0, 2, 2, 0, 1, 0, 2, 2, 2, 2, 1, 0, 1, 2, 2, 1];
     const V: [[u8; 3]; 6] =
         [[10, 16, 13], [11, 18, 14], [13, 20, 16], [14, 23, 18], [16, 25, 20], [18, 29, 23]];
@@ -63,7 +63,7 @@ fn norm_adjust_4x4(m: u8, idx: usize) -> u8 {
 
 // Section 8.5.9 Derivation process for scaling functions
 #[inline]
-pub fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
+pub const fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
     let scaling_list = if is_inter {
         tables::DEFAULT_SCALING_LIST_4X4_INTER
     } else {
@@ -86,6 +86,22 @@ pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, qp: u8) {
     }
 }
 
+
+// Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
+pub fn dc_scale_4x4_block(block: &mut [i32], qp: u8) {
+    let m = qp % 6;
+    let is_inter = false;
+    for c in &mut block.iter_mut() {
+        let d = if qp >= 36 {
+            (*c * level_scale_4x4(is_inter, m, 0)) << (qp / 6 - 6)
+        } else {
+            (*c * level_scale_4x4(is_inter, m, 0) + (1 << (5 - qp / 6))) >> (6 - qp / 6)
+        };
+        *c = d;
+    }
+}
+
+
 pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     assert_eq!(block.len(), 16);
     let mut result = Block4x4::default();
@@ -94,6 +110,23 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
         result.samples[i][j] = *value;
     }
     result
+}
+
+pub fn matrix_mul(m1 : &Block4x4, m2 : &Block4x4) -> Block4x4 {
+    let mut result = Block4x4::default();
+    let a = &m1.samples;
+    let b = &m2.samples;
+    let r = &mut result.samples;
+    for i in 0..4 {
+        for j in 0..4 {
+            let mut v = 0;
+            for k in 0..4 {
+                 v += a[i][k] * b[k][j];
+            }
+            r[i][j] = v;
+        }
+    }
+    return result;
 }
 
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks
@@ -214,5 +247,20 @@ mod tests {
                 assert_eq!(col, 1);
             }
         }
+    }
+
+    #[test]
+    pub fn test_matrix_mut() {
+        let zero = Block4x4::default();
+        let identity  = Block4x4 {
+            samples: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        };
+        let m1 = Block4x4 {
+            samples: [[12, 32, 56, 17], [45, -34, 56, 21], [-8, -45, 3, -99], [0, -1, 8, 17]]
+        };
+
+        assert_eq!(m1, matrix_mul(&m1, &identity));
+        assert_eq!(m1, matrix_mul(&identity, &m1));
+        assert_eq!(zero, matrix_mul(&zero, &m1));
     }
 }

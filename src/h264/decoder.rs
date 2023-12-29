@@ -1,7 +1,7 @@
 use crate::h264::slice::SliceType;
 
 use super::macroblock::Macroblock;
-use super::transform::{level_scale_4x4_block, transform_4x4};
+use super::transform::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
 use super::{nal, parser, pps, slice, sps, tables, transform, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
@@ -188,7 +188,8 @@ impl Decoder {
                             for luma_blk in residusal.luma_level4x4 {
                                 luma4x4 = luma_blk;
                                 level_scale_4x4_block(&mut luma4x4, true, qp.try_into().unwrap());
-                                let residual_matrix = transform_4x4(&luma4x4);
+                                let block = unzip_block_4x4(&luma4x4);
+                                let residual_matrix = transform_4x4(&block);
                             }
                         }
                     }

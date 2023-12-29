@@ -1,8 +1,13 @@
 use super::tables;
 
+#[derive(Clone, Debug, Default)]
+pub struct Block4x4 {
+    pub samples: [[i32; 4]; 4],
+}
+
 // Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
 #[inline]
-pub const fn un_zig_zag_4x4(idx: usize) -> (usize, usize) {
+pub const fn un_zig_zag_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
     match idx {
         0 => (0, 0),
         1 => (0, 1),
@@ -81,68 +86,71 @@ pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, qp: u8) {
     }
 }
 
-// Section 8.5.12.2 Transformation process for residual 4x4 blocks
-pub fn transform_4x4(block: &[i32]) -> [[u8; 4]; 4] {
+pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     assert_eq!(block.len(), 16);
-    let mut r: [[u8; 4]; 4] = [[0; 4]; 4];
-    let mut d: [[i32; 4]; 4] = [[0; 4]; 4];
-    let mut e: [[i32; 4]; 4] = [[0; 4]; 4];
-    let mut f: [[i32; 4]; 4] = [[0; 4]; 4];
-    let mut g: [[i32; 4]; 4] = [[0; 4]; 4];
-    let mut h: [[i32; 4]; 4] = [[0; 4]; 4];
-
-    for idx in 0..16 {
-        let (row, column) = un_zig_zag_4x4(idx);
-        d[row][column] = block[idx];
+    let mut result = Block4x4::default();
+    for (idx, value) in block.iter().enumerate() {
+        let (i, j) = un_zig_zag_4x4(idx);
+        result.samples[i][j] = *value;
     }
+    result
+}
 
+// Section 8.5.12.2 Transformation process for residual 4x4 blocks
+pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
+    let d = block;
+    let mut e = Block4x4::default();
     for i in 0..4 {
         // (8-338)
-        e[i][0] = d[i][0] + d[i][2];
+        e.samples[i][0] = d.samples[i][0] + d.samples[i][2];
         // (8-339)
-        e[i][1] = d[i][0] - d[i][2];
+        e.samples[i][1] = d.samples[i][0] - d.samples[i][2];
         // (8-340)
-        e[i][2] = d[i][1] / 2 - d[i][3];
+        e.samples[i][2] = d.samples[i][1] / 2 - d.samples[i][3];
         // (8-341)
-        e[i][3] = d[i][1] + d[i][3] / 2;
+        e.samples[i][3] = d.samples[i][1] + d.samples[i][3] / 2;
     }
 
+    let mut f = Block4x4::default();
     for i in 0..4 {
         // (8-342)
-        f[i][0] = e[i][0] + e[i][3];
+        f.samples[i][0] = e.samples[i][0] + e.samples[i][3];
         // (8-343)
-        f[i][1] = e[i][1] + e[i][2];
+        f.samples[i][1] = e.samples[i][1] + e.samples[i][2];
         // (8-344)
-        f[i][2] = e[i][1] - e[i][2];
+        f.samples[i][2] = e.samples[i][1] - e.samples[i][2];
         // (8-345)
-        f[i][3] = e[i][0] - e[i][3];
+        f.samples[i][3] = e.samples[i][0] - e.samples[i][3];
     }
 
+    let mut g = Block4x4::default();
     for j in 0..4 {
         // (8-346)
-        g[0][j] = f[0][j] + f[2][j];
+        g.samples[0][j] = f.samples[0][j] + f.samples[2][j];
         // (8-347)
-        g[1][j] = f[0][j] - f[2][j];
+        g.samples[1][j] = f.samples[0][j] - f.samples[2][j];
         // (8-348)
-        g[2][j] = f[1][j] / 2 - f[3][j];
+        g.samples[2][j] = f.samples[1][j] / 2 - f.samples[3][j];
         // (8-349)
-        g[3][j] = f[1][j] + f[3][j] / 2;
+        g.samples[3][j] = f.samples[1][j] + f.samples[3][j] / 2;
     }
 
+    let mut h = Block4x4::default();
     for j in 0..4 {
         // (8-350)
-        h[0][j] = g[0][j] + g[3][j];
+        h.samples[0][j] = g.samples[0][j] + g.samples[3][j];
         // (8-351)
-        h[1][j] = g[1][j] + g[2][j];
+        h.samples[1][j] = g.samples[1][j] + g.samples[2][j];
         // (8-352)
-        h[2][j] = g[1][j] - g[2][j];
+        h.samples[2][j] = g.samples[1][j] - g.samples[2][j];
         // (8-353)
-        h[3][j] = g[0][j] - g[3][j];
+        h.samples[3][j] = g.samples[0][j] - g.samples[3][j];
     }
 
+    let mut r = Block4x4::default();
     for i in 0..4 {
         for j in 0..4 {
-            r[i][j] = ((h[i][j] + 32) >> 6) as u8;
+            r.samples[i][j] = (h.samples[i][j] + 32) >> 6;
         }
     }
 
@@ -151,8 +159,6 @@ pub fn transform_4x4(block: &[i32]) -> [[u8; 4]; 4] {
 
 #[cfg(test)]
 mod tests {
-    use v_frame::pixel::Coefficient;
-
     use super::*;
 
     #[test]
@@ -202,8 +208,8 @@ mod tests {
         }
 
         level_scale_4x4_block(&mut block, false, qp);
-        let output = transform_4x4(&block);
-        for row in output {
+        let output = transform_4x4(&unzip_block_4x4(&block));
+        for row in output.samples {
             for col in row {
                 assert_eq!(col, 1);
             }

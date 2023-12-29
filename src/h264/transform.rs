@@ -86,7 +86,6 @@ pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, qp: u8) {
     }
 }
 
-
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
 pub fn dc_scale_4x4_block(block: &mut [i32], qp: u8) {
     let m = qp % 6;
@@ -101,6 +100,13 @@ pub fn dc_scale_4x4_block(block: &mut [i32], qp: u8) {
     }
 }
 
+// Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
+pub fn transform_dc(block: &Block4x4) -> Block4x4 {
+    const T: Block4x4 =
+        Block4x4 { samples: [[1, 1, 1, 1], [1, 1, -1, -1], [1, -1, -1, 1], [1, -1, 1, -1]] };
+    let f = matrix_mul(&T, block);
+    matrix_mul(&f, &T)
+}
 
 pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     assert_eq!(block.len(), 16);
@@ -112,7 +118,7 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     result
 }
 
-pub fn matrix_mul(m1 : &Block4x4, m2 : &Block4x4) -> Block4x4 {
+pub fn matrix_mul(m1: &Block4x4, m2: &Block4x4) -> Block4x4 {
     let mut result = Block4x4::default();
     let a = &m1.samples;
     let b = &m2.samples;
@@ -121,7 +127,7 @@ pub fn matrix_mul(m1 : &Block4x4, m2 : &Block4x4) -> Block4x4 {
         for j in 0..4 {
             let mut v = 0;
             for k in 0..4 {
-                 v += a[i][k] * b[k][j];
+                v += a[i][k] * b[k][j];
             }
             r[i][j] = v;
         }
@@ -252,11 +258,10 @@ mod tests {
     #[test]
     pub fn test_matrix_mut() {
         let zero = Block4x4::default();
-        let identity  = Block4x4 {
-            samples: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-        };
+        let identity =
+            Block4x4 { samples: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] };
         let m1 = Block4x4 {
-            samples: [[12, 32, 56, 17], [45, -34, 56, 21], [-8, -45, 3, -99], [0, -1, 8, 17]]
+            samples: [[12, 32, 56, 17], [45, -34, 56, 21], [-8, -45, 3, -99], [0, -1, 8, 17]],
         };
 
         assert_eq!(m1, matrix_mul(&m1, &identity));

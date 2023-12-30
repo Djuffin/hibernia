@@ -1,3 +1,4 @@
+use crate::h264::ColorPlane;
 use crate::h264::slice::SliceType;
 
 use super::macroblock::{self, Macroblock};
@@ -164,13 +165,13 @@ impl Decoder {
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
         let frame = self.frame_buffer.as_mut().unwrap();
         for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
-            let mb_location = slice.get_mb_location(mb_addr);
+            let mb_loc = slice.get_mb_location(mb_addr);
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
                     Macroblock::PCM(block) => {
                         let y_plane = &mut frame.planes[0];
                         let mut plane_slice =
-                            y_plane.mut_slice(point_to_plain_offset(&mb_location));
+                            y_plane.mut_slice(point_to_plain_offset(&mb_loc));
 
                         for (idx, row) in
                             plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
@@ -181,23 +182,23 @@ impl Decoder {
                         }
                     }
                     Macroblock::I(imb) => {
-                        qp += imb.mb_qp_delta;
-                        let qp = qp.clamp(0, 51).try_into().unwrap();
+                        qp = (qp + imb.mb_qp_delta).clamp(0, 51);
+                        let qp = qp.try_into().unwrap();
                         if let Some(residual) = imb.residual.as_ref() {
-                            let blocks = residual.restore(super::ColorPlane::Y, qp);
-                            info!("MB {mb_addr} {qp} {:?}", blocks.len());
+                            let blocks = residual.restore(ColorPlane::Y, qp);
+                            info!("MB {mb_addr} {qp} {:?} {:?}", residual.prediction_mode, blocks.len());
 
                             let y_plane = &mut frame.planes[0];
 
                             for (blk_idx, blk) in blocks.iter().enumerate() {
-                                let mut origin =
+                                let mut blk_loc =
                                     macroblock::get_4x4luma_block_location(blk_idx as u8);
-                                origin.x += mb_location.x;
-                                origin.y += mb_location.y;
+                                blk_loc.x += mb_loc.x;
+                                blk_loc.y += mb_loc.y;
 
                                 let mut plane_slice =
-                                    y_plane.mut_slice(point_to_plain_offset(&mb_location));
-
+                                    y_plane.mut_slice(point_to_plain_offset(&blk_loc));
+                                info!("  blk:{blk_idx} {blk_loc:?} {blk:?}");
                                 for (idx, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
                                     for i in 0..4 {
                                         row[i] = blk.samples[idx][i]

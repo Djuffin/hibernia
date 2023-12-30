@@ -301,6 +301,8 @@ impl CodedBlockPattern {
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Residual {
+    pub prediction_mode: MbPredictionMode,
+    pub coded_block_pattern: CodedBlockPattern,
     pub dc_level16x16: [i32; 16],
     pub ac_level16x16: [[i32; 15]; 16],
     pub ac_level16x16_nc: [u8; 16],
@@ -318,11 +320,11 @@ pub struct Residual {
 }
 
 impl Residual {
-    pub fn get_dc_levels_for(&mut self, plane: ColorPlane, pred: MbPredictionMode) -> &mut [i32] {
+    pub fn get_dc_levels_for(&mut self, plane: ColorPlane) -> &mut [i32] {
         let nc: &mut u8;
         match plane {
             ColorPlane::Y => {
-                if pred == MbPredictionMode::Intra_16x16 {
+                if self.prediction_mode == MbPredictionMode::Intra_16x16 {
                     self.dc_level16x16.as_mut_slice()
                 } else {
                     &mut []
@@ -333,18 +335,13 @@ impl Residual {
         }
     }
 
-    pub fn get_ac_levels_for(
-        &mut self,
-        blk_idx: u8,
-        plane: ColorPlane,
-        pred: MbPredictionMode,
-    ) -> (&mut [i32], &mut u8) {
+    pub fn get_ac_levels_for(&mut self, blk_idx: u8, plane: ColorPlane) -> (&mut [i32], &mut u8) {
         let levels: &mut [i32];
         let nc: &mut u8;
         let blk_idx = blk_idx as usize;
         match plane {
             ColorPlane::Y => {
-                if pred == MbPredictionMode::Intra_16x16 {
+                if self.prediction_mode == MbPredictionMode::Intra_16x16 {
                     levels = self.ac_level16x16[blk_idx].as_mut_slice();
                     nc = &mut self.ac_level16x16_nc[blk_idx];
                 } else {
@@ -365,10 +362,10 @@ impl Residual {
     }
 
     // Calculates nC for the block withing the macroblock
-    pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane, mode: MbPredictionMode) -> u8 {
+    pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         let blk_idx = blk_idx as usize;
         match plane {
-            ColorPlane::Y => match mode {
+            ColorPlane::Y => match self.prediction_mode {
                 MbPredictionMode::None => todo!(),
                 MbPredictionMode::Intra_8x8 => todo!(),
                 MbPredictionMode::Intra_4x4 => self.luma_level4x4_nc[blk_idx],
@@ -449,7 +446,7 @@ impl Macroblock {
         // Section 9.2.1
         match self {
             Macroblock::I(mb) => match &mb.residual {
-                Some(r) => r.get_nc(blk_idx, plane, self.MbPartPredMode(0)),
+                Some(r) => r.get_nc(blk_idx, plane),
                 None => 0,
             },
             Macroblock::PCM(_) => 16,

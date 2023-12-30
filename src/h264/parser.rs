@@ -559,7 +559,6 @@ fn calculate_nc(
     neighbor_mbs: &MbNeighbors,
     blk_idx: u8,
     residual: &Residual,
-    pred_mode: MbPredictionMode,
     plane: ColorPlane,
 ) -> i32 {
     let get_block_neighbor = if plane.is_luma() {
@@ -581,7 +580,7 @@ fn calculate_nc(
                 }
             }
         } else {
-            let nc = residual.get_nc(block_neighbor_idx, plane, pred_mode) as i32;
+            let nc = residual.get_nc(block_neighbor_idx, plane) as i32;
             total_nc += nc;
             nc_counted += 1;
         }
@@ -595,28 +594,26 @@ fn calculate_nc(
 fn parse_residual_luma(
     input: &mut BitReader,
     slice: &Slice,
-    block: &Macroblock,
     neighbor_mbs: &MbNeighbors,
     residual: &mut Residual,
 ) -> ParseResult<()> {
     trace!("parse_residual_luma");
-    let pred_mode = block.MbPartPredMode(0);
+    let pred_mode = residual.prediction_mode;
+    let coded_block_pattern = residual.coded_block_pattern;
     if pred_mode == MbPredictionMode::Intra_16x16 {
         trace!(" luma DC");
-        let nc = calculate_nc(slice, neighbor_mbs, 0, residual, pred_mode, ColorPlane::Y);
-        let levels = residual.get_dc_levels_for(ColorPlane::Y, pred_mode);
+        let nc = calculate_nc(slice, neighbor_mbs, 0, residual, ColorPlane::Y);
+        let levels = residual.get_dc_levels_for(ColorPlane::Y);
         parse_residual_block(input, levels, nc)?;
     }
-    let coded_block_pattern = block.get_coded_block_pattern();
     for i8x8 in 0..4 {
         if coded_block_pattern.luma() & (1 << i8x8) != 0 {
             for i4x4 in 0..4 {
                 let blk_idx = i8x8 * 4 + i4x4;
                 trace!(" luma BK {}", blk_idx);
-                let nc =
-                    calculate_nc(slice, neighbor_mbs, blk_idx, residual, pred_mode, ColorPlane::Y);
+                let nc = calculate_nc(slice, neighbor_mbs, blk_idx, residual, ColorPlane::Y);
                 let (levels_ref, total_coeff_ref) =
-                    residual.get_ac_levels_for(blk_idx, ColorPlane::Y, pred_mode);
+                    residual.get_ac_levels_for(blk_idx, ColorPlane::Y);
                 *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
             }
         }
@@ -627,22 +624,21 @@ fn parse_residual_luma(
 pub fn parse_residual(
     input: &mut BitReader,
     slice: &Slice,
-    block: &Macroblock,
     residual: &mut Residual,
 ) -> ParseResult<()> {
     trace!("parse_residual");
-    let coded_block_pattern = block.get_coded_block_pattern();
+    let pred_mode = residual.prediction_mode;
+    let coded_block_pattern = residual.coded_block_pattern;
     let neighbor_mbs = get_neighbor_mbs(
         slice.sps.pic_width_in_mbs() as u32,
         slice.header.first_mb_in_slice,
         slice.current_mb_address,
     );
-    parse_residual_luma(input, slice, block, &neighbor_mbs, residual)?;
-    let pred_mode = block.MbPartPredMode(0);
+    parse_residual_luma(input, slice, &neighbor_mbs, residual)?;
     if slice.sps.ChromaArrayType().is_chrome_subsampled() {
         if coded_block_pattern.chroma() & 3 != 0 {
             for plane in [ColorPlane::Cb, ColorPlane::Cr] {
-                let levels = residual.get_dc_levels_for(plane, pred_mode);
+                let levels = residual.get_dc_levels_for(plane);
                 trace!(" chroma {:?} DC", plane);
                 let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
                 parse_residual_block(input, levels, nc)?;
@@ -652,10 +648,8 @@ pub fn parse_residual(
         for plane in [ColorPlane::Cb, ColorPlane::Cr] {
             if coded_block_pattern.chroma() & 2 != 0 {
                 for blk_idx in 0..4 {
-                    let nc =
-                        calculate_nc(slice, &neighbor_mbs, blk_idx, residual, pred_mode, plane);
-                    let (levels_ref, total_coeff_ref) =
-                        residual.get_ac_levels_for(blk_idx, plane, pred_mode);
+                    let nc = calculate_nc(slice, &neighbor_mbs, blk_idx, residual, plane);
+                    let (levels_ref, total_coeff_ref) = residual.get_ac_levels_for(blk_idx, plane);
 
                     trace!(" chroma {:?} BK {}", plane, blk_idx);
                     *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
@@ -730,9 +724,11 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
             || block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16
         {
             read_value!(input, block.mb_qp_delta, se);
-            result = Macroblock::I(block);
             let mut residual = Box::<Residual>::default();
-            parse_residual(input, slice, &result, &mut residual)?;
+            residual.coded_block_pattern = block.coded_block_pattern;
+            residual.prediction_mode = block.MbPartPredMode(0);
+            parse_residual(input, slice, &mut residual)?;
+            result = Macroblock::I(block);
             result.set_residual(Some(residual));
         } else {
             result = Macroblock::I(block);

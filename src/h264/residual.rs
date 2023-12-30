@@ -1,12 +1,21 @@
+use std::result;
+
 use super::{
-    macroblock::{CodedBlockPattern, MbPredictionMode},
+    macroblock::{self, CodedBlockPattern, MbPredictionMode},
     tables, ColorPlane,
 };
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Block4x4 {
+    pub samples: [[i32; 4]; 4],
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Residual {
     pub prediction_mode: MbPredictionMode,
     pub coded_block_pattern: CodedBlockPattern,
+    pub qp: i32,
+
     pub dc_level16x16: [i32; 16],
     pub ac_level16x16: [[i32; 15]; 16],
     pub ac_level16x16_nc: [u8; 16],
@@ -28,10 +37,10 @@ impl Residual {
         let nc: &mut u8;
         match plane {
             ColorPlane::Y => {
-                if self.prediction_mode == MbPredictionMode::Intra_16x16 {
+                if self.has_separate_luma_dc() {
                     self.dc_level16x16.as_mut_slice()
                 } else {
-                    &mut []
+                    panic!("No separate DC levels in this prediction mode");
                 }
             }
             ColorPlane::Cb => self.chroma_cb_dc_level.as_mut_slice(),
@@ -45,7 +54,7 @@ impl Residual {
         let blk_idx = blk_idx as usize;
         match plane {
             ColorPlane::Y => {
-                if self.prediction_mode == MbPredictionMode::Intra_16x16 {
+                if self.has_separate_luma_dc() {
                     levels = self.ac_level16x16[blk_idx].as_mut_slice();
                     nc = &mut self.ac_level16x16_nc[blk_idx];
                 } else {
@@ -82,11 +91,60 @@ impl Residual {
             ColorPlane::Cr => self.chroma_cr_level4x4_nc[blk_idx],
         }
     }
-}
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Block4x4 {
-    pub samples: [[i32; 4]; 4],
+    pub fn has_separate_luma_dc(&self) -> bool {
+        self.prediction_mode == MbPredictionMode::Intra_16x16
+    }
+
+    pub fn restore(&self, plane: ColorPlane, qp: u8) -> Vec<Block4x4> {
+        let mut result = Vec::new();
+        result.reserve(if plane.is_luma() { 16 } else { 4 });
+
+        match plane {
+            ColorPlane::Y => {
+                if self.has_separate_luma_dc() {
+                    let mut dcs = self.dc_level16x16;
+                    dc_scale_4x4_block(&mut dcs, qp);
+                    let mut dcs_block = unscan_block_4x4(&dcs);
+                    dcs_block = transform_dc(&mut dcs_block);
+
+                    for blk_idx in 0..16 {
+                        let mut idct_coefficients = [0i32; 16];
+                        let (dc_row, dc_column) = un_zig_zag_4x4(blk_idx);
+                        idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
+                        idct_coefficients[1..].copy_from_slice(&self.ac_level16x16[blk_idx]);
+                        level_scale_4x4_block(
+                            &mut idct_coefficients,
+                            self.prediction_mode.is_inter(),
+                            true,
+                            qp,
+                        );
+                        let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
+                        let block = transform_4x4(&idct_4x4_block);
+                        result.push(block);
+                    }
+                } else {
+                    for blk_idx in 0..16 {
+                        let mut idct_coefficients = [0i32; 16];
+                        idct_coefficients.copy_from_slice(&self.luma_level4x4[blk_idx]);
+                        level_scale_4x4_block(
+                            &mut idct_coefficients,
+                            self.prediction_mode.is_inter(),
+                            false,
+                            qp,
+                        );
+                        let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
+                        let block = transform_4x4(&idct_4x4_block);
+                        result.push(block);
+                    }
+                }
+            }
+            ColorPlane::Cb => todo!(),
+            ColorPlane::Cr => todo!(),
+        }
+
+        result
+    }
 }
 
 // Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
@@ -158,10 +216,12 @@ pub const fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
 }
 
 // Section 8.5.12.1 Scaling process for residual 4x4 blocks
-pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, qp: u8) {
+pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, skip_dc: bool, qp: u8) {
     let m = qp % 6;
     for (idx, c) in &mut block.iter_mut().enumerate() {
-        let d = if qp >= 24 {
+        let d = if skip_dc && idx == 0 {
+            *c
+        } else if qp >= 24 {
             (*c * level_scale_4x4(is_inter, m, idx)) << (qp / 6 - 4)
         } else {
             (*c * level_scale_4x4(is_inter, m, idx) + (1 << (3 - qp / 6))) >> (4 - qp / 6)
@@ -198,6 +258,16 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     for (idx, value) in block.iter().enumerate() {
         let (i, j) = un_zig_zag_4x4(idx);
         result.samples[i][j] = *value;
+    }
+    result
+}
+
+pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
+    assert_eq!(block.len(), 16);
+    let mut result = Block4x4::default();
+    for (idx, value) in block.iter().enumerate() {
+        let p = macroblock::get_4x4luma_block_location(idx as u8);
+        result.samples[p.y as usize / 4][p.x as usize / 4] = *value;
     }
     result
 }
@@ -330,13 +400,21 @@ mod tests {
             }
         }
 
-        level_scale_4x4_block(&mut block, false, qp);
+        level_scale_4x4_block(&mut block, false, false, qp);
         let output = transform_4x4(&unzip_block_4x4(&block));
         for row in output.samples {
             for col in row {
                 assert_eq!(col, 1);
             }
         }
+    }
+
+    #[test]
+    pub fn test_unscan_block_4x4() {
+        let input = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let block =
+            Block4x4 { samples: [[0, 1, 4, 5], [2, 3, 6, 7], [8, 9, 12, 13], [10, 11, 14, 15]] };
+        assert_eq!(block, unscan_block_4x4(&input));
     }
 
     #[test]

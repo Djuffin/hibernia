@@ -1,6 +1,6 @@
 use crate::h264::slice::SliceType;
 
-use super::macroblock::Macroblock;
+use super::macroblock::{self, Macroblock};
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
@@ -13,6 +13,8 @@ type VideoFrame = frame::Frame<u8>;
 #[derive(Debug, Clone)]
 pub enum DecodingError {
     MisformedData(String),
+    OutOfRange(String),
+    Wtf,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -100,7 +102,7 @@ impl Decoder {
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_block_count());
-                    self.process_slice(&mut slice);
+                    self.process_slice(&mut slice)?;
                 }
                 NalUnitType::IDRSlice => {
                     let mut slice =
@@ -111,7 +113,7 @@ impl Decoder {
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_block_count());
-                    self.process_slice(&mut slice);
+                    return self.process_slice(&mut slice); // Temporarily stop after first slice
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {
@@ -155,19 +157,20 @@ impl Decoder {
         self.frame_buffer.as_ref()
     }
 
-    fn process_slice(&mut self, slice: &mut Slice) {
+    fn process_slice(&mut self, slice: &mut Slice) -> Result<(), DecodingError> {
         if self.frame_buffer.is_none() {
-            return;
+            return Err(DecodingError::Wtf);
         }
+        let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
         let frame = self.frame_buffer.as_mut().unwrap();
         for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
-            let block_location = slice.get_mb_location(mb_addr);
+            let mb_location = slice.get_mb_location(mb_addr);
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
                     Macroblock::PCM(block) => {
                         let y_plane = &mut frame.planes[0];
                         let mut plane_slice =
-                            y_plane.mut_slice(point_to_plain_offset(&block_location));
+                            y_plane.mut_slice(point_to_plain_offset(&mb_location));
 
                         for (idx, row) in
                             plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
@@ -177,19 +180,33 @@ impl Decoder {
                                 .copy_from_slice(&block.pcm_sample_luma[row_range]);
                         }
                     }
-                    Macroblock::I(block) => {
-                        let qp = slice.pps.pic_init_qp_minus26
-                            + 26
-                            + slice.header.slice_qp_delta
-                            + block.mb_qp_delta;
+                    Macroblock::I(imb) => {
+                        qp += imb.mb_qp_delta;
+                        let qp = qp.clamp(0, 51).try_into().unwrap();
+                        if let Some(residual) = imb.residual.as_ref() {
+                            let blocks = residual.restore(super::ColorPlane::Y, qp);
+                            info!("MB {mb_addr} {qp} {:?}", blocks.len());
 
-                        if let Some(residusal) = block.residual.as_ref() {
-                            let mut luma4x4: [i32; 16];
-                            for luma_blk in residusal.luma_level4x4 {
-                                luma4x4 = luma_blk;
-                                level_scale_4x4_block(&mut luma4x4, true, qp.try_into().unwrap());
-                                let block = unzip_block_4x4(&luma4x4);
-                                let residual_matrix = transform_4x4(&block);
+                            let y_plane = &mut frame.planes[0];
+
+                            for (blk_idx, blk) in blocks.iter().enumerate() {
+                                let mut origin =
+                                    macroblock::get_4x4luma_block_location(blk_idx as u8);
+                                origin.x += mb_location.x;
+                                origin.y += mb_location.y;
+
+                                let mut plane_slice =
+                                    y_plane.mut_slice(point_to_plain_offset(&mb_location));
+
+                                for (idx, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+                                    for i in 0..4 {
+                                        row[i] = blk.samples[idx][i]
+                                            .abs()
+                                            .clamp(0, 255)
+                                            .try_into()
+                                            .unwrap();
+                                    }
+                                }
                             }
                         }
                     }
@@ -199,6 +216,7 @@ impl Decoder {
                 }
             }
         }
+        return Ok(());
     }
 }
 

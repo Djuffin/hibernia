@@ -92,7 +92,7 @@ fn inverse_raster_scan(a: u32, b: u32, c: u32, d: u32, e: bool) -> u32 {
 */
 
 // Section 6.4.3 Inverse 4x4 luma block scanning process
-fn get_4x4luma_block_location(idx: u8) -> Point {
+pub fn get_4x4luma_block_location(idx: u8) -> Point {
     let idx = idx as u32;
     let x = inverse_raster_scan(idx / 4, 8, 8, 16, false)
         + inverse_raster_scan(idx % 4, 4, 4, 8, false);
@@ -236,6 +236,22 @@ pub enum MbPredictionMode {
     Pred_L0,
     Pred_L1,
 }
+
+impl MbPredictionMode {
+    pub const fn is_intra(&self) -> bool {
+        matches!(
+            self,
+            MbPredictionMode::Intra_16x16
+                | MbPredictionMode::Intra_4x4
+                | MbPredictionMode::Intra_8x8
+        )
+    }
+
+    pub const fn is_inter(&self) -> bool {
+        !self.is_intra()
+    }
+}
+
 // Section 8.3.1.2 Intra_4x4 sample prediction
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]

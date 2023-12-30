@@ -14,6 +14,9 @@ use std::env;
 use std::fs;
 use std::io;
 
+use log::info;
+use v_frame::plane::PlaneOffset;
+
 fn main() {
     diag::init(false);
     let args: Vec<String> = env::args().collect();
@@ -27,11 +30,13 @@ fn main() {
 
         let w = y_plane.cfg.width as u32;
         let h = y_plane.cfg.height as u32;
+        let data_size = (w * h) as usize;
 
+        info!("Writing frame {w} x {h} to png");
         let mut writer = io::BufWriter::new(fs::File::create("output.png").unwrap());
         let mut encoder = png::Encoder::new(&mut writer, w, h);
         encoder.set_color(png::ColorType::Grayscale);
         let mut pixel_writer = encoder.write_header().unwrap();
-        let _ = pixel_writer.write_image_data(&y_plane.data);
+        let _ = pixel_writer.write_image_data(&y_plane.data[0..data_size]).unwrap();
     }
 }

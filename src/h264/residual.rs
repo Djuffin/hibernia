@@ -1,5 +1,7 @@
-use super::{tables, macroblock::{MbPredictionMode, CodedBlockPattern}, ColorPlane};
-
+use super::{
+    macroblock::{CodedBlockPattern, MbPredictionMode},
+    tables, ColorPlane,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Residual {
@@ -214,7 +216,7 @@ pub fn matrix_mul(m1: &Block4x4, m2: &Block4x4) -> Block4x4 {
             r[i][j] = v;
         }
     }
-    return result;
+    result
 }
 
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks

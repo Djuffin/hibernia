@@ -14,11 +14,11 @@ use super::sps;
 use super::tables;
 
 use super::cavlc::parse_residual_block;
+use super::residual::Residual;
 use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
 use macroblock::{IMb, IMbType, Macroblock, MbPredictionMode, NeighborNames, PcmMb};
-use super::residual::Residual;
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{Slice, SliceHeader, SliceType};

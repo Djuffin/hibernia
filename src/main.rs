@@ -10,7 +10,6 @@ extern crate num_derive;
 pub mod diag;
 pub mod h264;
 
-use png;
 use std::env;
 use std::fs;
 use std::io;

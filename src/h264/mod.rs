@@ -8,7 +8,7 @@ pub mod rbsp;
 pub mod slice;
 pub mod sps;
 pub mod tables;
-pub mod transform;
+pub mod residual;
 
 use num_traits::cast::FromPrimitive;
 

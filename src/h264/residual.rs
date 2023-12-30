@@ -1,4 +1,86 @@
-use super::tables;
+use super::{tables, macroblock::{MbPredictionMode, CodedBlockPattern}, ColorPlane};
+
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Residual {
+    pub prediction_mode: MbPredictionMode,
+    pub coded_block_pattern: CodedBlockPattern,
+    pub dc_level16x16: [i32; 16],
+    pub ac_level16x16: [[i32; 15]; 16],
+    pub ac_level16x16_nc: [u8; 16],
+    pub luma_level4x4: [[i32; 16]; 16],
+    pub luma_level4x4_nc: [u8; 16],
+
+    pub chroma_cb_dc_level: [i32; 4],
+    pub chroma_cr_dc_level: [i32; 4],
+
+    pub chroma_cb_ac_level: [[i32; 15]; 4],
+    pub chroma_cr_ac_level: [[i32; 15]; 4],
+
+    pub chroma_cb_level4x4_nc: [u8; 4],
+    pub chroma_cr_level4x4_nc: [u8; 4],
+}
+
+impl Residual {
+    pub fn get_dc_levels_for(&mut self, plane: ColorPlane) -> &mut [i32] {
+        let nc: &mut u8;
+        match plane {
+            ColorPlane::Y => {
+                if self.prediction_mode == MbPredictionMode::Intra_16x16 {
+                    self.dc_level16x16.as_mut_slice()
+                } else {
+                    &mut []
+                }
+            }
+            ColorPlane::Cb => self.chroma_cb_dc_level.as_mut_slice(),
+            ColorPlane::Cr => self.chroma_cr_dc_level.as_mut_slice(),
+        }
+    }
+
+    pub fn get_ac_levels_for(&mut self, blk_idx: u8, plane: ColorPlane) -> (&mut [i32], &mut u8) {
+        let levels: &mut [i32];
+        let nc: &mut u8;
+        let blk_idx = blk_idx as usize;
+        match plane {
+            ColorPlane::Y => {
+                if self.prediction_mode == MbPredictionMode::Intra_16x16 {
+                    levels = self.ac_level16x16[blk_idx].as_mut_slice();
+                    nc = &mut self.ac_level16x16_nc[blk_idx];
+                } else {
+                    levels = self.luma_level4x4[blk_idx].as_mut_slice();
+                    nc = &mut self.luma_level4x4_nc[blk_idx];
+                }
+            }
+            ColorPlane::Cb => {
+                levels = self.chroma_cb_ac_level[blk_idx].as_mut_slice();
+                nc = &mut self.chroma_cb_level4x4_nc[blk_idx];
+            }
+            ColorPlane::Cr => {
+                levels = self.chroma_cr_ac_level[blk_idx].as_mut_slice();
+                nc = &mut self.chroma_cr_level4x4_nc[blk_idx];
+            }
+        }
+        (levels, nc)
+    }
+
+    // Calculates nC for the block withing the macroblock
+    pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
+        let blk_idx = blk_idx as usize;
+        match plane {
+            ColorPlane::Y => match self.prediction_mode {
+                MbPredictionMode::None => todo!(),
+                MbPredictionMode::Intra_8x8 => todo!(),
+                MbPredictionMode::Intra_4x4 => self.luma_level4x4_nc[blk_idx],
+                MbPredictionMode::Intra_16x16 => self.ac_level16x16_nc[blk_idx],
+                MbPredictionMode::Pred_L0 => todo!(),
+                MbPredictionMode::Pred_L1 => todo!(),
+            },
+
+            ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx],
+            ColorPlane::Cr => self.chroma_cr_level4x4_nc[blk_idx],
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Block4x4 {

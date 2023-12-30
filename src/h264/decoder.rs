@@ -1,8 +1,8 @@
 use crate::h264::slice::SliceType;
 
 use super::macroblock::Macroblock;
-use super::transform::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
-use super::{nal, parser, pps, slice, sps, tables, transform, ChromaFormat, Point};
+use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
+use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
 use v_frame::frame;

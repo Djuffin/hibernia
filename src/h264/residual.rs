@@ -106,7 +106,7 @@ impl Residual {
                     let mut dcs = self.dc_level16x16;
                     dc_scale_4x4_block(&mut dcs, qp);
                     let mut dcs_block = unscan_block_4x4(&dcs);
-                    dcs_block = transform_dc(&mut dcs_block);
+                    dcs_block = transform_dc(&dcs_block);
 
                     for blk_idx in 0..16 {
                         let mut idct_coefficients = [0i32; 16];

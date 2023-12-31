@@ -37,9 +37,8 @@ fn main() {
         let mut encoder = png::Encoder::new(&mut writer, w, h);
         encoder.set_color(png::ColorType::Grayscale);
         let mut pixel_writer = encoder.write_header().unwrap();
-        let mut data = Vec::<u8>::with_capacity(data_size);
-        data.resize(data_size, 0);
+        let mut data = vec![0; data_size];
         y_plane.copy_to_raw_u8(&mut data, w as usize, 1);
-        let _ = pixel_writer.write_image_data(&data).unwrap();
+        pixel_writer.write_image_data(&data).unwrap();
     }
 }

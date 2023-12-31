@@ -491,7 +491,7 @@ mod tests {
                 -3 => {
                     for total in 0..16 {
                         for ones in 0..3 {
-                            assert_eq!(recognizer_patterns[total][ones], false);
+                            assert!(!recognizer_patterns[total][ones]);
                         }
                     }
                 }

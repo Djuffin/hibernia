@@ -60,7 +60,7 @@ impl Decoder {
     pub fn decode(&mut self, data: &[u8]) -> Result<(), DecodingError> {
         use nal::NalUnitType;
         let mut input = parser::BitReader::new(data);
-        let parse_error_handler = |e| DecodingError::MisformedData(e);
+        let parse_error_handler = DecodingError::MisformedData;
         loop {
             if input.remaining() < 4 * 8 {
                 info!("End of data");
@@ -220,7 +220,7 @@ impl Decoder {
                 }
             }
         }
-        return Ok(());
+        Ok(())
     }
 }
 

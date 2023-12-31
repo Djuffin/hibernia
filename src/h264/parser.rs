@@ -849,7 +849,7 @@ mod tests {
             assert_eq!(block.mb_type, IMbType::I_NxN);
             assert_eq!(block.coded_block_pattern, macroblock::CodedBlockPattern(1));
             assert_eq!(block.mb_qp_delta, 0);
-            assert_eq!(block.residual.is_some(), true);
+            assert!(block.residual.is_some());
         } else {
             assert!(false, "Should be I-block")
         }

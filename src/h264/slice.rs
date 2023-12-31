@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::{fmt, result};
 
-use super::macroblock::{Macroblock, MbAddr};
+use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborNames, MbNeighbors};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
 use super::{tables, ColorPlane, Point};
@@ -69,6 +69,7 @@ pub struct Slice {
     pub header: SliceHeader,
 
     macroblocks: Vec<Macroblock>,
+    next_mb_neighbors: MbNeighbors,
 }
 
 impl fmt::Debug for Slice {
@@ -82,7 +83,7 @@ impl Slice {
     pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
         let mb_count = sps.pic_size_in_mbs();
         let macroblocks = Vec::with_capacity(mb_count);
-        Slice { sps, pps, header, macroblocks }
+        Slice { sps, pps, header, macroblocks, next_mb_neighbors: MbNeighbors::default() }
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {
@@ -94,8 +95,18 @@ impl Slice {
         self.macroblocks.get(index as usize)
     }
 
+    pub fn get_neighbor_mb(&self, neighbor: MbNeighborNames) -> Option<&Macroblock> {
+        let mb_addr = self.next_mb_neighbors.get(neighbor);
+        mb_addr.and_then(|x| self.get_mb(x))
+    }
+
     pub fn append_mb(&mut self, block: Macroblock) -> MbAddr {
         let result = self.get_next_mb_addr();
+        self.next_mb_neighbors = get_neighbor_mbs(
+            self.sps.pic_width_in_mbs() as u32,
+            self.header.first_mb_in_slice,
+            result,
+        );
         self.macroblocks.push(block);
         result
     }

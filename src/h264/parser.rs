@@ -16,7 +16,7 @@ use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
-    get_neighbor_mbs, IMb, IMbType, Macroblock, MbPredictionMode, NeighborNames, PcmMb,
+    get_neighbor_mbs, IMb, IMbType, Macroblock, MbNeighborNames, MbPredictionMode, PcmMb,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -554,13 +554,7 @@ pub fn parse_slice_header(
     Ok(Slice::new(sps.clone(), pps.clone(), header))
 }
 
-fn calculate_nc(
-    slice: &Slice,
-    neighbor_mbs: &MbNeighbors,
-    blk_idx: u8,
-    residual: &Residual,
-    plane: ColorPlane,
-) -> i32 {
+fn calculate_nc(slice: &Slice, blk_idx: u8, residual: &Residual, plane: ColorPlane) -> i32 {
     let get_block_neighbor = if plane.is_luma() {
         macroblock::get_4x4luma_block_neighbor
     } else {
@@ -569,15 +563,13 @@ fn calculate_nc(
 
     let mut total_nc = 0;
     let mut nc_counted = 0;
-    for neighbor in [NeighborNames::A, NeighborNames::B] {
+    for neighbor in [MbNeighborNames::A, MbNeighborNames::B] {
         let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx, neighbor);
         if let Some(mb_neighbor) = mb_neighbor {
-            if let Some(addr) = neighbor_mbs.get(mb_neighbor) {
-                if let Some(mb) = slice.get_mb(addr) {
-                    let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
-                    total_nc += nc;
-                    nc_counted += 1;
-                }
+            if let Some(mb) = slice.get_neighbor_mb(mb_neighbor) {
+                let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
+                total_nc += nc;
+                nc_counted += 1;
             }
         } else {
             let nc = residual.get_nc(block_neighbor_idx, plane) as i32;
@@ -594,7 +586,6 @@ fn calculate_nc(
 fn parse_residual_luma(
     input: &mut BitReader,
     slice: &Slice,
-    neighbor_mbs: &MbNeighbors,
     residual: &mut Residual,
 ) -> ParseResult<()> {
     trace!("parse_residual_luma");
@@ -602,7 +593,7 @@ fn parse_residual_luma(
     let coded_block_pattern = residual.coded_block_pattern;
     if pred_mode == MbPredictionMode::Intra_16x16 {
         trace!(" luma DC");
-        let nc = calculate_nc(slice, neighbor_mbs, 0, residual, ColorPlane::Y);
+        let nc = calculate_nc(slice, 0, residual, ColorPlane::Y);
         let levels = residual.get_dc_levels_for(ColorPlane::Y);
         parse_residual_block(input, levels, nc)?;
     }
@@ -611,7 +602,7 @@ fn parse_residual_luma(
             for i4x4 in 0..4 {
                 let blk_idx = i8x8 * 4 + i4x4;
                 trace!(" luma BK {}", blk_idx);
-                let nc = calculate_nc(slice, neighbor_mbs, blk_idx, residual, ColorPlane::Y);
+                let nc = calculate_nc(slice, blk_idx, residual, ColorPlane::Y);
                 let (levels_ref, total_coeff_ref) =
                     residual.get_ac_levels_for(blk_idx, ColorPlane::Y);
                 *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
@@ -629,12 +620,7 @@ pub fn parse_residual(
     trace!("parse_residual");
     let pred_mode = residual.prediction_mode;
     let coded_block_pattern = residual.coded_block_pattern;
-    let neighbor_mbs = get_neighbor_mbs(
-        slice.sps.pic_width_in_mbs() as u32,
-        slice.header.first_mb_in_slice,
-        slice.get_next_mb_addr(),
-    );
-    parse_residual_luma(input, slice, &neighbor_mbs, residual)?;
+    parse_residual_luma(input, slice, residual)?;
     if slice.sps.ChromaArrayType().is_chrome_subsampled() {
         if coded_block_pattern.chroma() & 3 != 0 {
             for plane in [ColorPlane::Cb, ColorPlane::Cr] {
@@ -648,7 +634,7 @@ pub fn parse_residual(
         for plane in [ColorPlane::Cb, ColorPlane::Cr] {
             if coded_block_pattern.chroma() & 2 != 0 {
                 for blk_idx in 0..4 {
-                    let nc = calculate_nc(slice, &neighbor_mbs, blk_idx, residual, plane);
+                    let nc = calculate_nc(slice, blk_idx, residual, plane);
                     let (levels_ref, total_coeff_ref) = residual.get_ac_levels_for(blk_idx, plane);
 
                     trace!(" chroma {:?} BK {}", plane, blk_idx);

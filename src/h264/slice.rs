@@ -136,8 +136,6 @@ mod tests {
     pub fn prepare_slice() -> Slice {
         let sps = SequenceParameterSet {
             profile: Profile::Baseline,
-            constraint_set0_flag: true,
-            constraint_set1_flag: true,
             level_idc: 20,
             seq_parameter_set_id: 0,
             chroma_format_idc: ChromaFormat::YUV420,
@@ -148,21 +146,7 @@ mod tests {
             pic_width_in_mbs_minus1: 3,
             pic_height_in_map_units_minus1: 3,
             frame_mbs_only_flag: true,
-            vui_parameters: Some(VuiParameters {
-                video_signal_type_present_flag: true,
-                video_format: 5,
-                colour_description_present_flag: true,
-                colour_primaries: 6,
-                transfer_characteristics: 6,
-                matrix_coefficients: 6,
-                bitstream_restriction_flag: true,
-                motion_vectors_over_pic_boundaries_flag: true,
-                log2_max_mv_length_horizontal: 16,
-                log2_max_mv_length_vertical: 16,
-                max_num_reorder_frames: 0,
-                max_dec_frame_buffering: 1,
-                ..VuiParameters::default()
-            }),
+            vui_parameters: None,
             ..SequenceParameterSet::default()
         };
 

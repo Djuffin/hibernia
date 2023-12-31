@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt;
+use std::{fmt, result};
 
 use super::macroblock::{Macroblock, MbAddr};
 use super::pps::PicParameterSet;
@@ -68,9 +68,7 @@ pub struct Slice {
     pub pps: PicParameterSet,
     pub header: SliceHeader,
 
-    pub current_mb_address: MbAddr,
-
-    mb_addr_to_mb: HashMap<MbAddr, Macroblock>,
+    macroblocks: Vec<Macroblock>,
 }
 
 impl fmt::Debug for Slice {
@@ -83,9 +81,8 @@ impl fmt::Debug for Slice {
 impl Slice {
     pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
         let mb_count = sps.pic_size_in_mbs();
-        let current_mb_address = header.first_mb_in_slice;
-        let mb_addr_to_mb = HashMap::with_capacity(mb_count);
-        Slice { sps, pps, header, current_mb_address, mb_addr_to_mb }
+        let macroblocks = Vec::with_capacity(mb_count);
+        Slice { sps, pps, header, macroblocks }
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {
@@ -93,15 +90,22 @@ impl Slice {
     }
 
     pub fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
-        self.mb_addr_to_mb.get(&mb_addr)
+        let index = mb_addr - self.header.first_mb_in_slice;
+        self.macroblocks.get(index as usize)
     }
 
-    pub fn put_mb(&mut self, mb_addr: MbAddr, block: Macroblock) {
-        self.mb_addr_to_mb.insert(mb_addr, block);
+    pub fn append_mb(&mut self, block: Macroblock) -> MbAddr {
+        let result = self.get_next_mb_addr();
+        self.macroblocks.push(block);
+        result
     }
 
-    pub fn get_block_count(&self) -> usize {
-        self.mb_addr_to_mb.len()
+    pub fn get_macroblock_count(&self) -> usize {
+        self.macroblocks.len()
+    }
+
+    pub fn get_next_mb_addr(&self) -> MbAddr {
+        self.macroblocks.len() as MbAddr + self.header.first_mb_in_slice
     }
 
     pub fn get_mb_location(&self, addr: MbAddr) -> Point {

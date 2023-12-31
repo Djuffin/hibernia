@@ -632,7 +632,7 @@ pub fn parse_residual(
     let neighbor_mbs = get_neighbor_mbs(
         slice.sps.pic_width_in_mbs() as u32,
         slice.header.first_mb_in_slice,
-        slice.current_mb_address,
+        slice.get_next_mb_addr(),
     );
     parse_residual_luma(input, slice, &neighbor_mbs, residual)?;
     if slice.sps.ChromaArrayType().is_chrome_subsampled() {
@@ -759,15 +759,16 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
         todo!("non I-slices");
     }
 
-    slice.current_mb_address = slice.header.first_mb_in_slice;
     let mut more_data = true;
-    let pic_size_in_mbs = slice.sps.pic_size_in_mbs() as u32;
+    let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
     while more_data {
-        trace!("=============== Parsing macroblock: {} ===============", slice.current_mb_address);
+        trace!(
+            "=============== Parsing macroblock: {} ===============",
+            slice.get_macroblock_count()
+        );
         let block = parse_macroblock(input, slice)?;
-        slice.put_mb(slice.current_mb_address, block);
-        if slice.current_mb_address < pic_size_in_mbs {
-            slice.current_mb_address += 1;
+        slice.append_mb(block);
+        if slice.get_macroblock_count() < pic_size_in_mbs {
             more_data = more_rbsp_data(input);
         } else {
             more_data = false;
@@ -857,7 +858,7 @@ mod tests {
         assert_eq!(header.disable_deblocking_filter_idc, 0);
 
         parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
-        assert_eq!(slice.get_block_count(), 16);
+        assert_eq!(slice.get_macroblock_count(), 16);
         if let Some(Macroblock::I(block)) = slice.get_mb(0) {
             assert_eq!(block.mb_type, IMbType::I_NxN);
             assert_eq!(block.coded_block_pattern, macroblock::CodedBlockPattern(1));

@@ -102,7 +102,7 @@ impl Decoder {
                     }
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
-                    info!("Blocks: {:#?}", slice.get_block_count());
+                    info!("Blocks: {:#?}", slice.get_macroblock_count());
                     self.process_slice(&mut slice)?;
                 }
                 NalUnitType::IDRSlice => {
@@ -113,7 +113,7 @@ impl Decoder {
                     info!("IDR Slice: {:#?}", slice);
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
-                    info!("Blocks: {:#?}", slice.get_block_count());
+                    info!("Blocks: {:#?}", slice.get_macroblock_count());
                     return self.process_slice(&mut slice); // Temporarily stop after first slice
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}

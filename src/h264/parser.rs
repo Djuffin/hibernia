@@ -1,8 +1,5 @@
 #![macro_use]
 
-use crate::h264::macroblock::get_neighbor_mbs;
-use crate::h264::sps::FrameCrop;
-
 use super::decoder;
 use super::macroblock;
 use super::macroblock::MbNeighbors;
@@ -18,11 +15,13 @@ use super::residual::Residual;
 use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
-use macroblock::{IMb, IMbType, Macroblock, MbPredictionMode, NeighborNames, PcmMb};
+use macroblock::{
+    get_neighbor_mbs, IMb, IMbType, Macroblock, MbPredictionMode, NeighborNames, PcmMb,
+};
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{Slice, SliceHeader, SliceType};
-use sps::{SequenceParameterSet, VuiParameters};
+use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 
 pub type BitReader<'a> = rbsp::RbspReader<'a>;
 pub type ParseResult<T> = rbsp::ParseResult<T>;

@@ -1,5 +1,5 @@
-use crate::h264::ColorPlane;
 use crate::h264::slice::SliceType;
+use crate::h264::ColorPlane;
 
 use super::macroblock::{self, Macroblock};
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
@@ -170,8 +170,7 @@ impl Decoder {
                 match mb {
                     Macroblock::PCM(block) => {
                         let y_plane = &mut frame.planes[0];
-                        let mut plane_slice =
-                            y_plane.mut_slice(point_to_plain_offset(&mb_loc));
+                        let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(&mb_loc));
 
                         for (idx, row) in
                             plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
@@ -186,7 +185,11 @@ impl Decoder {
                         let qp = qp.try_into().unwrap();
                         if let Some(residual) = imb.residual.as_ref() {
                             let blocks = residual.restore(ColorPlane::Y, qp);
-                            info!("MB {mb_addr} {qp} {:?} {:?}", residual.prediction_mode, blocks.len());
+                            info!(
+                                "MB {mb_addr} {qp} {:?} {:?}",
+                                residual.prediction_mode,
+                                blocks.len()
+                            );
 
                             let y_plane = &mut frame.planes[0];
 

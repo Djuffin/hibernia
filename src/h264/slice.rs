@@ -102,12 +102,12 @@ impl Slice {
 
     pub fn append_mb(&mut self, block: Macroblock) -> MbAddr {
         let result = self.get_next_mb_addr();
+        self.macroblocks.push(block);
         self.next_mb_neighbors = get_neighbor_mbs(
             self.sps.pic_width_in_mbs() as u32,
             self.header.first_mb_in_slice,
-            result,
+            self.get_next_mb_addr(),
         );
-        self.macroblocks.push(block);
         result
     }
 
@@ -124,5 +124,87 @@ impl Slice {
         let x = addr % (width_in_mbs as u32) * (tables::MB_WIDTH as u32);
         let y = addr / (width_in_mbs as u32) * (tables::MB_HEIGHT as u32);
         Point { x, y }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::h264::{macroblock::PcmMb, sps::VuiParameters, ChromaFormat, Profile};
+
+    pub use super::*;
+
+    pub fn prepare_slice() -> Slice {
+        let sps = SequenceParameterSet {
+            profile: Profile::Baseline,
+            constraint_set0_flag: true,
+            constraint_set1_flag: true,
+            level_idc: 20,
+            seq_parameter_set_id: 0,
+            chroma_format_idc: ChromaFormat::YUV420,
+            separate_colour_plane_flag: false,
+            log2_max_frame_num_minus4: 11,
+            log2_max_pic_order_cnt_lsb_minus4: 12,
+            max_num_ref_frames: 1,
+            pic_width_in_mbs_minus1: 3,
+            pic_height_in_map_units_minus1: 3,
+            frame_mbs_only_flag: true,
+            vui_parameters: Some(VuiParameters {
+                video_signal_type_present_flag: true,
+                video_format: 5,
+                colour_description_present_flag: true,
+                colour_primaries: 6,
+                transfer_characteristics: 6,
+                matrix_coefficients: 6,
+                bitstream_restriction_flag: true,
+                motion_vectors_over_pic_boundaries_flag: true,
+                log2_max_mv_length_horizontal: 16,
+                log2_max_mv_length_vertical: 16,
+                max_num_reorder_frames: 0,
+                max_dec_frame_buffering: 1,
+                ..VuiParameters::default()
+            }),
+            ..SequenceParameterSet::default()
+        };
+
+        let pps = PicParameterSet {
+            pic_parameter_set_id: 0,
+            seq_parameter_set_id: 0,
+            entropy_coding_mode_flag: false,
+            deblocking_filter_control_present_flag: true,
+            ..PicParameterSet::default()
+        };
+
+        let header = SliceHeader { first_mb_in_slice: 100, ..SliceHeader::default() };
+
+        Slice::new(sps, pps, header)
+    }
+
+    fn prepare_mb() -> Macroblock {
+        Macroblock::PCM(PcmMb::default())
+    }
+
+    #[test]
+    pub fn test_slice_addressing() {
+        let mut slice = prepare_slice();
+        assert_eq!(slice.get_macroblock_count(), 0);
+        assert_eq!(slice.get_next_mb_addr(), 100);
+        let neighbors =
+            [MbNeighborNames::A, MbNeighborNames::B, MbNeighborNames::C, MbNeighborNames::D];
+        for nb in neighbors {
+            assert!(slice.get_neighbor_mb(nb).is_none());
+        }
+
+        assert_eq!(slice.append_mb(prepare_mb()), 100);
+        assert!(slice.get_neighbor_mb(MbNeighborNames::A).is_some());
+        assert!(slice.get_neighbor_mb(MbNeighborNames::B).is_none());
+
+        for _ in 0..slice.sps.pic_width_in_mbs() {
+            slice.append_mb(prepare_mb());
+        }
+
+        for nb in neighbors {
+            assert!(slice.get_neighbor_mb(nb).is_some());
+        }
+        assert_eq!(slice.get_macroblock_count(), slice.sps.pic_width_in_mbs() + 1);
     }
 }

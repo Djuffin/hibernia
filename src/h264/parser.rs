@@ -2,7 +2,6 @@
 
 use super::decoder;
 use super::macroblock;
-use super::macroblock::MbNeighbors;
 use super::nal;
 use super::pps;
 use super::rbsp;
@@ -16,7 +15,7 @@ use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
-    get_neighbor_mbs, IMb, IMbType, Macroblock, MbNeighborNames, MbPredictionMode, PcmMb,
+    get_neighbor_mbs, IMb, IMbType, Macroblock, MbNeighborName, MbPredictionMode, PcmMb,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -563,10 +562,11 @@ fn calculate_nc(slice: &Slice, blk_idx: u8, residual: &Residual, plane: ColorPla
 
     let mut total_nc = 0;
     let mut nc_counted = 0;
-    for neighbor in [MbNeighborNames::A, MbNeighborNames::B] {
+    let current_mb_addr = slice.get_next_mb_addr();
+    for neighbor in [MbNeighborName::A, MbNeighborName::B] {
         let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx, neighbor);
         if let Some(mb_neighbor) = mb_neighbor {
-            if let Some(mb) = slice.get_neighbor_mb(mb_neighbor) {
+            if let Some(mb) = slice.get_mb_neighbor(current_mb_addr, mb_neighbor) {
                 let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
                 total_nc += nc;
                 nc_counted += 1;

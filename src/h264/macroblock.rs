@@ -9,7 +9,7 @@ use super::{ColorPlane, Point};
 pub type MbAddr = u32;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub enum MbNeighborNames {
+pub enum MbNeighborName {
     #[default]
     A = 1, // left
     B = 2, // above
@@ -17,49 +17,49 @@ pub enum MbNeighborNames {
     D = 4, // above-left
 }
 
-#[derive(Copy, Clone, Debug, Default)]
-pub struct MbNeighbors {
-    a: Option<MbAddr>, // left
-    b: Option<MbAddr>, // above
-    c: Option<MbAddr>, // above-right
-    d: Option<MbAddr>, // above-left
-}
-
-impl MbNeighbors {
-    pub fn get(&self, mb_name: MbNeighborNames) -> Option<MbAddr> {
-        match mb_name {
-            MbNeighborNames::A => self.a,
-            MbNeighborNames::B => self.b,
-            MbNeighborNames::C => self.c,
-            MbNeighborNames::D => self.d,
-        }
-    }
-}
-
 // Section 6.4.8 Derivation process of the availability for macroblock addresses
 // Section 6.4.9 Derivation process for neighboring macroblock addresses and their availability
-pub fn get_neighbor_mbs(width_in_mbs: u32, first_addr: MbAddr, addr: MbAddr) -> MbNeighbors {
+pub fn get_neighbor_mbs(
+    width_in_mbs: u32,
+    first_addr: MbAddr,
+    addr: MbAddr,
+    neib: MbNeighborName,
+) -> Option<MbAddr> {
     let w_rem = addr % width_in_mbs;
-    // Left
-    let a = if w_rem == 0 || addr <= first_addr { None } else { Some(addr - 1) };
-
-    // Above
-    let b = if addr < first_addr + width_in_mbs { None } else { Some(addr - width_in_mbs) };
-
-    // Above-right
-    let c = if addr + 1 < first_addr + width_in_mbs || w_rem + 1 == width_in_mbs {
-        None
-    } else {
-        Some(addr - width_in_mbs + 1)
-    };
-
-    // Above-left
-    let d = if addr < first_addr + width_in_mbs + 1 || w_rem == 0 {
-        None
-    } else {
-        Some(addr - width_in_mbs - 1)
-    };
-    MbNeighbors { a, b, c, d }
+    match neib {
+        MbNeighborName::A => {
+            // Left
+            if w_rem == 0 || addr <= first_addr {
+                None
+            } else {
+                Some(addr - 1)
+            }
+        }
+        MbNeighborName::B => {
+            // Above
+            if addr < first_addr + width_in_mbs {
+                None
+            } else {
+                Some(addr - width_in_mbs)
+            }
+        }
+        MbNeighborName::C => {
+            // Above-right
+            if addr + 1 < first_addr + width_in_mbs || w_rem + 1 == width_in_mbs {
+                None
+            } else {
+                Some(addr - width_in_mbs + 1)
+            }
+        }
+        MbNeighborName::D => {
+            // Above-left
+            if addr < first_addr + width_in_mbs + 1 || w_rem == 0 {
+                None
+            } else {
+                Some(addr - width_in_mbs - 1)
+            }
+        }
+    }
 }
 
 #[inline(always)]
@@ -116,13 +116,13 @@ fn get_4x4chroma_block_index(p: Point) -> u8 {
 }
 
 // Section 6.4.11.4 Derivation process for neighboring 4x4 luma blocks
-pub fn get_4x4luma_block_neighbor(idx: u8, n: MbNeighborNames) -> (u8, Option<MbNeighborNames>) {
+pub fn get_4x4luma_block_neighbor(idx: u8, n: MbNeighborName) -> (u8, Option<MbNeighborName>) {
     let p = get_4x4luma_block_location(idx);
     let (x, y) = match n {
-        MbNeighborNames::A => (p.x as i8 - 1, p.y as i8),
-        MbNeighborNames::B => (p.x as i8, p.y as i8 - 1),
-        MbNeighborNames::C => (p.x as i8 + 1, p.y as i8),
-        MbNeighborNames::D => (p.x as i8 - 1, p.y as i8 - 1),
+        MbNeighborName::A => (p.x as i8 - 1, p.y as i8),
+        MbNeighborName::B => (p.x as i8, p.y as i8 - 1),
+        MbNeighborName::C => (p.x as i8 + 1, p.y as i8),
+        MbNeighborName::D => (p.x as i8 - 1, p.y as i8 - 1),
     };
     let (w, h) = (MB_WIDTH as i8, MB_HEIGHT as i8);
     let (xn, yn) = ((x + w) % w, (y + h) % h);
@@ -137,13 +137,13 @@ pub fn get_4x4luma_block_neighbor(idx: u8, n: MbNeighborNames) -> (u8, Option<Mb
 }
 
 // Section 6.4.11.5 Derivation process for neighboring 4x4 chroma blocks
-pub fn get_4x4chroma_block_neighbor(idx: u8, n: MbNeighborNames) -> (u8, Option<MbNeighborNames>) {
+pub fn get_4x4chroma_block_neighbor(idx: u8, n: MbNeighborName) -> (u8, Option<MbNeighborName>) {
     let p = get_4x4chroma_block_location(idx);
     let (x, y) = match n {
-        MbNeighborNames::A => (p.x as i8 - 1, p.y as i8),
-        MbNeighborNames::B => (p.x as i8, p.y as i8 - 1),
-        MbNeighborNames::C => (p.x as i8 + 1, p.y as i8),
-        MbNeighborNames::D => (p.x as i8 - 1, p.y as i8 - 1),
+        MbNeighborName::A => (p.x as i8 - 1, p.y as i8),
+        MbNeighborName::B => (p.x as i8, p.y as i8 - 1),
+        MbNeighborName::C => (p.x as i8 + 1, p.y as i8),
+        MbNeighborName::D => (p.x as i8 - 1, p.y as i8 - 1),
     };
     let (w, h) = (8, 8);
     let (xn, yn) = ((x + w) % w, (y + h) % h);
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     pub fn test_get_4x4luma_block_neighbor() {
-        let (a, b) = (MbNeighborNames::A, MbNeighborNames::B);
+        let (a, b) = (MbNeighborName::A, MbNeighborName::B);
         assert_eq!(get_4x4luma_block_neighbor(0, a), (5, Some(a)));
         assert_eq!(get_4x4luma_block_neighbor(2, a), (7, Some(a)));
         assert_eq!(get_4x4luma_block_neighbor(8, a), (13, Some(a)));
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     pub fn test_get_4x4chroma_block_neighbor() {
-        let (a, b) = (MbNeighborNames::A, MbNeighborNames::B);
+        let (a, b) = (MbNeighborName::A, MbNeighborName::B);
         assert_eq!(get_4x4chroma_block_neighbor(0, a), (1, Some(a)));
         assert_eq!(get_4x4chroma_block_neighbor(1, a), (0, None));
         assert_eq!(get_4x4chroma_block_neighbor(2, a), (3, Some(a)));
@@ -473,34 +473,29 @@ mod tests {
 
     #[test]
     pub fn test_get_neighbor_mbs() {
-        let nbs = get_neighbor_mbs(16, 0, 20);
-        assert_eq!(nbs.get(MbNeighborNames::A), Some(19));
-        assert_eq!(nbs.get(MbNeighborNames::B), Some(4));
-        assert_eq!(nbs.get(MbNeighborNames::C), Some(5));
-        assert_eq!(nbs.get(MbNeighborNames::D), Some(3));
+        assert_eq!(get_neighbor_mbs(16, 0, 20, MbNeighborName::A), Some(19));
+        assert_eq!(get_neighbor_mbs(16, 0, 20, MbNeighborName::B), Some(4));
+        assert_eq!(get_neighbor_mbs(16, 0, 20, MbNeighborName::C), Some(5));
+        assert_eq!(get_neighbor_mbs(16, 0, 20, MbNeighborName::D), Some(3));
 
-        let nbs = get_neighbor_mbs(8, 0, 15);
-        assert_eq!(nbs.get(MbNeighborNames::A), Some(14));
-        assert_eq!(nbs.get(MbNeighborNames::B), Some(7));
-        assert_eq!(nbs.get(MbNeighborNames::C), None);
-        assert_eq!(nbs.get(MbNeighborNames::D), Some(6));
+        assert_eq!(get_neighbor_mbs(8, 0, 15, MbNeighborName::A), Some(14));
+        assert_eq!(get_neighbor_mbs(8, 0, 15, MbNeighborName::B), Some(7));
+        assert_eq!(get_neighbor_mbs(8, 0, 15, MbNeighborName::C), None);
+        assert_eq!(get_neighbor_mbs(8, 0, 15, MbNeighborName::D), Some(6));
 
-        let nbs = get_neighbor_mbs(8, 0, 32);
-        assert_eq!(nbs.get(MbNeighborNames::A), None);
-        assert_eq!(nbs.get(MbNeighborNames::B), Some(24));
-        assert_eq!(nbs.get(MbNeighborNames::C), Some(25));
-        assert_eq!(nbs.get(MbNeighborNames::D), None);
+        assert_eq!(get_neighbor_mbs(8, 0, 32, MbNeighborName::A), None);
+        assert_eq!(get_neighbor_mbs(8, 0, 32, MbNeighborName::B), Some(24));
+        assert_eq!(get_neighbor_mbs(8, 0, 32, MbNeighborName::C), Some(25));
+        assert_eq!(get_neighbor_mbs(8, 0, 32, MbNeighborName::D), None);
 
-        let nbs = get_neighbor_mbs(8, 25, 33);
-        assert_eq!(nbs.get(MbNeighborNames::A), Some(32));
-        assert_eq!(nbs.get(MbNeighborNames::B), Some(25));
-        assert_eq!(nbs.get(MbNeighborNames::C), Some(26));
-        assert_eq!(nbs.get(MbNeighborNames::D), None);
+        assert_eq!(get_neighbor_mbs(8, 25, 33, MbNeighborName::A), Some(32));
+        assert_eq!(get_neighbor_mbs(8, 25, 33, MbNeighborName::B), Some(25));
+        assert_eq!(get_neighbor_mbs(8, 25, 33, MbNeighborName::C), Some(26));
+        assert_eq!(get_neighbor_mbs(8, 25, 33, MbNeighborName::D), None);
 
-        let nbs = get_neighbor_mbs(10, 1, 1);
-        assert!(nbs.get(MbNeighborNames::A).is_none());
-        assert!(nbs.get(MbNeighborNames::B).is_none());
-        assert!(nbs.get(MbNeighborNames::C).is_none());
-        assert!(nbs.get(MbNeighborNames::D).is_none());
+        assert!(get_neighbor_mbs(10, 1, 1, MbNeighborName::A).is_none());
+        assert!(get_neighbor_mbs(10, 1, 1, MbNeighborName::B).is_none());
+        assert!(get_neighbor_mbs(10, 1, 1, MbNeighborName::C).is_none());
+        assert!(get_neighbor_mbs(10, 1, 1, MbNeighborName::D).is_none());
     }
 }

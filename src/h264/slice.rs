@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::{fmt, result};
 
-use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborNames, MbNeighbors};
+use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborName};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
 use super::{tables, ColorPlane, Point};
@@ -69,7 +69,6 @@ pub struct Slice {
     pub header: SliceHeader,
 
     macroblocks: Vec<Macroblock>,
-    next_mb_neighbors: MbNeighbors,
 }
 
 impl fmt::Debug for Slice {
@@ -83,7 +82,7 @@ impl Slice {
     pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
         let mb_count = sps.pic_size_in_mbs();
         let macroblocks = Vec::with_capacity(mb_count);
-        Slice { sps, pps, header, macroblocks, next_mb_neighbors: MbNeighbors::default() }
+        Slice { sps, pps, header, macroblocks }
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {
@@ -95,19 +94,23 @@ impl Slice {
         self.macroblocks.get(index as usize)
     }
 
-    pub fn get_neighbor_mb(&self, neighbor: MbNeighborNames) -> Option<&Macroblock> {
-        let mb_addr = self.next_mb_neighbors.get(neighbor);
-        mb_addr.and_then(|x| self.get_mb(x))
+    pub fn get_mb_neighbor(
+        &self,
+        mb_addr: MbAddr,
+        neighbor: MbNeighborName,
+    ) -> Option<&Macroblock> {
+        get_neighbor_mbs(
+            self.sps.pic_width_in_mbs() as u32,
+            self.header.first_mb_in_slice,
+            mb_addr,
+            neighbor,
+        )
+        .and_then(|x| self.get_mb(x))
     }
 
     pub fn append_mb(&mut self, block: Macroblock) -> MbAddr {
         let result = self.get_next_mb_addr();
         self.macroblocks.push(block);
-        self.next_mb_neighbors = get_neighbor_mbs(
-            self.sps.pic_width_in_mbs() as u32,
-            self.header.first_mb_in_slice,
-            self.get_next_mb_addr(),
-        );
         result
     }
 
@@ -173,21 +176,21 @@ mod tests {
         assert_eq!(slice.get_macroblock_count(), 0);
         assert_eq!(slice.get_next_mb_addr(), 100);
         let neighbors =
-            [MbNeighborNames::A, MbNeighborNames::B, MbNeighborNames::C, MbNeighborNames::D];
+            [MbNeighborName::A, MbNeighborName::B, MbNeighborName::C, MbNeighborName::D];
         for nb in neighbors {
-            assert!(slice.get_neighbor_mb(nb).is_none());
+            assert!(slice.get_mb_neighbor(slice.get_next_mb_addr(), nb).is_none());
         }
 
         assert_eq!(slice.append_mb(prepare_mb()), 100);
-        assert!(slice.get_neighbor_mb(MbNeighborNames::A).is_some());
-        assert!(slice.get_neighbor_mb(MbNeighborNames::B).is_none());
+        assert!(slice.get_mb_neighbor(slice.get_next_mb_addr(), MbNeighborName::A).is_some());
+        assert!(slice.get_mb_neighbor(slice.get_next_mb_addr(), MbNeighborName::B).is_none());
 
         for _ in 0..slice.sps.pic_width_in_mbs() {
             slice.append_mb(prepare_mb());
         }
 
         for nb in neighbors {
-            assert!(slice.get_neighbor_mb(nb).is_some());
+            assert!(slice.get_mb_neighbor(slice.get_next_mb_addr(), nb).is_some());
         }
         assert_eq!(slice.get_macroblock_count(), slice.sps.pic_width_in_mbs() + 1);
     }

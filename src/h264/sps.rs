@@ -16,8 +16,8 @@ pub struct VuiParameters {
     pub video_signal_type_present_flag: bool,
     pub video_format: u8,
     pub video_full_range_flag: bool,
-    pub colour_description_present_flag: bool,
-    pub colour_primaries: u8,
+    pub color_description_present_flag: bool,
+    pub color_primaries: u8,
     pub transfer_characteristics: u8,
     pub matrix_coefficients: u8,
 
@@ -67,7 +67,7 @@ pub struct SequenceParameterSet {
     pub level_idc: u8,
     pub seq_parameter_set_id: u8,
     pub chroma_format_idc: ChromaFormat,
-    pub separate_colour_plane_flag: bool,
+    pub separate_color_plane_flag: bool,
     pub bit_depth_luma_minus8: u8,
     pub bit_depth_chroma_minus8: u8,
     pub qpprime_y_zero_transform_bypass_flag: bool,
@@ -112,7 +112,7 @@ impl SequenceParameterSet {
     }
 
     pub fn ChromaArrayType(&self) -> ChromaFormat {
-        if self.separate_colour_plane_flag {
+        if self.separate_color_plane_flag {
             ChromaFormat::Monochrome
         } else {
             self.chroma_format_idc

@@ -142,7 +142,7 @@ mod tests {
             level_idc: 20,
             seq_parameter_set_id: 0,
             chroma_format_idc: ChromaFormat::YUV420,
-            separate_colour_plane_flag: false,
+            separate_color_plane_flag: false,
             log2_max_frame_num_minus4: 11,
             log2_max_pic_order_cnt_lsb_minus4: 12,
             max_num_ref_frames: 1,

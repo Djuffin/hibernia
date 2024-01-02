@@ -127,9 +127,9 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     if vui.video_signal_type_present_flag {
         read_value!(input, vui.video_format, u, 3);
         read_value!(input, vui.video_full_range_flag, f);
-        read_value!(input, vui.colour_description_present_flag, f);
-        if vui.colour_description_present_flag {
-            read_value!(input, vui.colour_primaries, u, 8);
+        read_value!(input, vui.color_description_present_flag, f);
+        if vui.color_description_present_flag {
+            read_value!(input, vui.color_primaries, u, 8);
             read_value!(input, vui.transfer_characteristics, u, 8);
             read_value!(input, vui.matrix_coefficients, u, 8);
         }
@@ -195,7 +195,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     if sps.profile.has_chroma_info() {
         read_value!(input, sps.chroma_format_idc, ue, 8);
         if sps.chroma_format_idc == ChromaFormat::YUV444 {
-            read_value!(input, sps.separate_colour_plane_flag, f);
+            read_value!(input, sps.separate_color_plane_flag, f);
         }
 
         read_value!(input, sps.bit_depth_luma_minus8, ue, 8);
@@ -483,7 +483,7 @@ pub fn parse_slice_header(
         }
     };
 
-    if sps.separate_colour_plane_flag {
+    if sps.separate_color_plane_flag {
         let color_plane_id: u8;
         read_value!(input, color_plane_id, u, 2);
         header.color_plane = match color_plane_id {
@@ -788,7 +788,7 @@ mod tests {
             level_idc: 20,
             seq_parameter_set_id: 0,
             chroma_format_idc: ChromaFormat::YUV420,
-            separate_colour_plane_flag: false,
+            separate_color_plane_flag: false,
             log2_max_frame_num_minus4: 11,
             log2_max_pic_order_cnt_lsb_minus4: 12,
             max_num_ref_frames: 1,
@@ -798,8 +798,8 @@ mod tests {
             vui_parameters: Some(VuiParameters {
                 video_signal_type_present_flag: true,
                 video_format: 5,
-                colour_description_present_flag: true,
-                colour_primaries: 6,
+                color_description_present_flag: true,
+                color_primaries: 6,
                 transfer_characteristics: 6,
                 matrix_coefficients: 6,
                 bitstream_restriction_flag: true,
@@ -900,7 +900,7 @@ mod tests {
         assert!(vui.video_signal_type_present_flag);
         assert_eq!(vui.video_format, 5);
 
-        assert_eq!(vui.colour_primaries, 6);
+        assert_eq!(vui.color_primaries, 6);
         assert_eq!(vui.transfer_characteristics, 6);
         assert_eq!(vui.log2_max_mv_length_horizontal, 16);
         assert_eq!(vui.log2_max_mv_length_vertical, 16);

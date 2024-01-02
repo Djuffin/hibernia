@@ -15,7 +15,9 @@ use super::{ChromaFormat, ColorPlane, Profile};
 use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
-    get_neighbor_mbs, IMb, IMbType, Macroblock, MbNeighborName, MbPredictionMode, PcmMb,
+    get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, IMb, IMbType,
+    Intra_4x4_SamplePredictionMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
+    MbPredictionMode, PcmMb,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -554,19 +556,16 @@ pub fn parse_slice_header(
 }
 
 fn calculate_nc(slice: &Slice, blk_idx: u8, residual: &Residual, plane: ColorPlane) -> i32 {
-    let get_block_neighbor = if plane.is_luma() {
-        macroblock::get_4x4luma_block_neighbor
-    } else {
-        macroblock::get_4x4chroma_block_neighbor
-    };
+    let get_block_neighbor =
+        if plane.is_luma() { get_4x4luma_block_neighbor } else { get_4x4chroma_block_neighbor };
 
     let mut total_nc = 0;
     let mut nc_counted = 0;
-    let current_mb_addr = slice.get_next_mb_addr();
+    let this_mb_addr = slice.get_next_mb_addr();
     for neighbor in [MbNeighborName::A, MbNeighborName::B] {
         let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx, neighbor);
         if let Some(mb_neighbor) = mb_neighbor {
-            if let Some(mb) = slice.get_mb_neighbor(current_mb_addr, mb_neighbor) {
+            if let Some(mb) = slice.get_mb_neighbor(this_mb_addr, mb_neighbor) {
                 let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
                 total_nc += nc;
                 nc_counted += 1;
@@ -648,6 +647,31 @@ pub fn parse_residual(
     Ok(())
 }
 
+// Section 8.3.1.1 Derivation process for Intra4x4PredMode
+fn calc_prev_intra4x4_pred_mode(
+    slice: &Slice,
+    mb: &IMb,
+    mb_addr: MbAddr,
+    blk_idx: usize,
+) -> Intra_4x4_SamplePredictionMode {
+    let mut result = Intra_4x4_SamplePredictionMode::max_mode();
+    let default_mode = Intra_4x4_SamplePredictionMode::DC;
+    for neighbor in [MbNeighborName::A, MbNeighborName::B] {
+        let (block_neighbor_idx, mb_neighbor) = get_4x4luma_block_neighbor(blk_idx as u8, neighbor);
+        let mode = if let Some(mb_neighbor) = mb_neighbor {
+            if let Some(mb) = slice.get_mb_neighbor(mb_addr, mb_neighbor) {
+                mb.get_inter_prediction_mode(block_neighbor_idx).unwrap_or(default_mode)
+            } else {
+                default_mode
+            }
+        } else {
+            mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
+        };
+        result = std::cmp::min(result, mode);
+    }
+    result
+}
+
 pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
     let mb_type: IMbType;
     read_value!(input, mb_type, ue);
@@ -673,18 +697,31 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         Ok(Macroblock::PCM(block))
     } else {
         let mut block = IMb { mb_type, ..IMb::default() };
+        let this_mb_addr = slice.get_next_mb_addr();
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
             read_value!(input, block.transform_size_8x8_flag, f);
         }
         match block.MbPartPredMode(0) {
             MbPredictionMode::Intra_4x4 => {
-                for mode in block.rem_intra4x4_pred_mode.iter_mut() {
+                for blk_idx in 0..block.rem_intra4x4_pred_mode.len() {
+                    let prev_pred_mode =
+                        calc_prev_intra4x4_pred_mode(slice, &block, this_mb_addr, blk_idx);
+
                     let prev_intra4x4_pred_mode_flag: bool;
                     read_value!(input, prev_intra4x4_pred_mode_flag, f);
-                    if !prev_intra4x4_pred_mode_flag {
-                        let rem_intra4x4_pred_mode: macroblock::Intra_4x4_SamplePredictionMode;
+                    let mode = &mut block.rem_intra4x4_pred_mode[blk_idx];
+                    if prev_intra4x4_pred_mode_flag {
+                        *mode = prev_pred_mode
+                    } else {
+                        let rem_intra4x4_pred_mode: Intra_4x4_SamplePredictionMode;
                         read_value!(input, rem_intra4x4_pred_mode, u, 3);
-                        *mode = Some(rem_intra4x4_pred_mode);
+                        if rem_intra4x4_pred_mode < prev_pred_mode {
+                            *mode = rem_intra4x4_pred_mode;
+                        } else {
+                            *mode = ((rem_intra4x4_pred_mode as u32) + 1)
+                                .try_into()
+                                .map_err(|e| format!("rem_intra4x4_pred_mode is too large"))?;
+                        }
                     }
                 }
             }
@@ -849,6 +886,10 @@ mod tests {
             assert_eq!(block.mb_type, IMbType::I_NxN);
             assert_eq!(block.coded_block_pattern, macroblock::CodedBlockPattern(1));
             assert_eq!(block.mb_qp_delta, 0);
+            assert_eq!(block.intra_chroma_pred_mode, Intra_Chroma_Pred_Mode::DC);
+            for pred_mode in block.rem_intra4x4_pred_mode {
+                assert_eq!(pred_mode, Intra_4x4_SamplePredictionMode::DC);
+            }
             assert!(block.residual.is_some());
         } else {
             assert!(false, "Should be I-block")

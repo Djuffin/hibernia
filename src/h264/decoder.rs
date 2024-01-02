@@ -1,7 +1,8 @@
+use crate::h264::macroblock::get_4x4luma_block_location;
 use crate::h264::slice::SliceType;
 use crate::h264::ColorPlane;
 
-use super::macroblock::{self, Macroblock};
+use super::macroblock::{self, get_4x4luma_block_neighbor, Macroblock};
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
@@ -194,8 +195,7 @@ impl Decoder {
                             let y_plane = &mut frame.planes[0];
 
                             for (blk_idx, blk) in blocks.iter().enumerate() {
-                                let mut blk_loc =
-                                    macroblock::get_4x4luma_block_location(blk_idx as u8);
+                                let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
                                 blk_loc.x += mb_loc.x;
                                 blk_loc.y += mb_loc.y;
 

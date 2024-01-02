@@ -248,7 +248,7 @@ impl MbPredictionMode {
 
 // Section 8.3.1.2 Intra_4x4 sample prediction
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive, PartialOrd, Ord)]
 pub enum Intra_4x4_SamplePredictionMode {
     Vertical = 0,
     Horizontal = 1,
@@ -260,6 +260,12 @@ pub enum Intra_4x4_SamplePredictionMode {
     Horizontal_Down = 6,
     Vertical_Left = 7,
     Horizontal_Up = 8,
+}
+
+impl Intra_4x4_SamplePredictionMode {
+    pub fn max_mode() -> Intra_4x4_SamplePredictionMode {
+        Intra_4x4_SamplePredictionMode::Horizontal_Up
+    }
 }
 
 impl TryFrom<u32> for Intra_4x4_SamplePredictionMode {
@@ -323,7 +329,7 @@ pub struct PcmMb {
 pub struct IMb {
     pub mb_type: IMbType,
     pub transform_size_8x8_flag: bool,
-    pub rem_intra4x4_pred_mode: [Option<Intra_4x4_SamplePredictionMode>; 16],
+    pub rem_intra4x4_pred_mode: [Intra_4x4_SamplePredictionMode; 16],
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
@@ -383,6 +389,14 @@ impl Macroblock {
             Macroblock::P(_) => {
                 todo!("P blocks")
             }
+        }
+    }
+
+    // Gets inter prediction mode for a 4x4 block in this macroblock (None for non-I blocks)
+    pub fn get_inter_prediction_mode(&self, blk_idx: u8) -> Option<Intra_4x4_SamplePredictionMode> {
+        match self {
+            Macroblock::I(mb) => Some(mb.rem_intra4x4_pred_mode[blk_idx as usize]),
+            _ => None,
         }
     }
 

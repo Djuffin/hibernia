@@ -1,7 +1,7 @@
 use log::trace;
 use num_traits::cast::FromPrimitive;
-use std::fmt::Display;
 use std::num::NonZeroU32;
+use std::fmt::Display;
 
 use super::residual::Residual;
 use super::tables::{MB_HEIGHT, MB_WIDTH};
@@ -396,14 +396,6 @@ impl Macroblock {
             Macroblock::P(_) => {
                 todo!("P blocks")
             }
-        }
-    }
-
-    // Gets inter prediction mode for a 4x4 block in this macroblock (None for non-I blocks)
-    pub fn get_inter_prediction_mode(&self, blk_idx: u8) -> Option<Intra_4x4_SamplePredictionMode> {
-        match self {
-            Macroblock::I(mb) => Some(mb.rem_intra4x4_pred_mode[blk_idx as usize]),
-            _ => None,
         }
     }
 

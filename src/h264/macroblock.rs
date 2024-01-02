@@ -1,5 +1,6 @@
 use log::trace;
 use num_traits::cast::FromPrimitive;
+use std::fmt::Display;
 use std::num::NonZeroU32;
 
 use super::residual::Residual;
@@ -260,6 +261,12 @@ pub enum Intra_4x4_SamplePredictionMode {
     Horizontal_Down = 6,
     Vertical_Left = 7,
     Horizontal_Up = 8,
+}
+
+impl Display for Intra_4x4_SamplePredictionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}({})", self, *self as u32)
+    }
 }
 
 impl Intra_4x4_SamplePredictionMode {

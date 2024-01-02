@@ -659,10 +659,14 @@ fn calc_prev_intra4x4_pred_mode(
     for neighbor in [MbNeighborName::A, MbNeighborName::B] {
         let (block_neighbor_idx, mb_neighbor) = get_4x4luma_block_neighbor(blk_idx as u8, neighbor);
         let mode = if let Some(mb_neighbor) = mb_neighbor {
-            if let Some(mb) = slice.get_mb_neighbor(mb_addr, mb_neighbor) {
-                mb.get_inter_prediction_mode(block_neighbor_idx).unwrap_or(default_mode)
+            if let Some(Macroblock::I(mb)) = slice.get_mb_neighbor(mb_addr, mb_neighbor) {
+                if mb.MbPartPredMode(0) == MbPredictionMode::Intra_4x4 {
+                    mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
+                } else {
+                    default_mode
+                }
             } else {
-                default_mode
+                return default_mode;
             }
         } else {
             mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
@@ -703,6 +707,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
         }
         match block.MbPartPredMode(0) {
             MbPredictionMode::Intra_4x4 => {
+                trace!("4x4 luma predictions");
                 for blk_idx in 0..block.rem_intra4x4_pred_mode.len() {
                     let prev_pred_mode =
                         calc_prev_intra4x4_pred_mode(slice, &block, this_mb_addr, blk_idx);
@@ -723,6 +728,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
                                 .map_err(|e| format!("rem_intra4x4_pred_mode is too large"))?;
                         }
                     }
+                    trace!("  blk:{blk_idx} prev: {prev_pred_mode} actual: {}", *mode);
                 }
             }
             MbPredictionMode::Intra_16x16 => {}

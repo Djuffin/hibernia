@@ -201,7 +201,7 @@ impl Decoder {
 
                                 let mut plane_slice =
                                     y_plane.mut_slice(point_to_plain_offset(&blk_loc));
-                                info!("  blk:{blk_idx} {blk_loc:?} {blk:?}");
+                                info!("  blk:{blk_idx} {blk_loc:?} {:?} ", blk.samples);
                                 for (idx, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
                                     for i in 0..4 {
                                         row[i] = blk.samples[idx][i]

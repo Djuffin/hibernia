@@ -1,7 +1,7 @@
 use log::trace;
 use num_traits::cast::FromPrimitive;
-use std::num::NonZeroU32;
 use std::fmt::Display;
+use std::num::NonZeroU32;
 
 use super::residual::Residual;
 use super::tables::{MB_HEIGHT, MB_WIDTH};
@@ -250,7 +250,7 @@ impl MbPredictionMode {
 // Section 8.3.1.2 Intra_4x4 sample prediction
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive, PartialOrd, Ord)]
-pub enum Intra_4x4_SamplePredictionMode {
+pub enum Intra_4x4_SamplePredMode {
     Vertical = 0,
     Horizontal = 1,
     #[default]
@@ -263,19 +263,19 @@ pub enum Intra_4x4_SamplePredictionMode {
     Horizontal_Up = 8,
 }
 
-impl Display for Intra_4x4_SamplePredictionMode {
+impl Display for Intra_4x4_SamplePredMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}({})", self, *self as u32)
     }
 }
 
-impl Intra_4x4_SamplePredictionMode {
-    pub fn max_mode() -> Intra_4x4_SamplePredictionMode {
-        Intra_4x4_SamplePredictionMode::Horizontal_Up
+impl Intra_4x4_SamplePredMode {
+    pub fn max_mode() -> Intra_4x4_SamplePredMode {
+        Intra_4x4_SamplePredMode::Horizontal_Up
     }
 }
 
-impl TryFrom<u32> for Intra_4x4_SamplePredictionMode {
+impl TryFrom<u32> for Intra_4x4_SamplePredMode {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         FromPrimitive::from_u32(value).ok_or("Unknown 4x4 sample prediction mode.")
@@ -354,7 +354,7 @@ pub struct PcmMb {
 pub struct IMb {
     pub mb_type: IMbType,
     pub transform_size_8x8_flag: bool,
-    pub rem_intra4x4_pred_mode: [Intra_4x4_SamplePredictionMode; 16],
+    pub rem_intra4x4_pred_mode: [Intra_4x4_SamplePredMode; 16],
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,

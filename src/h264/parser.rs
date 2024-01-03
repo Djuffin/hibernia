@@ -16,7 +16,7 @@ use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, IMb, IMbType,
-    Intra_4x4_SamplePredictionMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
+    Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
     MbPredictionMode, PcmMb,
 };
 use nal::{NalHeader, NalUnitType};
@@ -653,9 +653,9 @@ fn calc_prev_intra4x4_pred_mode(
     mb: &IMb,
     mb_addr: MbAddr,
     blk_idx: usize,
-) -> Intra_4x4_SamplePredictionMode {
-    let mut result = Intra_4x4_SamplePredictionMode::max_mode();
-    let default_mode = Intra_4x4_SamplePredictionMode::DC;
+) -> Intra_4x4_SamplePredMode {
+    let mut result = Intra_4x4_SamplePredMode::max_mode();
+    let default_mode = Intra_4x4_SamplePredMode::DC;
     for neighbor in [MbNeighborName::A, MbNeighborName::B] {
         let (block_neighbor_idx, mb_neighbor) = get_4x4luma_block_neighbor(blk_idx as u8, neighbor);
         let mode = if let Some(mb_neighbor) = mb_neighbor {
@@ -718,7 +718,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
                     if prev_intra4x4_pred_mode_flag {
                         *mode = prev_pred_mode
                     } else {
-                        let rem_intra4x4_pred_mode: Intra_4x4_SamplePredictionMode;
+                        let rem_intra4x4_pred_mode: Intra_4x4_SamplePredMode;
                         read_value!(input, rem_intra4x4_pred_mode, u, 3);
                         if rem_intra4x4_pred_mode < prev_pred_mode {
                             *mode = rem_intra4x4_pred_mode;
@@ -894,7 +894,7 @@ mod tests {
             assert_eq!(block.mb_qp_delta, 0);
             assert_eq!(block.intra_chroma_pred_mode, Intra_Chroma_Pred_Mode::DC);
             for pred_mode in block.rem_intra4x4_pred_mode {
-                assert_eq!(pred_mode, Intra_4x4_SamplePredictionMode::DC);
+                assert_eq!(pred_mode, Intra_4x4_SamplePredMode::DC);
             }
             assert!(block.residual.is_some());
         } else {

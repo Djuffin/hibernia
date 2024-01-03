@@ -2,7 +2,10 @@ use crate::h264::macroblock::get_4x4luma_block_location;
 use crate::h264::slice::SliceType;
 use crate::h264::ColorPlane;
 
-use super::macroblock::{self, get_4x4luma_block_neighbor, Macroblock, IMb, Intra_4x4_SamplePredictionMode, Intra_Chroma_Pred_Mode, MbPredictionMode};
+use super::macroblock::{
+    self, get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
+    Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbPredictionMode,
+};
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
@@ -11,7 +14,7 @@ use v_frame::frame;
 use v_frame::plane::{self, PlaneOffset};
 
 type VideoFrame = frame::Frame<u8>;
-type PlaneSlice<'a> = plane::PlaneMutSlice<'a, u8>;
+type Plane = v_frame::plane::Plane<u8>;
 
 #[derive(Debug, Clone)]
 pub enum DecodingError {
@@ -172,7 +175,7 @@ impl Decoder {
                 match mb {
                     Macroblock::PCM(block) => {
                         let y_plane = &mut frame.planes[0];
-                        let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(&mb_loc));
+                        let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(mb_loc));
 
                         for (idx, row) in
                             plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
@@ -201,7 +204,7 @@ impl Decoder {
                                 blk_loc.y += mb_loc.y;
 
                                 let mut plane_slice =
-                                    y_plane.mut_slice(point_to_plain_offset(&blk_loc));
+                                    y_plane.mut_slice(point_to_plain_offset(blk_loc));
                                 info!("  blk:{blk_idx} {blk_loc:?} {:?} ", blk.samples);
                                 for (idx, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
                                     for i in 0..4 {
@@ -225,6 +228,39 @@ impl Decoder {
     }
 }
 
-fn point_to_plain_offset(p: &Point) -> PlaneOffset {
+fn point_to_plain_offset(p: Point) -> PlaneOffset {
     PlaneOffset { x: p.x as isize, y: p.y as isize }
+}
+
+pub fn render_luma_16x16_intra_prediction(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    loc: Point,
+    target: &mut Plane,
+    mode: Intra_16x16_SamplePredMode,
+) {
+    let x = loc.x as usize;
+    let y = loc.y as usize;
+    match mode {
+        Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
+            let mut src_row = [0; 16];
+            src_row.copy_from_slice(&target.row(loc.y as isize - 1)[x..(x + 16)]);
+            let mut target_slice = target.mut_slice(point_to_plain_offset(loc));
+            for row in target_slice.rows_iter_mut().take(16) {
+                row.copy_from_slice(&src_row);
+            }
+        }
+        Intra_16x16_SamplePredMode::Intra_16x16_Horizontal => {
+            let mut offset = point_to_plain_offset(loc);
+            offset.x -= 1;
+            let mut target_slice = target.mut_slice(offset);
+            for row in target_slice.rows_iter_mut().take(16) {
+                for i in 1..row.len() {
+                    row[i] = row[i - 1];
+                }
+            }
+        }
+        Intra_16x16_SamplePredMode::Intra_16x16_DC => todo!(),
+        Intra_16x16_SamplePredMode::Intra_16x16_Plane => todo!(),
+    }
 }

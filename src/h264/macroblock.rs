@@ -278,9 +278,27 @@ impl Intra_4x4_SamplePredictionMode {
 impl TryFrom<u32> for Intra_4x4_SamplePredictionMode {
     type Error = &'static str;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown sample prediction mode.")
+        FromPrimitive::from_u32(value).ok_or("Unknown 4x4 sample prediction mode.")
     }
 }
+
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
+pub enum Intra_16x16_SamplePredMode {
+    #[default]
+    Intra_16x16_Vertical = 0,
+    Intra_16x16_Horizontal = 1,
+    Intra_16x16_DC = 2,
+    Intra_16x16_Plane = 3,
+}
+
+impl TryFrom<u32> for Intra_16x16_SamplePredMode {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or("Unknown 16x16 sample prediction mode.")
+    }
+}
+
 // Table 7-16
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]

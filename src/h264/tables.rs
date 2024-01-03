@@ -3,7 +3,7 @@ use super::macroblock;
 
 use cavlc::BitPattern;
 use log::trace;
-use macroblock::{CodedBlockPattern, IMbType};
+use macroblock::{CodedBlockPattern, IMbType, Intra_16x16_SamplePredMode};
 
 pub const MB_WIDTH: usize = 16;
 pub const MB_HEIGHT: usize = 16;
@@ -57,6 +57,37 @@ pub const fn mb_type_to_coded_block_pattern(mb_type: IMbType) -> Option<CodedBlo
         IMbType::I_16x16_1_2_1 => Some(CodedBlockPattern::new(2, 15)),
         IMbType::I_16x16_2_2_1 => Some(CodedBlockPattern::new(2, 15)),
         IMbType::I_16x16_3_2_1 => Some(CodedBlockPattern::new(2, 15)),
+        _ => None,
+    }
+}
+
+// Table 7-11 – Macroblock types for I slices
+pub const fn mb_type_to_16x16_pred_mode(mb_type: IMbType) -> Option<Intra_16x16_SamplePredMode> {
+    match mb_type {
+        IMbType::I_16x16_0_0_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Vertical),
+        IMbType::I_16x16_1_0_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Horizontal),
+        IMbType::I_16x16_2_0_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_DC),
+        IMbType::I_16x16_3_0_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Plane),
+        IMbType::I_16x16_0_1_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Vertical),
+        IMbType::I_16x16_1_1_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Horizontal),
+        IMbType::I_16x16_2_1_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_DC),
+        IMbType::I_16x16_3_1_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Plane),
+        IMbType::I_16x16_0_2_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Vertical),
+        IMbType::I_16x16_1_2_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Horizontal),
+        IMbType::I_16x16_2_2_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_DC),
+        IMbType::I_16x16_3_2_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Plane),
+        IMbType::I_16x16_0_0_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Vertical),
+        IMbType::I_16x16_1_0_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Horizontal),
+        IMbType::I_16x16_2_0_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_DC),
+        IMbType::I_16x16_3_0_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Plane),
+        IMbType::I_16x16_0_1_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Vertical),
+        IMbType::I_16x16_1_1_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Horizontal),
+        IMbType::I_16x16_2_1_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_DC),
+        IMbType::I_16x16_3_1_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Plane),
+        IMbType::I_16x16_0_2_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Vertical),
+        IMbType::I_16x16_1_2_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Horizontal),
+        IMbType::I_16x16_2_2_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_DC),
+        IMbType::I_16x16_3_2_1 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Plane),
         _ => None,
     }
 }

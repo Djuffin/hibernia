@@ -2,15 +2,16 @@ use crate::h264::macroblock::get_4x4luma_block_location;
 use crate::h264::slice::SliceType;
 use crate::h264::ColorPlane;
 
-use super::macroblock::{self, get_4x4luma_block_neighbor, Macroblock};
+use super::macroblock::{self, get_4x4luma_block_neighbor, Macroblock, IMb, Intra_4x4_SamplePredictionMode, Intra_Chroma_Pred_Mode, MbPredictionMode};
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
 use v_frame::frame;
-use v_frame::plane::PlaneOffset;
+use v_frame::plane::{self, PlaneOffset};
 
 type VideoFrame = frame::Frame<u8>;
+type PlaneSlice<'a> = plane::PlaneMutSlice<'a, u8>;
 
 #[derive(Debug, Clone)]
 pub enum DecodingError {

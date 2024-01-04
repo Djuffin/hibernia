@@ -12,10 +12,14 @@ pub type MbAddr = u32;
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum MbNeighborName {
     #[default]
-    A = 1, // left
-    B = 2, // above
-    C = 3, // above-right
-    D = 4, // above-left
+    /// Left
+    A = 1,
+    /// Above
+    B = 2,
+    /// Above-left
+    C = 3,
+    /// Above-right
+    D = 4,
 }
 
 // Section 6.4.8 Derivation process of the availability for macroblock addresses

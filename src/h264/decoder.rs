@@ -1,10 +1,10 @@
-use crate::h264::macroblock::get_4x4luma_block_location;
 use crate::h264::slice::SliceType;
 use crate::h264::ColorPlane;
 
 use super::macroblock::{
-    self, get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
-    Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbPredictionMode,
+    self, get_4x4luma_block_location, get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode,
+    Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
+    MbPredictionMode,
 };
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
@@ -243,24 +243,59 @@ pub fn render_luma_16x16_intra_prediction(
     let y = loc.y as usize;
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
+            // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
             let mut src_row = [0; 16];
-            src_row.copy_from_slice(&target.row(loc.y as isize - 1)[x..(x + 16)]);
+            let offset = point_to_plain_offset(loc);
+            src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 16)]);
             let mut target_slice = target.mut_slice(point_to_plain_offset(loc));
             for row in target_slice.rows_iter_mut().take(16) {
                 row.copy_from_slice(&src_row);
             }
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Horizontal => {
+            // Section 8.3.3.2 Specification of Intra_16x16_Horizontal prediction mode
             let mut offset = point_to_plain_offset(loc);
             offset.x -= 1;
             let mut target_slice = target.mut_slice(offset);
             for row in target_slice.rows_iter_mut().take(16) {
-                for i in 1..row.len() {
-                    row[i] = row[i - 1];
-                }
+                let src = row[0];
+                row[1..=16].fill(src);
             }
         }
-        Intra_16x16_SamplePredMode::Intra_16x16_DC => todo!(),
+        Intra_16x16_SamplePredMode::Intra_16x16_DC => {
+            // Section 8.3.3.3 Specification of Intra_16x16_DC prediction mode
+            let offset = point_to_plain_offset(loc);
+
+            // Calculate the sum of all the values at the left of the current macroblock
+            let sum_a = if slice.get_mb_neighbor(mb_addr, MbNeighborName::A).is_some() {
+                let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
+                Some(target_slice.rows_iter().take(16).map(|r| r[0] as u32).sum::<u32>())
+            } else {
+                None
+            };
+
+            // Calculate the sum of all the values at the top of the current macroblock
+            let sum_b = if slice.get_mb_neighbor(mb_addr, MbNeighborName::B).is_some() {
+                let row = &target.row(y as isize - 1)[x..(x + 16)];
+                Some(row.iter().map(|r| *r as u32).sum::<u32>())
+            } else {
+                None
+            };
+
+            let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
+            if sum_a.is_some() && sum_b.is_some() {
+                sum = (sum + 16) >> 5;
+            } else if sum_a.is_some() != sum_b.is_some() {
+                sum = (sum + 8) >> 4;
+            } else {
+                sum = 1 << 7;
+            }
+
+            let mut target_slice = target.mut_slice(offset);
+            for row in target_slice.rows_iter_mut().take(16) {
+                row[0..16].fill(sum as u8);
+            }
+        }
         Intra_16x16_SamplePredMode::Intra_16x16_Plane => todo!(),
     }
 }

@@ -1,4 +1,5 @@
 use crate::h264::slice::SliceType;
+use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
 
 use super::macroblock::{
@@ -198,6 +199,16 @@ impl Decoder {
 
                             let y_plane = &mut frame.planes[0];
 
+                            if imb.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
+                                render_luma_16x16_intra_prediction(
+                                    slice,
+                                    mb_addr,
+                                    mb_loc,
+                                    y_plane,
+                                    mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
+                                );
+                            }
+
                             for (blk_idx, blk) in blocks.iter().enumerate() {
                                 let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
                                 blk_loc.x += mb_loc.x;
@@ -208,11 +219,10 @@ impl Decoder {
                                 info!("  blk:{blk_idx} {blk_loc:?} {:?} ", blk.samples);
                                 for (idx, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
                                     for i in 0..4 {
-                                        row[i] = blk.samples[idx][i]
+                                        row[i] = (row[i] as i32 + blk.samples[idx][i])
                                             .abs()
                                             .clamp(0, 255)
-                                            .try_into()
-                                            .unwrap();
+                                            as u8;
                                     }
                                 }
                             }
@@ -241,22 +251,20 @@ pub fn render_luma_16x16_intra_prediction(
 ) {
     let x = loc.x as usize;
     let y = loc.y as usize;
+    let offset = point_to_plain_offset(loc);
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
             let mut src_row = [0; 16];
-            let offset = point_to_plain_offset(loc);
             src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 16)]);
             let mut target_slice = target.mut_slice(point_to_plain_offset(loc));
             for row in target_slice.rows_iter_mut().take(16) {
-                row.copy_from_slice(&src_row);
+                row[0..16].copy_from_slice(&src_row);
             }
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Horizontal => {
             // Section 8.3.3.2 Specification of Intra_16x16_Horizontal prediction mode
-            let mut offset = point_to_plain_offset(loc);
-            offset.x -= 1;
-            let mut target_slice = target.mut_slice(offset);
+            let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
             for row in target_slice.rows_iter_mut().take(16) {
                 let src = row[0];
                 row[1..=16].fill(src);
@@ -267,7 +275,7 @@ pub fn render_luma_16x16_intra_prediction(
             let offset = point_to_plain_offset(loc);
 
             // Calculate the sum of all the values at the left of the current macroblock
-            let sum_a = if slice.get_mb_neighbor(mb_addr, MbNeighborName::A).is_some() {
+            let sum_a = if slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
                 let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
                 Some(target_slice.rows_iter().take(16).map(|r| r[0] as u32).sum::<u32>())
             } else {
@@ -275,7 +283,7 @@ pub fn render_luma_16x16_intra_prediction(
             };
 
             // Calculate the sum of all the values at the top of the current macroblock
-            let sum_b = if slice.get_mb_neighbor(mb_addr, MbNeighborName::B).is_some() {
+            let sum_b = if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
                 let row = &target.row(y as isize - 1)[x..(x + 16)];
                 Some(row.iter().map(|r| *r as u32).sum::<u32>())
             } else {
@@ -296,6 +304,38 @@ pub fn render_luma_16x16_intra_prediction(
                 row[0..16].fill(sum as u8);
             }
         }
-        Intra_16x16_SamplePredMode::Intra_16x16_Plane => todo!(),
+        Intra_16x16_SamplePredMode::Intra_16x16_Plane => {
+            // Section 8.3.3.4 Specification of Intra_16x16_Plane prediction mode
+            let mut buf = [0; 17];
+            buf.copy_from_slice(&target.row(y as isize - 1)[(x - 1)..(x + 16)]);
+            let mut h = 0i32;
+            let mut a: i32;
+            for i in 0..8 {
+                h += (i as i32 + 1) * (buf[i + 9] as i32 - buf[7 - i] as i32);
+            }
+            a = buf[16] as i32;
+
+            let mut v = 0i32;
+            let target_slice = target.slice(PlaneOffset { x: offset.x - 1, y: offset.y - 1 });
+            for (idx, row) in target_slice.rows_iter().take(17).enumerate() {
+                buf[idx] = row[0];
+            }
+            for i in 0..8 {
+                v += (i as i32 + 1) * (buf[i + 9] as i32 - buf[7 - i] as i32);
+            }
+            a += buf[16] as i32;
+            a *= 16;
+
+            let b = (5 * h + 32) >> 6;
+            let c = (5 * v + 32) >> 6;
+
+            let mut target_slice = target.mut_slice(offset);
+            for (y, row) in target_slice.rows_iter_mut().take(16).enumerate() {
+                for (y, pixel) in row.iter_mut().enumerate() {
+                    let value = (a + b * (x as i32 - 7) + c * (y as i32 - 7) + 16) >> 5;
+                    *pixel = value.clamp(0, 255) as u8;
+                }
+            }
+        }
     }
 }

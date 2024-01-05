@@ -108,6 +108,16 @@ impl Slice {
         .and_then(|x| self.get_mb(x))
     }
 
+    pub fn has_mb_neighbor(&self, mb_addr: MbAddr, neighbor: MbNeighborName) -> bool {
+        get_neighbor_mbs(
+            self.sps.pic_width_in_mbs() as u32,
+            self.header.first_mb_in_slice,
+            mb_addr,
+            neighbor,
+        )
+        .is_some()
+    }
+
     pub fn append_mb(&mut self, block: Macroblock) -> MbAddr {
         let result = self.get_next_mb_addr();
         self.macroblocks.push(block);

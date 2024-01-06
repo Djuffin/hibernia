@@ -1,3 +1,6 @@
+use std::cmp::{max, min};
+use std::io::Read;
+
 use crate::h264::slice::SliceType;
 use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
@@ -132,7 +135,7 @@ impl Decoder {
                         sps.pic_width(),
                         sps.pic_hight(),
                         v_frame::pixel::ChromaSampling::Cs420,
-                        0,
+                        16,
                     );
                     self.frame_buffer = Some(frame);
                     self.context.put_sps(sps);
@@ -199,14 +202,26 @@ impl Decoder {
 
                             let y_plane = &mut frame.planes[0];
 
-                            if imb.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
-                                render_luma_16x16_intra_prediction(
-                                    slice,
-                                    mb_addr,
-                                    mb_loc,
-                                    y_plane,
-                                    mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
-                                );
+                            let mode = imb.MbPartPredMode(0);
+                            match mode {
+                                MbPredictionMode::None => panic!("impossible pred mode"),
+                                MbPredictionMode::Intra_4x4 => {
+                                    render_luma_4x4_intra_prediction(
+                                        &slice, mb_addr, &imb, mb_loc, y_plane,
+                                    );
+                                }
+                                MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
+                                MbPredictionMode::Intra_16x16 => {
+                                    render_luma_16x16_intra_prediction(
+                                        slice,
+                                        mb_addr,
+                                        mb_loc,
+                                        y_plane,
+                                        mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
+                                    );
+                                }
+                                MbPredictionMode::Pred_L0 => todo!(),
+                                MbPredictionMode::Pred_L1 => todo!(),
                             }
 
                             for (blk_idx, blk) in blocks.iter().enumerate() {
@@ -240,6 +255,136 @@ impl Decoder {
 
 fn point_to_plain_offset(p: Point) -> PlaneOffset {
     PlaneOffset { x: p.x as isize, y: p.y as isize }
+}
+
+// Section 8.3.1.1 Derivation process for Intra4x4PredMode
+pub fn render_luma_4x4_intra_prediction(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    mb: &IMb,
+    mb_loc: Point,
+    target: &mut Plane,
+) {
+    for blk_idx in 0..16u8 {
+        let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
+        blk_loc.x += mb_loc.x;
+        blk_loc.y += mb_loc.y;
+        let x = blk_loc.x as usize;
+        let y = blk_loc.y as usize;
+
+        let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
+        match mode {
+            Intra_4x4_SamplePredMode::Vertical => {
+                let mut src_row = [0; 4];
+                src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 4)]);
+                let offset = point_to_plain_offset(blk_loc);
+                let mut target_slice = target.mut_slice(offset);
+                for row in target_slice.rows_iter_mut().take(4) {
+                    row[0..4].copy_from_slice(&src_row);
+                }
+            }
+            Intra_4x4_SamplePredMode::Horizontal => {
+                let mut offset = point_to_plain_offset(blk_loc);
+                offset.x -= 1;
+                let mut target_slice = target.mut_slice(offset);
+                for row in target_slice.rows_iter_mut().take(4) {
+                    let src = row[0];
+                    row[1..=4].fill(src);
+                }
+            }
+            Intra_4x4_SamplePredMode::DC => {
+                let offset = point_to_plain_offset(blk_loc);
+
+                // Calculate the sum of all the values at the left of the current macroblock
+                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
+                let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+                    let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
+                    Some(target_slice.rows_iter().take(4).map(|r| r[0] as u32).sum::<u32>())
+                } else {
+                    None
+                };
+
+                // Calculate the sum of all the values at the top of the current macroblock
+                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
+                let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                    let row = &target.row(y as isize - 1)[x..(x + 4)];
+                    Some(row.iter().map(|r| *r as u32).sum::<u32>())
+                } else {
+                    None
+                };
+
+                let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
+                if sum_a.is_some() && sum_b.is_some() {
+                    sum = (sum + 4) >> 3;
+                } else if sum_a.is_some() != sum_b.is_some() {
+                    sum = (sum + 2) >> 2;
+                } else {
+                    sum = 1 << 7;
+                }
+
+                let mut target_slice = target.mut_slice(offset);
+                for row in target_slice.rows_iter_mut().take(4) {
+                    row[0..4].fill(sum as u8);
+                }
+            }
+            Intra_4x4_SamplePredMode::Diagonal_Down_Left => {
+                let mut src_row = [0; 8];
+                src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 8)]);
+                let offset = point_to_plain_offset(blk_loc);
+                let mut target_slice = target.mut_slice(offset);
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(3).enumerate() {
+                        let i = x + y;
+                        *value = if i < 6 {
+                            (src_row[i] as u16
+                                + 2 * src_row[i + 1] as u16
+                                + src_row[i + 2] as u16
+                                + 2)
+                                >> 2
+                        } else {
+                            (src_row[6] as u16 + 3 * src_row[7] as u16 + 2) >> 2
+                        } as u8;
+                    }
+                    let len_to_copy = min(src_row.len(), row.len());
+                    src_row[0..len_to_copy].copy_from_slice(&row[0..len_to_copy]);
+                }
+            }
+            Intra_4x4_SamplePredMode::Diagonal_Down_Right => {
+                info!("4x4 mode: {blk_idx}: {mode}")
+            }
+            Intra_4x4_SamplePredMode::Vertical_Right => {
+                info!("4x4 mode: {blk_idx}: {mode}")
+            }
+            Intra_4x4_SamplePredMode::Horizontal_Down => {
+                info!("4x4 mode: {blk_idx}: {mode}")
+            }
+            Intra_4x4_SamplePredMode::Vertical_Left => {
+                let mut src_row = [0; 6];
+                src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 6)]);
+                let offset = point_to_plain_offset(blk_loc);
+                let mut target_slice = target.mut_slice(offset);
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(3).enumerate() {
+                        let i = x + (y >> 2);
+                        *value = if y % 2 == 0 {
+                            (src_row[i] as u16 + src_row[i + 1] as u16 + 1) >> 1
+                        } else {
+                            (src_row[i] as u16
+                                + 2 * src_row[i + 1] as u16
+                                + src_row[i + 2] as u16
+                                + 2)
+                                >> 2
+                        } as u8;
+                    }
+                    let len_to_copy = min(src_row.len(), row.len());
+                    src_row[0..len_to_copy].copy_from_slice(&row[0..len_to_copy]);
+                }
+            }
+            Intra_4x4_SamplePredMode::Horizontal_Up => {
+                info!("4x4 mode: {blk_idx}: {mode}")
+            }
+        }
+    }
 }
 
 pub fn render_luma_16x16_intra_prediction(

@@ -193,11 +193,9 @@ impl Decoder {
                         qp = (qp + imb.mb_qp_delta).clamp(0, 51);
                         let qp = qp.try_into().unwrap();
                         if let Some(residual) = imb.residual.as_ref() {
-                            let blocks = residual.restore(ColorPlane::Y, qp);
                             info!(
-                                "MB {mb_addr} {qp} {:?} {:?}",
-                                residual.prediction_mode,
-                                blocks.len()
+                                "MB {mb_addr} {qp} {:?}",
+                                residual.prediction_mode
                             );
 
                             let y_plane = &mut frame.planes[0];
@@ -224,6 +222,7 @@ impl Decoder {
                                 MbPredictionMode::Pred_L1 => todo!(),
                             }
 
+                            let blocks = residual.restore(ColorPlane::Y, qp);
                             for (blk_idx, blk) in blocks.iter().enumerate() {
                                 let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
                                 blk_loc.x += mb_loc.x;
@@ -232,9 +231,9 @@ impl Decoder {
                                 let mut plane_slice =
                                     y_plane.mut_slice(point_to_plain_offset(blk_loc));
                                 info!("  blk:{blk_idx} {blk_loc:?} {:?} ", blk.samples);
-                                for (idx, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
-                                    for i in 0..4 {
-                                        row[i] = (row[i] as i32 + blk.samples[idx][i])
+                                for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+                                    for (x, pixel) in row.iter_mut().take(4).enumerate() {
+                                        *pixel = (*pixel as i32 + blk.samples[y][x])
                                             .abs()
                                             .clamp(0, 255)
                                             as u8;
@@ -333,11 +332,13 @@ pub fn render_luma_4x4_intra_prediction(
         ctx.load(target, blk_loc);
 
         let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
+        info!(" >{blk_idx}: {mode}");
         match mode {
             Intra_4x4_SamplePredMode::Vertical => {
                 // Section 8.3.1.2.1 Specification of Intra_4x4_Vertical prediction mode
                 let mut target_slice = target.mut_slice(ctx.offset);
                 let src = ctx.top4();
+                info!("   >Ver src: {src:?}");
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].copy_from_slice(src);
                 }
@@ -346,6 +347,7 @@ pub fn render_luma_4x4_intra_prediction(
                 // Section 8.3.1.2.2 Specification of Intra_4x4_Horizontal prediction mode
                 let mut target_slice = target.mut_slice(ctx.offset);
                 let src = ctx.left4();
+                info!("   >Hor src: {src:?}");
                 for (idx, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     row[0..4].fill(src[idx]);
                 }
@@ -379,6 +381,7 @@ pub fn render_luma_4x4_intra_prediction(
                     sum = 1 << 7;
                 }
 
+                info!("   >DC sum: {sum}");
                 let mut target_slice = target.mut_slice(offset);
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].fill(sum as u8);
@@ -503,6 +506,7 @@ pub fn render_luma_16x16_intra_prediction(
     let x = loc.x as usize;
     let y = loc.y as usize;
     let offset = point_to_plain_offset(loc);
+    info!(" >{mode:?}");
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
@@ -557,33 +561,33 @@ pub fn render_luma_16x16_intra_prediction(
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Plane => {
             // Section 8.3.3.4 Specification of Intra_16x16_Plane prediction mode
-            let mut buf = [0; 17];
-            buf.copy_from_slice(&target.row(y as isize - 1)[(x - 1)..(x + 16)]);
-            let mut h = 0i32;
-            let mut a: i32;
-            for i in 0..8 {
-                h += (i as i32 + 1) * (buf[i + 9] as i32 - buf[7 - i] as i32);
+            let slice = target.slice(PlaneOffset { x: offset.x - 1, y: offset.y - 1 });
+            let mut top = [0; 17];
+            top.copy_from_slice(&slice[0][0..17]);
+            let mut left = [0; 17];
+            for (idx, row) in slice.rows_iter().take(17).enumerate() {
+                left[idx] = row[0];
             }
-            a = buf[16] as i32;
+
+            let mut h = 0i32;
+            for x in 0..8 {
+                h += (x as i32 + 1) * (top[1 + x + 8] as i32 - top[1 + 6 - x] as i32);
+            }
 
             let mut v = 0i32;
-            let target_slice = target.slice(PlaneOffset { x: offset.x - 1, y: offset.y - 1 });
-            for (idx, row) in target_slice.rows_iter().take(17).enumerate() {
-                buf[idx] = row[0];
+            for y in 0..8 {
+                v += (y as i32 + 1) * (left[1 + y + 8] as i32 - left[1 + 6 - y] as i32);
             }
-            for i in 0..8 {
-                v += (i as i32 + 1) * (buf[i + 9] as i32 - buf[7 - i] as i32);
-            }
-            a += buf[16] as i32;
-            a *= 16;
-
+            let a = (top[16] as i32 + left[16] as i32) * 16;
             let b = (5 * h + 32) >> 6;
             let c = (5 * v + 32) >> 6;
 
             let mut target_slice = target.mut_slice(offset);
             for (y, row) in target_slice.rows_iter_mut().take(16).enumerate() {
-                for (y, pixel) in row.iter_mut().enumerate() {
-                    let value = (a + b * (x as i32 - 7) + c * (y as i32 - 7) + 16) >> 5;
+                for (x, pixel) in row.iter_mut().take(16).enumerate() {
+                    let x = x as i32;
+                    let y = y as i32;
+                    let value = (a + b * (x - 7) + c * (y - 7) + 16) >> 5;
                     *pixel = value.clamp(0, 255) as u8;
                 }
             }

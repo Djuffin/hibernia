@@ -725,7 +725,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
                         } else {
                             *mode = ((rem_intra4x4_pred_mode as u32) + 1)
                                 .try_into()
-                                .map_err(|e| format!("rem_intra4x4_pred_mode is too large"))?;
+                                .map_err(|e| "rem_intra4x4_pred_mode is too large".to_string())?;
                         }
                     }
                     trace!("  blk:{blk_idx} prev: {prev_pred_mode} actual: {}", *mode);
@@ -898,7 +898,7 @@ mod tests {
             }
             assert!(block.residual.is_some());
         } else {
-            assert!(false, "Should be I-block")
+            unreachable!("Should be I-block");
         }
         assert!(input.remaining() < 8);
     }

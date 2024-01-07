@@ -1,4 +1,4 @@
-use std::cmp::{max, min};
+use std::cmp::{max, min, Ordering};
 use std::io::Read;
 
 use crate::h264::slice::SliceType;
@@ -202,7 +202,7 @@ impl Decoder {
                                 MbPredictionMode::None => panic!("impossible pred mode"),
                                 MbPredictionMode::Intra_4x4 => {
                                     render_luma_4x4_intra_prediction(
-                                        &slice, mb_addr, &imb, mb_loc, y_plane, &residuals,
+                                        slice, mb_addr, imb, mb_loc, y_plane, &residuals,
                                     );
                                 }
                                 MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
@@ -293,7 +293,7 @@ pub fn render_luma_4x4_intra_prediction(
 ) {
     #[inline]
     fn weighted_avg(double: u8, single_a: u8, single_b: u8) -> u8 {
-        (2 * (double as u16) + (single_a as u16) + (single_b as u16) + 2 >> 2) as u8
+        ((2 * (double as u16) + (single_a as u16) + (single_b as u16) + 2) >> 2) as u8
     }
 
     #[inline]
@@ -332,8 +332,7 @@ pub fn render_luma_4x4_intra_prediction(
             Intra_4x4_SamplePredMode::DC => {
                 // Section 8.3.1.2.3 Specification of Intra_4x4_DC prediction mode
                 // Calculate the sum of all the values at the left of the current macroblock
-                let same_mb =
-                    get_4x4luma_block_neighbor(blk_idx as u8, MbNeighborName::A).1.is_none();
+                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
                 let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
                     Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
                 } else {
@@ -341,8 +340,7 @@ pub fn render_luma_4x4_intra_prediction(
                 };
 
                 // Calculate the sum of all the values at the top of the current macroblock
-                let same_mb =
-                    get_4x4luma_block_neighbor(blk_idx as u8, MbNeighborName::B).1.is_none();
+                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
                 let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
                     Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
                 } else {
@@ -383,14 +381,16 @@ pub fn render_luma_4x4_intra_prediction(
                 let left = &ctx.left_column;
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
-                        *value = if x > y {
-                            let i = 1 + x - y;
-                            weighted_avg(top[i - 1], top[i - 2], top[i])
-                        } else if y < x {
-                            let i = 1 + y - x;
-                            weighted_avg(left[i - 1], left[i - 2], left[i])
-                        } else {
-                            weighted_avg(top[0], top[1], left[1])
+                        *value = match x.cmp(&y) {
+                            Ordering::Greater => {
+                                let i = 1 + x - y;
+                                weighted_avg(top[i - 1], top[i - 2], top[i])
+                            }
+                            Ordering::Less => {
+                                let i = 1 + y - x;
+                                weighted_avg(left[i - 1], left[i - 2], left[i])
+                            }
+                            Ordering::Equal => weighted_avg(top[0], top[1], left[1]),
                         }
                     }
                 }

@@ -275,7 +275,7 @@ impl Surroundings4x4 {
             let range = offset.y as usize..(offset.y as usize + 9);
             self.top_row.copy_from_slice(&plane.row(offset.y)[range]);
         } else {
-            self.top_row.fill(0)
+            self.top_row.fill(0);
         }
 
         self.left_column[0] = self.top_row[0];
@@ -400,10 +400,44 @@ pub fn render_luma_4x4_intra_prediction(
                 }
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Right => {
-                info!("4x4 mode: {blk_idx}: {mode}")
+                // Section 8.3.1.2.5 Specification of Intra_4x4_Diagonal_Down_Right prediction mode
+                let mut target_slice = target.mut_slice(ctx.offset);
+                let top = &ctx.top_row;
+                let left = &ctx.left_column;
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        *value = if x > y {
+                            let i = 1 + x - y;
+                            weighted_avg(top[i - 1], top[i - 2], top[i])
+                        } else if y < x {
+                            let i = 1 + y - x;
+                            weighted_avg(left[i - 1], left[i - 2], left[i])
+                        } else {
+                            weighted_avg(top[0], top[1], left[1])
+                        }
+                    }
+                }
             }
             Intra_4x4_SamplePredMode::Vertical_Right => {
-                info!("4x4 mode: {blk_idx}: {mode}")
+                // Section 8.3.1.2.6 Specification of Intra_4x4_Vertical_Right prediction mode
+                let mut target_slice = target.mut_slice(ctx.offset);
+                let left = &ctx.left_column;
+                let top = &ctx.top_row;
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        let z = 2 * (x as isize) - (y as isize);
+                        let i = 1 + x - (y >> 1);
+                        *value = match z {
+                            0 | 2 | 4 | 6 => avg(top[i], top[i - 1]),
+                            1 | 3 | 5 => weighted_avg(top[i - 1], top[i - 2], top[i]),
+                            -1 => weighted_avg(top[0], top[1], left[1]),
+                            _ => {
+                                let y = y + 1;
+                                weighted_avg(left[y - 2], left[y - 1], left[y - 3])
+                            }
+                        };
+                    }
+                }
             }
             Intra_4x4_SamplePredMode::Horizontal_Down => {
                 // Section 8.3.1.2.7 Specification of Intra_4x4_Horizontal_Down prediction mode

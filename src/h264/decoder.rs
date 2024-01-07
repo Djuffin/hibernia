@@ -10,7 +10,7 @@ use super::macroblock::{
     Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
     MbPredictionMode,
 };
-use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4};
+use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4, Block4x4};
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
@@ -193,19 +193,16 @@ impl Decoder {
                         qp = (qp + imb.mb_qp_delta).clamp(0, 51);
                         let qp = qp.try_into().unwrap();
                         if let Some(residual) = imb.residual.as_ref() {
-                            info!(
-                                "MB {mb_addr} {qp} {:?}",
-                                residual.prediction_mode
-                            );
+                            info!("MB {mb_addr} {qp} {:?}", residual.prediction_mode);
 
                             let y_plane = &mut frame.planes[0];
-
+                            let residuals = residual.restore(ColorPlane::Y, qp);
                             let mode = imb.MbPartPredMode(0);
                             match mode {
                                 MbPredictionMode::None => panic!("impossible pred mode"),
                                 MbPredictionMode::Intra_4x4 => {
                                     render_luma_4x4_intra_prediction(
-                                        &slice, mb_addr, &imb, mb_loc, y_plane,
+                                        &slice, mb_addr, &imb, mb_loc, y_plane, &residuals,
                                     );
                                 }
                                 MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
@@ -216,29 +213,11 @@ impl Decoder {
                                         mb_loc,
                                         y_plane,
                                         mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
+                                        &residuals,
                                     );
                                 }
                                 MbPredictionMode::Pred_L0 => todo!(),
                                 MbPredictionMode::Pred_L1 => todo!(),
-                            }
-
-                            let blocks = residual.restore(ColorPlane::Y, qp);
-                            for (blk_idx, blk) in blocks.iter().enumerate() {
-                                let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
-                                blk_loc.x += mb_loc.x;
-                                blk_loc.y += mb_loc.y;
-
-                                let mut plane_slice =
-                                    y_plane.mut_slice(point_to_plain_offset(blk_loc));
-                                info!("  blk:{blk_idx} {blk_loc:?} {:?} ", blk.samples);
-                                for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
-                                    for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                                        *pixel = (*pixel as i32 + blk.samples[y][x])
-                                            .abs()
-                                            .clamp(0, 255)
-                                            as u8;
-                                    }
-                                }
                             }
                         }
                     }
@@ -269,19 +248,18 @@ impl Surroundings4x4 {
         let mut offset = point_to_plain_offset(blk_loc);
         offset.x -= 1;
         offset.y -= 1;
+        let mut target_slice = plane.slice(offset);
 
         if offset.y > 0 {
-            let range = offset.y as usize..(offset.y as usize + 9);
-            self.top_row.copy_from_slice(&plane.row(offset.y)[range]);
+            self.top_row.copy_from_slice(&target_slice[0][0..9]);
         } else {
             self.top_row.fill(0);
         }
 
         self.left_column[0] = self.top_row[0];
         offset.y += 1;
-
+        target_slice = plane.slice(offset);
         if offset.x > 0 {
-            let target_slice = plane.slice(offset);
             for (idx, v) in target_slice.rows_iter().take(4).enumerate() {
                 self.left_column[idx + 1] = v[0];
             }
@@ -311,6 +289,7 @@ pub fn render_luma_4x4_intra_prediction(
     mb: &IMb,
     mb_loc: Point,
     target: &mut Plane,
+    residuals: &[Block4x4],
 ) {
     #[inline]
     fn weighted_avg(double: u8, single_a: u8, single_b: u8) -> u8 {
@@ -323,20 +302,19 @@ pub fn render_luma_4x4_intra_prediction(
     }
 
     let mut ctx = Surroundings4x4::default();
-    for blk_idx in 0..16u8 {
-        let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
+    assert_eq!(residuals.len(), 16);
+    for blk_idx in 0..16 {
+        let mut blk_loc = get_4x4luma_block_location(blk_idx);
         blk_loc.x += mb_loc.x;
         blk_loc.y += mb_loc.y;
-        let x = blk_loc.x as usize;
-        let y = blk_loc.y as usize;
         ctx.load(target, blk_loc);
+        let mut target_slice = target.mut_slice(ctx.offset);
 
         let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
         info!(" >{blk_idx}: {mode}");
         match mode {
             Intra_4x4_SamplePredMode::Vertical => {
                 // Section 8.3.1.2.1 Specification of Intra_4x4_Vertical prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let src = ctx.top4();
                 info!("   >Ver src: {src:?}");
                 for row in target_slice.rows_iter_mut().take(4) {
@@ -345,7 +323,6 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Horizontal => {
                 // Section 8.3.1.2.2 Specification of Intra_4x4_Horizontal prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let src = ctx.left4();
                 info!("   >Hor src: {src:?}");
                 for (idx, row) in target_slice.rows_iter_mut().take(4).enumerate() {
@@ -354,10 +331,9 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::DC => {
                 // Section 8.3.1.2.3 Specification of Intra_4x4_DC prediction mode
-                let offset = point_to_plain_offset(blk_loc);
-
                 // Calculate the sum of all the values at the left of the current macroblock
-                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
+                let same_mb =
+                    get_4x4luma_block_neighbor(blk_idx as u8, MbNeighborName::A).1.is_none();
                 let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
                     Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
                 } else {
@@ -365,7 +341,8 @@ pub fn render_luma_4x4_intra_prediction(
                 };
 
                 // Calculate the sum of all the values at the top of the current macroblock
-                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
+                let same_mb =
+                    get_4x4luma_block_neighbor(blk_idx as u8, MbNeighborName::B).1.is_none();
                 let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
                     Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
                 } else {
@@ -382,14 +359,12 @@ pub fn render_luma_4x4_intra_prediction(
                 }
 
                 info!("   >DC sum: {sum}");
-                let mut target_slice = target.mut_slice(offset);
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].fill(sum as u8);
                 }
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Left => {
                 // Section 8.3.1.2.4 Specification of Intra_4x4_Diagonal_Down_Left prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let top_row = &ctx.top_row[1..];
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
@@ -404,7 +379,6 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Right => {
                 // Section 8.3.1.2.5 Specification of Intra_4x4_Diagonal_Down_Right prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let top = &ctx.top_row;
                 let left = &ctx.left_column;
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
@@ -423,7 +397,6 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Vertical_Right => {
                 // Section 8.3.1.2.6 Specification of Intra_4x4_Vertical_Right prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let left = &ctx.left_column;
                 let top = &ctx.top_row;
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
@@ -444,7 +417,6 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Horizontal_Down => {
                 // Section 8.3.1.2.7 Specification of Intra_4x4_Horizontal_Down prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let left = &ctx.left_column;
                 let top = &ctx.top_row;
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
@@ -462,7 +434,6 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Vertical_Left => {
                 // Section 8.3.1.2.8 Specification of Intra_4x4_Vertical_Left prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let top_row = &ctx.top_row[1..];
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
@@ -477,7 +448,6 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Horizontal_Up => {
                 // Section 8.3.1.2.9 Specification of Intra_4x4_Horizontal_Up prediction mode
-                let mut target_slice = target.mut_slice(ctx.offset);
                 let left = ctx.left4();
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
@@ -493,6 +463,13 @@ pub fn render_luma_4x4_intra_prediction(
                 }
             }
         }
+
+        let residual = &residuals[blk_idx as usize];
+        for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+            for (x, pixel) in row.iter_mut().take(4).enumerate() {
+                *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
+            }
+        }
     }
 }
 
@@ -502,6 +479,7 @@ pub fn render_luma_16x16_intra_prediction(
     loc: Point,
     target: &mut Plane,
     mode: Intra_16x16_SamplePredMode,
+    residuals: &[Block4x4],
 ) {
     let x = loc.x as usize;
     let y = loc.y as usize;
@@ -512,7 +490,7 @@ pub fn render_luma_16x16_intra_prediction(
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
             let mut src_row = [0; 16];
             src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 16)]);
-            let mut target_slice = target.mut_slice(point_to_plain_offset(loc));
+            let mut target_slice = target.mut_slice(offset);
             for row in target_slice.rows_iter_mut().take(16) {
                 row[0..16].copy_from_slice(&src_row);
             }
@@ -527,9 +505,6 @@ pub fn render_luma_16x16_intra_prediction(
         }
         Intra_16x16_SamplePredMode::Intra_16x16_DC => {
             // Section 8.3.3.3 Specification of Intra_16x16_DC prediction mode
-            let offset = point_to_plain_offset(loc);
-
-            // Calculate the sum of all the values at the left of the current macroblock
             let sum_a = if slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
                 let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
                 Some(target_slice.rows_iter().take(16).map(|r| r[0] as u32).sum::<u32>())
@@ -590,6 +565,19 @@ pub fn render_luma_16x16_intra_prediction(
                     let value = (a + b * (x - 7) + c * (y - 7) + 16) >> 5;
                     *pixel = value.clamp(0, 255) as u8;
                 }
+            }
+        }
+    }
+
+    for (blk_idx, blk) in residuals.iter().enumerate() {
+        let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
+        blk_loc.x += loc.x;
+        blk_loc.y += loc.y;
+
+        let mut plane_slice = target.mut_slice(point_to_plain_offset(blk_loc));
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            for (x, pixel) in row.iter_mut().take(4).enumerate() {
+                *pixel = (*pixel as i32 + blk.samples[y][x]).abs().clamp(0, 255) as u8;
             }
         }
     }

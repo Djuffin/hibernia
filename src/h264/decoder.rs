@@ -244,14 +244,22 @@ struct Surroundings4x4 {
 }
 
 impl Surroundings4x4 {
-    pub fn load(&mut self, plane: &Plane, blk_loc: Point) {
+    pub fn load(&mut self, plane: &Plane, blk_loc: Point, substitute_right: bool) {
         let mut offset = point_to_plain_offset(blk_loc);
         offset.x -= 1;
         offset.y -= 1;
         let mut target_slice = plane.slice(offset);
 
         if offset.y > 0 {
-            self.top_row.copy_from_slice(&target_slice[0][0..9]);
+            if substitute_right {
+                // Section 8.3.1.2 Intra_4x4 sample prediction
+                // When samples p[ x, −1 ], with x = 4..7, are marked as "not available" ...
+                self.top_row[0..5].copy_from_slice(&target_slice[0][0..5]);
+                let filler = self.top_row[4];
+                self.top_row[5..9].fill(filler);
+            } else {
+                self.top_row.copy_from_slice(&target_slice[0][0..9]);
+            }
         } else {
             self.top_row.fill(0);
         }
@@ -307,7 +315,8 @@ pub fn render_luma_4x4_intra_prediction(
         let mut blk_loc = get_4x4luma_block_location(blk_idx);
         blk_loc.x += mb_loc.x;
         blk_loc.y += mb_loc.y;
-        ctx.load(target, blk_loc);
+        let substitute_right = matches!(blk_idx, 3 | 7 | 11 | 13 | 15);
+        ctx.load(target, blk_loc, substitute_right);
         let mut target_slice = target.mut_slice(ctx.offset);
 
         let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
@@ -356,7 +365,6 @@ pub fn render_luma_4x4_intra_prediction(
                     sum = 1 << 7;
                 }
 
-                info!("   >DC sum: {sum}");
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].fill(sum as u8);
                 }
@@ -367,10 +375,10 @@ pub fn render_luma_4x4_intra_prediction(
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
                         let i = x + y;
-                        *value = if i < 6 {
-                            weighted_avg(top_row[i + 1], top_row[i], top_row[i + 2])
-                        } else {
+                        *value = if i == 6 {
                             weighted_avg(top_row[7], top_row[7], top_row[6])
+                        } else {
+                            weighted_avg(top_row[i + 1], top_row[i], top_row[i + 2])
                         };
                     }
                 }
@@ -470,6 +478,15 @@ pub fn render_luma_4x4_intra_prediction(
                 *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
             }
         }
+
+        // if blk_idx == 0 {
+        //     // Show macroblock corners
+        //     target_slice[0][0] = 0;
+        //     target_slice[1][0] = 0;
+        //     target_slice[2][0] = 0;
+        //     target_slice[0][1] = 0;
+        //     target_slice[0][2] = 0;
+        // }
     }
 }
 

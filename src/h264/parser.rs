@@ -775,6 +775,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     }
     assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
+    assert!(!slice.sps.seq_scaling_matrix_present_flag, "scaling list is not implemented yet");
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
     assert!(slice.pps.slice_group.is_none(), "slice groups not implemented yet");
     assert!(!slice.pps.constrained_intra_pred_flag);

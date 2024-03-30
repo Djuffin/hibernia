@@ -206,13 +206,8 @@ const fn norm_adjust_4x4(m: u8, idx: usize) -> u8 {
 // Section 8.5.9 Derivation process for scaling functions
 #[inline]
 pub const fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
-    let scaling_list = if is_inter {
-        tables::DEFAULT_SCALING_LIST_4X4_INTER
-    } else {
-        tables::DEFAULT_SCALING_LIST_4X4_INTRA
-    };
-
-    (scaling_list[idx] as i32) * (norm_adjust_4x4(m, idx) as i32)
+    let scaling_list = 16;
+    scaling_list * (norm_adjust_4x4(m, idx) as i32)
 }
 
 // Section 8.5.12.1 Scaling process for residual 4x4 blocks
@@ -390,9 +385,9 @@ mod tests {
     }
 
     #[test]
-    pub fn test_transform_4x4() {
-        let coefficients = [[10, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
-        let qp = 1;
+    pub fn test_transform_4x4_ex3() {
+        let coefficients = [[12, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+        let qp = 30;
         let mut block = [0i32; 16];
         for i in 0..3 {
             for j in 0..3 {
@@ -402,11 +397,10 @@ mod tests {
 
         level_scale_4x4_block(&mut block, false, false, qp);
         let output = transform_4x4(&unzip_block_4x4(&block));
-        for row in output.samples {
-            for col in row {
-                assert_eq!(col, 1);
-            }
-        }
+        assert_eq!(
+            output.samples,
+            [[60, 60, 60, 60], [60, 60, 60, 60], [60, 60, 60, 60], [60, 60, 60, 60]]
+        );
     }
 
     #[test]

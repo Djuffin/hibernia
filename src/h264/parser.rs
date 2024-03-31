@@ -1,5 +1,7 @@
 #![macro_use]
 
+use crate::h264::slice::DeblockingFilterIdc;
+
 use super::decoder;
 use super::macroblock;
 use super::nal;
@@ -543,8 +545,8 @@ pub fn parse_slice_header(
 
     read_value!(input, header.slice_qp_delta, se);
     if pps.deblocking_filter_control_present_flag {
-        read_value!(input, header.disable_deblocking_filter_idc, ue, 8);
-        if header.disable_deblocking_filter_idc != 1 {
+        read_value!(input, header.deblocking_filter_idc, ue, 8);
+        if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
             let slice_alpha_c0_offset_div2: i32;
             let slice_beta_offset_div2: i32;
             read_value!(input, slice_alpha_c0_offset_div2, se);
@@ -885,7 +887,7 @@ mod tests {
         assert_eq!(header.idr_pic_id, Some(1));
         assert_eq!(header.pic_order_cnt_lsb, Some(0));
         assert_eq!(header.slice_qp_delta, -4);
-        assert_eq!(header.disable_deblocking_filter_idc, 0);
+        assert_eq!(header.deblocking_filter_idc, DeblockingFilterIdc::On);
 
         parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
         assert_eq!(slice.get_macroblock_count(), 16);

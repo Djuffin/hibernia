@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use std::{fmt, result};
+use std::{default, fmt, result};
+
+use num_traits::FromPrimitive;
 
 use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborName};
 use super::pps::PicParameterSet;
@@ -27,6 +29,21 @@ impl TryFrom<u32> for SliceType {
             4 | 9 => Ok(SliceType::SI),
             _ => Err("Unknown slice type."),
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
+pub enum DeblockingFilterIdc {
+    #[default]
+    On = 0,
+    Off = 1,
+    OnExceptSliceBounds = 2,
+}
+
+impl TryFrom<u32> for DeblockingFilterIdc {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or("Unknown deblocking filter profile idc.")
     }
 }
 
@@ -59,7 +76,7 @@ pub struct SliceHeader {
     pub slice_qp_delta: i32,
     pub sp_for_switch_flag: Option<bool>,
     pub slice_qs: Option<u32>,
-    pub disable_deblocking_filter_idc: u8,
+    pub deblocking_filter_idc: DeblockingFilterIdc,
 }
 
 #[derive(Clone)]

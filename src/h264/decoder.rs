@@ -129,7 +129,6 @@ impl Decoder {
                 NalUnitType::SeqParameterSet => {
                     let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
                     info!("SPS: {:#?}", sps);
-                    info!("Data {:?}", nal_buffer);
                     assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
                     let frame = VideoFrame::new_with_padding(
                         sps.pic_width(),
@@ -143,7 +142,6 @@ impl Decoder {
                 NalUnitType::PicParameterSet => {
                     let pps = parser::parse_pps(&mut unit_input).map_err(parse_error_handler)?;
                     info!("PPS: {:#?}", pps);
-                    info!("Data {:?}", nal_buffer);
                     self.context.put_pps(pps);
                 }
                 NalUnitType::AccessUnitDelimiter => {}
@@ -192,33 +190,35 @@ impl Decoder {
                     Macroblock::I(imb) => {
                         qp = (qp + imb.mb_qp_delta).clamp(0, 51);
                         let qp = qp.try_into().unwrap();
-                        if let Some(residual) = imb.residual.as_ref() {
-                            info!("MB {mb_addr} {qp} {:?}", residual.prediction_mode);
+                        let residuals = if let Some(residual) = imb.residual.as_ref() {
+                            residual.restore(ColorPlane::Y, qp)
+                        } else {
+                            Vec::new()
+                        };
 
-                            let y_plane = &mut frame.planes[0];
-                            let residuals = residual.restore(ColorPlane::Y, qp);
-                            let mode = imb.MbPartPredMode(0);
-                            match mode {
-                                MbPredictionMode::None => panic!("impossible pred mode"),
-                                MbPredictionMode::Intra_4x4 => {
-                                    render_luma_4x4_intra_prediction(
-                                        slice, mb_addr, imb, mb_loc, y_plane, &residuals,
-                                    );
-                                }
-                                MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
-                                MbPredictionMode::Intra_16x16 => {
-                                    render_luma_16x16_intra_prediction(
-                                        slice,
-                                        mb_addr,
-                                        mb_loc,
-                                        y_plane,
-                                        mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
-                                        &residuals,
-                                    );
-                                }
-                                MbPredictionMode::Pred_L0 => todo!(),
-                                MbPredictionMode::Pred_L1 => todo!(),
+                        let y_plane = &mut frame.planes[0];
+                        let mode = imb.MbPartPredMode(0);
+                        info!("MB {mb_addr} {qp} {:?}", mode);
+                        match mode {
+                            MbPredictionMode::None => panic!("impossible pred mode"),
+                            MbPredictionMode::Intra_4x4 => {
+                                render_luma_4x4_intra_prediction(
+                                    slice, mb_addr, imb, mb_loc, y_plane, &residuals,
+                                );
                             }
+                            MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
+                            MbPredictionMode::Intra_16x16 => {
+                                render_luma_16x16_intra_prediction(
+                                    slice,
+                                    mb_addr,
+                                    mb_loc,
+                                    y_plane,
+                                    mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
+                                    &residuals,
+                                );
+                            }
+                            MbPredictionMode::Pred_L0 => todo!(),
+                            MbPredictionMode::Pred_L1 => todo!(),
                         }
                     }
                     Macroblock::P(block) => {
@@ -310,7 +310,6 @@ pub fn render_luma_4x4_intra_prediction(
     }
 
     let mut ctx = Surroundings4x4::default();
-    assert_eq!(residuals.len(), 16);
     for blk_idx in 0..16 {
         let mut blk_loc = get_4x4luma_block_location(blk_idx);
         blk_loc.x += mb_loc.x;
@@ -325,7 +324,6 @@ pub fn render_luma_4x4_intra_prediction(
             Intra_4x4_SamplePredMode::Vertical => {
                 // Section 8.3.1.2.1 Specification of Intra_4x4_Vertical prediction mode
                 let src = ctx.top4();
-                info!("   >Ver src: {src:?}");
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].copy_from_slice(src);
                 }
@@ -333,7 +331,6 @@ pub fn render_luma_4x4_intra_prediction(
             Intra_4x4_SamplePredMode::Horizontal => {
                 // Section 8.3.1.2.2 Specification of Intra_4x4_Horizontal prediction mode
                 let src = ctx.left4();
-                info!("   >Hor src: {src:?}");
                 for (idx, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     row[0..4].fill(src[idx]);
                 }
@@ -472,10 +469,11 @@ pub fn render_luma_4x4_intra_prediction(
             }
         }
 
-        let residual = &residuals[blk_idx as usize];
-        for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-            for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
+        if let Some(residual) = residuals.get(blk_idx as usize) {
+            for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                for (x, pixel) in row.iter_mut().take(4).enumerate() {
+                    *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
+                }
             }
         }
 

@@ -30,15 +30,25 @@ fn main() {
 
         let w = y_plane.cfg.width as u32;
         let h = y_plane.cfg.height as u32;
-        let data_size = (w * h) as usize;
 
-        info!("Writing frame {w} x {h} to png");
-        let mut writer = io::BufWriter::new(fs::File::create("output.png").unwrap());
-        let mut encoder = png::Encoder::new(&mut writer, w, h);
-        encoder.set_color(png::ColorType::Grayscale);
-        let mut pixel_writer = encoder.write_header().unwrap();
-        let mut data = vec![0; data_size];
-        y_plane.copy_to_raw_u8(&mut data, w as usize, 1);
-        pixel_writer.write_image_data(&data).unwrap();
+        info!("Writing frame {w} x {h} to y4m");
+        let mut writer = io::BufWriter::new(fs::File::create("output.y4m").unwrap());
+        let mut encoder = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 1, den: 1 })
+            .with_colorspace(y4m::Colorspace::C420)
+            .write_header(&mut writer)
+            .unwrap();
+        let mut planes = Vec::<Vec<u8>>::new();
+        for plane in &frame.planes {
+            let data_size = (plane.cfg.width * plane.cfg.height) as usize;
+            let mut data = vec![0; data_size];
+            plane.copy_to_raw_u8(&mut data, plane.cfg.width as usize, 1);
+            planes.push(data)
+        }
+
+        let yuv_frame = y4m::Frame::new(
+            [planes[0].as_slice(), planes[1].as_slice(), planes[2].as_slice()],
+            None,
+        );
+        encoder.write_frame(&yuv_frame).unwrap();
     }
 }

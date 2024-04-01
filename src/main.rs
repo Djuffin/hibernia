@@ -33,7 +33,7 @@ fn main() {
 
         info!("Writing frame {w} x {h} to y4m");
         let mut writer = io::BufWriter::new(fs::File::create("output.y4m").unwrap());
-        let mut encoder = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 1, den: 1 })
+        let mut encoder = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
             .with_colorspace(y4m::Colorspace::C420)
             .write_header(&mut writer)
             .unwrap();

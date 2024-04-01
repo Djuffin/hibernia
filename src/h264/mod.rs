@@ -79,9 +79,9 @@ impl ChromaFormat {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ColorPlane {
-    Y,
-    Cb,
-    Cr,
+    Y = 0,
+    Cb = 1,
+    Cr = 2,
 }
 
 impl ColorPlane {

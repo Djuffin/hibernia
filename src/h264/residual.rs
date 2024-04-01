@@ -139,8 +139,37 @@ impl Residual {
                     }
                 }
             }
-            ColorPlane::Cb => todo!(),
-            ColorPlane::Cr => todo!(),
+            _ => {
+                let mut dcs = match plane {
+                    ColorPlane::Cb => self.chroma_cb_dc_level,
+                    ColorPlane::Cr => self.chroma_cr_dc_level,
+                    _ => unreachable!(),
+                };
+                dc_scale_4x4_block(&mut dcs, qp);
+                let mut dcs_block = unscan_block_4x4(&dcs);
+                dcs_block = transform_dc(&dcs_block);
+
+                for blk_idx in 0..4 {
+                    let acs = match plane {
+                        ColorPlane::Cb => &self.chroma_cb_ac_level[blk_idx],
+                        ColorPlane::Cr => &self.chroma_cr_ac_level[blk_idx],
+                        _ => unreachable!(),
+                    };
+                    let mut idct_coefficients = [0i32; 16];
+                    let (dc_row, dc_column) = un_zig_zag_4x4(blk_idx);
+                    idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
+                    idct_coefficients[1..].copy_from_slice(acs);
+                    level_scale_4x4_block(
+                        &mut idct_coefficients,
+                        self.prediction_mode.is_inter(),
+                        true,
+                        qp,
+                    );
+                    let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
+                    let block = transform_4x4(&idct_4x4_block);
+                    result.push(block);
+                }
+            }
         }
 
         result
@@ -258,7 +287,6 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
 }
 
 pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
-    assert_eq!(block.len(), 16);
     let mut result = Block4x4::default();
     for (idx, value) in block.iter().enumerate() {
         let p = macroblock::get_4x4luma_block_location(idx as u8);

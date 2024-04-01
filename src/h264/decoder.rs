@@ -196,14 +196,17 @@ impl Decoder {
                             Vec::new()
                         };
 
-                        let y_plane = &mut frame.planes[0];
-                        let mode = imb.MbPartPredMode(0);
-                        info!("MB {mb_addr} {qp} {:?}", mode);
-                        match mode {
+                        let luma_plane = &mut frame.planes[0];
+                        let luma_prediction_mode = imb.MbPartPredMode(0);
+                        info!(
+                            "MB {mb_addr} {qp} Luma: {:?} Chrome: {:?}",
+                            luma_prediction_mode, imb.intra_chroma_pred_mode
+                        );
+                        match luma_prediction_mode {
                             MbPredictionMode::None => panic!("impossible pred mode"),
                             MbPredictionMode::Intra_4x4 => {
                                 render_luma_4x4_intra_prediction(
-                                    slice, mb_addr, imb, mb_loc, y_plane, &residuals,
+                                    slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
                                 );
                             }
                             MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
@@ -212,13 +215,30 @@ impl Decoder {
                                     slice,
                                     mb_addr,
                                     mb_loc,
-                                    y_plane,
+                                    luma_plane,
                                     mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
                                     &residuals,
                                 );
                             }
                             MbPredictionMode::Pred_L0 => todo!(),
                             MbPredictionMode::Pred_L1 => todo!(),
+                        }
+
+                        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
+                            let chroma_plane = &mut frame.planes[plane_name as usize];
+                            let residuals = if let Some(residual) = imb.residual.as_ref() {
+                                residual.restore(plane_name, qp)
+                            } else {
+                                Vec::new()
+                            };
+                            render_chroma_intra_prediction(
+                                slice,
+                                mb_addr,
+                                mb_loc,
+                                chroma_plane,
+                                imb.intra_chroma_pred_mode,
+                                &residuals,
+                            )
                         }
                     }
                     Macroblock::P(block) => {
@@ -476,15 +496,6 @@ pub fn render_luma_4x4_intra_prediction(
                 }
             }
         }
-
-        // if blk_idx == 0 {
-        //     // Show macroblock corners
-        //     target_slice[0][0] = 0;
-        //     target_slice[1][0] = 0;
-        //     target_slice[2][0] = 0;
-        //     target_slice[0][1] = 0;
-        //     target_slice[0][2] = 0;
-        // }
     }
 }
 
@@ -499,7 +510,6 @@ pub fn render_luma_16x16_intra_prediction(
     let x = loc.x as usize;
     let y = loc.y as usize;
     let offset = point_to_plain_offset(loc);
-    info!(" >{mode:?}");
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
@@ -596,4 +606,26 @@ pub fn render_luma_16x16_intra_prediction(
             }
         }
     }
+}
+
+pub fn render_chroma_intra_prediction(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    loc: Point,
+    target: &mut Plane,
+    mode: Intra_Chroma_Pred_Mode,
+    residuals: &[Block4x4],
+) {
+    // Section 8.3.4 Intra prediction process for chroma samples
+    let x = loc.x as usize;
+    let y = loc.y as usize;
+    let offset = point_to_plain_offset(loc);
+    match mode {
+        Intra_Chroma_Pred_Mode::Vertical => {}
+        Intra_Chroma_Pred_Mode::Horizontal => {}
+        Intra_Chroma_Pred_Mode::DC => {}
+        Intra_Chroma_Pred_Mode::Plane => {}
+    }
+
+    for (blk_idx, blk) in residuals.iter().enumerate() {}
 }

@@ -11,6 +11,7 @@ use super::macroblock::{
     MbPredictionMode,
 };
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4, Block4x4};
+use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
@@ -617,12 +618,31 @@ pub fn render_chroma_intra_prediction(
     residuals: &[Block4x4],
 ) {
     // Section 8.3.4 Intra prediction process for chroma samples
+    let chroma_shift = slice.sps.ChromaArrayType().get_chroma_shift();
+    let loc = Point { x: loc.x >> chroma_shift.width, y: loc.y >> chroma_shift.width };
     let x = loc.x as usize;
     let y = loc.y as usize;
+    let mb_width = MB_WIDTH >> chroma_shift.width;
+    let mb_height = MB_HEIGHT >> chroma_shift.height;
     let offset = point_to_plain_offset(loc);
     match mode {
-        Intra_Chroma_Pred_Mode::Vertical => {}
-        Intra_Chroma_Pred_Mode::Horizontal => {}
+        Intra_Chroma_Pred_Mode::Vertical => {
+            // Section 8.3.4.3 Specification of Intra_Chroma_Vertical prediction mode
+            let mut src_row = [0; 16];
+            src_row[0..mb_width].copy_from_slice(&target.row(y as isize - 1)[x..(x + mb_width)]);
+            let mut target_slice = target.mut_slice(offset);
+            for row in target_slice.rows_iter_mut().take(mb_height) {
+                row[0..mb_width].copy_from_slice(&src_row[0..mb_width]);
+            }
+        }
+        Intra_Chroma_Pred_Mode::Horizontal => {
+            // Section 8.3.4.2 Specification of Intra_Chroma_Horizontal prediction mode
+            let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
+            for row in target_slice.rows_iter_mut().take(mb_height) {
+                let src = row[0];
+                row[1..=mb_width].fill(src);
+            }
+        }
         Intra_Chroma_Pred_Mode::DC => {}
         Intra_Chroma_Pred_Mode::Plane => {}
     }

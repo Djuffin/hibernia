@@ -100,65 +100,18 @@ impl Residual {
         let mut result = Vec::new();
         result.reserve(if plane.is_luma() { 16 } else { 4 });
 
-        match plane {
-            ColorPlane::Y => {
-                if self.has_separate_luma_dc() {
-                    let mut dcs = self.dc_level16x16;
-                    dc_scale_4x4_block(&mut dcs, qp);
-                    let mut dcs_block = unscan_block_4x4(&dcs);
-                    dcs_block = transform_dc(&dcs_block);
-
-                    for blk_idx in 0..16 {
-                        let mut idct_coefficients = [0i32; 16];
-                        let (dc_row, dc_column) = un_zig_zag_4x4(blk_idx);
-                        idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
-                        idct_coefficients[1..].copy_from_slice(&self.ac_level16x16[blk_idx]);
-                        level_scale_4x4_block(
-                            &mut idct_coefficients,
-                            self.prediction_mode.is_inter(),
-                            true,
-                            qp,
-                        );
-                        let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
-                        let block = transform_4x4(&idct_4x4_block);
-                        result.push(block);
-                    }
-                } else {
-                    for blk_idx in 0..16 {
-                        let mut idct_coefficients = [0i32; 16];
-                        idct_coefficients.copy_from_slice(&self.luma_level4x4[blk_idx]);
-                        level_scale_4x4_block(
-                            &mut idct_coefficients,
-                            self.prediction_mode.is_inter(),
-                            false,
-                            qp,
-                        );
-                        let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
-                        let block = transform_4x4(&idct_4x4_block);
-                        result.push(block);
-                    }
-                }
-            }
-            _ => {
-                let mut dcs = match plane {
-                    ColorPlane::Cb => self.chroma_cb_dc_level,
-                    ColorPlane::Cr => self.chroma_cr_dc_level,
-                    _ => unreachable!(),
-                };
+        if plane == ColorPlane::Y {
+            if self.has_separate_luma_dc() {
+                let mut dcs = self.dc_level16x16;
                 dc_scale_4x4_block(&mut dcs, qp);
                 let mut dcs_block = unscan_block_4x4(&dcs);
                 dcs_block = transform_dc(&dcs_block);
 
-                for blk_idx in 0..4 {
-                    let acs = match plane {
-                        ColorPlane::Cb => &self.chroma_cb_ac_level[blk_idx],
-                        ColorPlane::Cr => &self.chroma_cr_ac_level[blk_idx],
-                        _ => unreachable!(),
-                    };
+                for blk_idx in 0..16 {
                     let mut idct_coefficients = [0i32; 16];
                     let (dc_row, dc_column) = un_zig_zag_4x4(blk_idx);
                     idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
-                    idct_coefficients[1..].copy_from_slice(acs);
+                    idct_coefficients[1..].copy_from_slice(&self.ac_level16x16[blk_idx]);
                     level_scale_4x4_block(
                         &mut idct_coefficients,
                         self.prediction_mode.is_inter(),
@@ -169,6 +122,50 @@ impl Residual {
                     let block = transform_4x4(&idct_4x4_block);
                     result.push(block);
                 }
+            } else {
+                for blk_idx in 0..16 {
+                    let mut idct_coefficients = [0i32; 16];
+                    idct_coefficients.copy_from_slice(&self.luma_level4x4[blk_idx]);
+                    level_scale_4x4_block(
+                        &mut idct_coefficients,
+                        self.prediction_mode.is_inter(),
+                        false,
+                        qp,
+                    );
+                    let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
+                    let block = transform_4x4(&idct_4x4_block);
+                    result.push(block);
+                }
+            }
+        } else {
+            let mut dcs = match plane {
+                ColorPlane::Cb => self.chroma_cb_dc_level,
+                ColorPlane::Cr => self.chroma_cr_dc_level,
+                _ => unreachable!(),
+            };
+            dc_scale_4x4_block(&mut dcs, qp);
+            let mut dcs_block = unscan_block_4x4(&dcs);
+            dcs_block = transform_dc(&dcs_block);
+
+            for blk_idx in 0..4 {
+                let acs = match plane {
+                    ColorPlane::Cb => &self.chroma_cb_ac_level[blk_idx],
+                    ColorPlane::Cr => &self.chroma_cr_ac_level[blk_idx],
+                    _ => unreachable!(),
+                };
+                let mut idct_coefficients = [0i32; 16];
+                let (dc_row, dc_column) = un_zig_zag_4x4(blk_idx);
+                idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
+                idct_coefficients[1..].copy_from_slice(acs);
+                level_scale_4x4_block(
+                    &mut idct_coefficients,
+                    self.prediction_mode.is_inter(),
+                    true,
+                    qp,
+                );
+                let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
+                let block = transform_4x4(&idct_4x4_block);
+                result.push(block);
             }
         }
 

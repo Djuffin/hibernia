@@ -39,9 +39,9 @@ fn main() {
             .unwrap();
         let mut planes = Vec::<Vec<u8>>::new();
         for plane in &frame.planes {
-            let data_size = (plane.cfg.width * plane.cfg.height) as usize;
+            let data_size = plane.cfg.width * plane.cfg.height;
             let mut data = vec![0; data_size];
-            plane.copy_to_raw_u8(&mut data, plane.cfg.width as usize, 1);
+            plane.copy_to_raw_u8(&mut data, plane.cfg.width, 1);
             planes.push(data)
         }
 

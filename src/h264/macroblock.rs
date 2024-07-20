@@ -101,7 +101,7 @@ pub fn get_4x4luma_block_location(idx: u8) -> Point {
 }
 
 // Section 6.4.7 Inverse 4x4 chroma block scanning process
-fn get_4x4chroma_block_location(idx: u8) -> Point {
+pub fn get_4x4chroma_block_location(idx: u8) -> Point {
     let idx = idx as u32;
     let x = inverse_raster_scan(idx, 4, 4, 8, false);
     let y = inverse_raster_scan(idx, 4, 4, 8, true);
@@ -312,6 +312,12 @@ pub enum Intra_Chroma_Pred_Mode {
     Horizontal = 1,
     Vertical = 2,
     Plane = 3,
+}
+
+impl Display for Intra_Chroma_Pred_Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}({})", self, *self as u32)
+    }
 }
 
 impl TryFrom<u32> for Intra_Chroma_Pred_Mode {

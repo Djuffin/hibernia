@@ -6,9 +6,9 @@ use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
 
 use super::macroblock::{
-    self, get_4x4luma_block_location, get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode,
-    Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
-    MbPredictionMode,
+    self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
+    get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
+    Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName, MbPredictionMode,
 };
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
@@ -620,32 +620,84 @@ pub fn render_chroma_intra_prediction(
     // Section 8.3.4 Intra prediction process for chroma samples
     let chroma_shift = slice.sps.ChromaArrayType().get_chroma_shift();
     let loc = Point { x: loc.x >> chroma_shift.width, y: loc.y >> chroma_shift.width };
-    let x = loc.x as usize;
-    let y = loc.y as usize;
     let mb_width = MB_WIDTH >> chroma_shift.width;
     let mb_height = MB_HEIGHT >> chroma_shift.height;
-    let offset = point_to_plain_offset(loc);
+
     match mode {
         Intra_Chroma_Pred_Mode::Vertical => {
             // Section 8.3.4.3 Specification of Intra_Chroma_Vertical prediction mode
+            let x = loc.x as usize;
+            let y = loc.y as usize;
             let mut src_row = [0; 16];
             src_row[0..mb_width].copy_from_slice(&target.row(y as isize - 1)[x..(x + mb_width)]);
-            let mut target_slice = target.mut_slice(offset);
+            let mut target_slice = target.mut_slice(point_to_plain_offset(loc));
             for row in target_slice.rows_iter_mut().take(mb_height) {
                 row[0..mb_width].copy_from_slice(&src_row[0..mb_width]);
             }
         }
         Intra_Chroma_Pred_Mode::Horizontal => {
             // Section 8.3.4.2 Specification of Intra_Chroma_Horizontal prediction mode
+            let offset = point_to_plain_offset(loc);
             let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
             for row in target_slice.rows_iter_mut().take(mb_height) {
                 let src = row[0];
                 row[1..=mb_width].fill(src);
             }
         }
-        Intra_Chroma_Pred_Mode::DC => {}
+        Intra_Chroma_Pred_Mode::DC => {
+            // Section 8.3.4.1 Specification of Intra_Chroma_DC prediction mode
+            let mut ctx = Surroundings4x4::default();
+            for blk_idx in 0..4 {
+                let mut blk_loc = get_4x4chroma_block_location(blk_idx);
+                blk_loc.x += loc.x;
+                blk_loc.y += loc.y;
+                ctx.load(target, blk_loc, false);
+
+                // Calculate the sum of all the values at the left of the current block
+                let same_mb = get_4x4chroma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
+                let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+                    Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
+                } else {
+                    None
+                };
+
+                // Calculate the sum of all the values at the top of the current block
+                let same_mb = get_4x4chroma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
+                let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                    Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
+                } else {
+                    None
+                };
+
+                let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
+                if sum_a.is_some() && sum_b.is_some() {
+                    sum = (sum + 4) >> 3;
+                } else if sum_a.is_some() != sum_b.is_some() {
+                    sum = (sum + 2) >> 2;
+                } else {
+                    sum = 1 << 7;
+                }
+
+                info!(" >chroma DC  blk: {blk_loc:?} A: {sum_a:?} B: {sum_b:?} sum: {sum}");
+                let mut target_slice = target.mut_slice(point_to_plain_offset(blk_loc));
+                for row in target_slice.rows_iter_mut().take(4) {
+                    row[0..4].fill(sum as u8);
+                }
+            }
+        }
         Intra_Chroma_Pred_Mode::Plane => {}
     }
 
-    for (blk_idx, blk) in residuals.iter().enumerate() {}
+    for (blk_idx, residual) in residuals.iter().enumerate() {
+        let mut blk_loc = get_4x4chroma_block_location(blk_idx as u8);
+        blk_loc.x += loc.x;
+        blk_loc.y += loc.y;
+        let mut target_slice = target.mut_slice(point_to_plain_offset(blk_loc));
+        for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+            for (x, pixel) in row.iter_mut().take(4).enumerate() {
+                *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
+                //info! ("{blk_loc:?} {x},{y} {:?}", *pixel);
+            }
+        }
+    }
 }

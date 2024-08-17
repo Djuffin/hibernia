@@ -685,7 +685,43 @@ pub fn render_chroma_intra_prediction(
                 }
             }
         }
-        Intra_Chroma_Pred_Mode::Plane => {}
+        Intra_Chroma_Pred_Mode::Plane => {
+            // Section 8.3.4.4 Specification of Intra_Chroma_Plane prediction mode
+            // yCF = 0 and xCF = 0
+            let mut offset = point_to_plain_offset(loc);
+            offset.x -= 1;
+            offset.y -= 1;
+            let target_slice = target.slice(offset);
+            let mut h = 0;
+            let mut top_row = [0u8; 9];
+            top_row.copy_from_slice(&target_slice[0][0..9]);
+            for x in 0..4usize {
+                h += (x as isize + 1) * (top_row[4 + x + 1] as isize - top_row[2 + 1 - x ] as isize);
+            }
+
+            let mut v = 0;
+            let mut left_column = [0u8; 9];
+            for (idx, row) in target_slice.rows_iter().take(9).enumerate() {
+                left_column[idx] = row[0];
+            }
+            for y in 0..4usize {
+                v += (y as isize + 1) * (top_row[4 + 1 + y] as isize - top_row[2 + 1 - y] as isize);
+            }
+
+            let a = 16 * (left_column[8] as isize + top_row[8] as isize);
+            let b = (34 * h + 32) >> 6;
+            let c = (34 * v + 32) >> 6;
+
+            let offset = point_to_plain_offset(loc);
+            let mut target_slice = target.mut_slice(offset);
+            for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                for (x, pixel) in row.iter_mut().take(4).enumerate() {
+                    let x = x as isize;
+                    let y = y as isize;
+                    *pixel = ((a + b * (x - 3) + c * (y - 3) + 16) >> 5) as u8;
+                }
+            }
+        }
     }
 
     for (blk_idx, residual) in residuals.iter().enumerate() {
@@ -696,7 +732,6 @@ pub fn render_chroma_intra_prediction(
         for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
             for (x, pixel) in row.iter_mut().take(4).enumerate() {
                 *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
-                //info! ("{blk_loc:?} {x},{y} {:?}", *pixel);
             }
         }
     }

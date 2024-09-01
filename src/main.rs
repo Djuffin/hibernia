@@ -9,6 +9,7 @@ extern crate num_derive;
 
 pub mod diag;
 pub mod h264;
+pub mod y4m_cmp;
 
 use std::env;
 use std::fs;
@@ -16,6 +17,7 @@ use std::io;
 
 use log::info;
 use v_frame::plane::PlaneOffset;
+use y4m_cmp::compare_frames;
 
 fn main() {
     diag::init(false);
@@ -49,6 +51,18 @@ fn main() {
             [planes[0].as_slice(), planes[1].as_slice(), planes[2].as_slice()],
             None,
         );
+
+        if let Ok(expected_file) = fs::File::open("expected.y4m") {
+            let reader = io::BufReader::new(expected_file);
+            let mut decoder = y4m::Decoder::new(reader).unwrap();
+            let expected_h = decoder.get_height();
+            let expected_w = decoder.get_width();
+            let expected_frame = decoder.read_frame().unwrap();
+            assert!(w == expected_w as u32);
+            assert!(h == expected_h as u32);
+            let compare_result = compare_frames(expected_w, expected_h, &yuv_frame, &expected_frame);
+            print!("Frame comparison result: {compare_result}");
+        }
         encoder.write_frame(&yuv_frame).unwrap();
     }
 }

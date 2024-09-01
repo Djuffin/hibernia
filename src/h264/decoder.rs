@@ -696,7 +696,7 @@ pub fn render_chroma_intra_prediction(
             let mut top_row = [0u8; 9];
             top_row.copy_from_slice(&target_slice[0][0..9]);
             for x in 0..4usize {
-                h += (x as isize + 1) * (top_row[4 + 1 + x] as isize - top_row[2 + 1 - x ] as isize);
+                h += (x as isize + 1) * (top_row[4 + 1 + x] as isize - top_row[2 + 1 - x] as isize);
             }
 
             let mut v = 0;
@@ -705,7 +705,8 @@ pub fn render_chroma_intra_prediction(
                 left_column[idx] = row[0];
             }
             for y in 0..4usize {
-                v += (y as isize + 1) * (left_column[4 + 1 + y] as isize - left_column[2 + 1 - y] as isize);
+                v += (y as isize + 1)
+                    * (left_column[4 + 1 + y] as isize - left_column[2 + 1 - y] as isize);
             }
 
             let a = 16 * (left_column[8] as isize + top_row[8] as isize);

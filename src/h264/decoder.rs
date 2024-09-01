@@ -200,7 +200,7 @@ impl Decoder {
                         let luma_plane = &mut frame.planes[0];
                         let luma_prediction_mode = imb.MbPartPredMode(0);
                         info!(
-                            "MB {mb_addr} {qp} Luma: {:?} Chrome: {:?}",
+                            "MB {mb_addr} {qp} Luma: {:?} Chroma: {:?}",
                             luma_prediction_mode, imb.intra_chroma_pred_mode
                         );
                         match luma_prediction_mode {
@@ -696,7 +696,7 @@ pub fn render_chroma_intra_prediction(
             let mut top_row = [0u8; 9];
             top_row.copy_from_slice(&target_slice[0][0..9]);
             for x in 0..4usize {
-                h += (x as isize + 1) * (top_row[4 + x + 1] as isize - top_row[2 + 1 - x ] as isize);
+                h += (x as isize + 1) * (top_row[4 + 1 + x] as isize - top_row[2 + 1 - x ] as isize);
             }
 
             let mut v = 0;
@@ -705,7 +705,7 @@ pub fn render_chroma_intra_prediction(
                 left_column[idx] = row[0];
             }
             for y in 0..4usize {
-                v += (y as isize + 1) * (top_row[4 + 1 + y] as isize - top_row[2 + 1 - y] as isize);
+                v += (y as isize + 1) * (left_column[4 + 1 + y] as isize - left_column[2 + 1 - y] as isize);
             }
 
             let a = 16 * (left_column[8] as isize + top_row[8] as isize);
@@ -713,12 +713,14 @@ pub fn render_chroma_intra_prediction(
             let c = (34 * v + 32) >> 6;
 
             let offset = point_to_plain_offset(loc);
+            info!(" >chroma Plane  blk: {loc:?} A: {a:?} B: {b:?} c: {c}");
             let mut target_slice = target.mut_slice(offset);
-            for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                for (x, pixel) in row.iter_mut().take(4).enumerate() {
+            for (y, row) in target_slice.rows_iter_mut().take(mb_height).enumerate() {
+                for (x, pixel) in row.iter_mut().take(mb_width).enumerate() {
                     let x = x as isize;
                     let y = y as isize;
                     *pixel = ((a + b * (x - 3) + c * (y - 3) + 16) >> 5) as u8;
+                    info!("    > {x},{y} = {}", *pixel);
                 }
             }
         }

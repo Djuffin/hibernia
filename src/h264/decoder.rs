@@ -511,6 +511,7 @@ pub fn render_luma_16x16_intra_prediction(
     let x = loc.x as usize;
     let y = loc.y as usize;
     let offset = point_to_plain_offset(loc);
+    info!("luma 16x16 prediction: {mode:?}");
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode

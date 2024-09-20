@@ -60,7 +60,8 @@ fn main() {
             let expected_frame = decoder.read_frame().unwrap();
             assert!(w == expected_w as u32);
             assert!(h == expected_h as u32);
-            let compare_result = compare_frames(expected_w, expected_h, &yuv_frame, &expected_frame);
+            let compare_result =
+                compare_frames(expected_w, expected_h, &yuv_frame, &expected_frame);
             print!("Frame comparison result: {compare_result}");
         }
         encoder.write_frame(&yuv_frame).unwrap();

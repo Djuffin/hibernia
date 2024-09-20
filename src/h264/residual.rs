@@ -399,8 +399,8 @@ mod tests {
 
     #[test]
     pub fn test_zig_zag() {
-        for i in 0..3 {
-            for j in 0..3 {
+        for i in 0..4 {
+            for j in 0..4 {
                 let idx = zig_zag_4x4(i, j);
                 assert!(idx < 16);
                 let (y, x) = un_zig_zag_4x4(idx);
@@ -409,22 +409,60 @@ mod tests {
         }
     }
 
-    #[test]
-    pub fn test_transform_4x4_ex3() {
-        let coefficients = [[12, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
-        let qp = 30;
+    pub fn test_transform_4x4(input: Block4x4, expected: Block4x4, qp: u8) {
         let mut block = [0i32; 16];
-        for i in 0..3 {
-            for j in 0..3 {
-                block[zig_zag_4x4(i, j)] = coefficients[i][j];
+        for i in 0..4 {
+            for j in 0..4 {
+                block[zig_zag_4x4(i, j)] = input.samples[i][j];
             }
         }
 
         level_scale_4x4_block(&mut block, false, false, qp);
         let output = transform_4x4(&unzip_block_4x4(&block));
-        assert_eq!(
-            output.samples,
-            [[60, 60, 60, 60], [60, 60, 60, 60], [60, 60, 60, 60], [60, 60, 60, 60]]
+        assert_eq!(output.samples, expected.samples);
+    }
+
+    #[test]
+    pub fn test_transform_4x4_ex1() {
+        test_transform_4x4(
+            Block4x4 { samples: [[192, -5, 3, -6], [-4, 5, -3, -8], [-3, 0, 3, 3], [1, 6, 0, 0]] },
+            Block4x4 {
+                samples: [[58, 63, 51, 59], [53, 64, 57, 66], [62, 63, 60, 64], [59, 52, 63, 68]],
+            },
+            6,
+        );
+    }
+
+    #[test]
+    pub fn test_transform_4x4_ex2() {
+        test_transform_4x4(
+            Block4x4 { samples: [[96, -2, 1, -3], [-2, 3, -2, -4], [-1, 0, 1, 1], [0, 3, 0, 0]] },
+            Block4x4 {
+                samples: [[57, 65, 51, 57], [53, 64, 57, 65], [62, 62, 59, 63], [59, 53, 64, 69]],
+            },
+            12,
+        );
+    }
+
+    #[test]
+    pub fn test_transform_4x4_ex3() {
+        test_transform_4x4(
+            Block4x4 { samples: [[48, -1, 0, -1], [-1, 1, -1, -2], [0, 0, 0, 0], [0, 1, 0, 0]] },
+            Block4x4 {
+                samples: [[55, 66, 54, 58], [54, 62, 58, 63], [61, 59, 61, 62], [60, 55, 65, 67]],
+            },
+            18,
+        );
+    }
+
+    #[test]
+    pub fn test_transform_4x4_ex4() {
+        test_transform_4x4(
+            Block4x4 { samples: [[12, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] },
+            Block4x4 {
+                samples: [[60, 60, 60, 60], [60, 60, 60, 60], [60, 60, 60, 60], [60, 60, 60, 60]],
+            },
+            30,
         );
     }
 

@@ -474,7 +474,7 @@ mod tests {
             match nc {
                 -1 => {
                     for total in 0..16 {
-                        for ones in 0..3 {
+                        for ones in 0..4 {
                             let value = total <= 4 && ones <= total;
                             assert_eq!(recognizer_patterns[total][ones], value);
                         }
@@ -482,7 +482,7 @@ mod tests {
                 }
                 -2 => {
                     for total in 0..16 {
-                        for ones in 0..3 {
+                        for ones in 0..4 {
                             let value = total <= 8 && ones <= total;
                             assert_eq!(recognizer_patterns[total][ones], value);
                         }
@@ -490,14 +490,14 @@ mod tests {
                 }
                 -3 => {
                     for total in 0..16 {
-                        for ones in 0..3 {
+                        for ones in 0..4 {
                             assert!(!recognizer_patterns[total][ones]);
                         }
                     }
                 }
                 _ => {
                     for total in 0..16 {
-                        for ones in 0..3 {
+                        for ones in 0..4 {
                             let value = ones <= total;
                             assert_eq!(recognizer_patterns[total][ones], value);
                         }

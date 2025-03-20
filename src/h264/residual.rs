@@ -1,5 +1,7 @@
 use std::result;
 
+use log::info;
+
 use super::{
     macroblock::{self, CodedBlockPattern, MbPredictionMode},
     tables, ColorPlane,
@@ -102,10 +104,10 @@ impl Residual {
 
         if plane == ColorPlane::Y {
             if self.has_separate_luma_dc() {
-                let mut dcs = self.dc_level16x16;
-                dc_scale_4x4_block(&mut dcs, qp);
-                let mut dcs_block = unscan_block_4x4(&dcs);
+                let mut dcs_block = unscan_block_4x4(&self.dc_level16x16);
                 dcs_block = transform_dc(&dcs_block);
+                dc_scale_4x4_block(&mut dcs_block, qp);
+                info!("DC residual {dcs_block:?}");
 
                 for blk_idx in 0..16 {
                     let mut idct_coefficients = [0i32; 16];
@@ -138,14 +140,14 @@ impl Residual {
                 }
             }
         } else {
-            let mut dcs = match plane {
+            let dcs = match plane {
                 ColorPlane::Cb => self.chroma_cb_dc_level,
                 ColorPlane::Cr => self.chroma_cr_dc_level,
                 _ => unreachable!(),
             };
-            dc_scale_4x4_block(&mut dcs, qp);
             let mut dcs_block = unscan_block_4x4(&dcs);
             dcs_block = transform_dc(&dcs_block);
+            dc_scale_4x4_block(&mut dcs_block, qp);
 
             for blk_idx in 0..4 {
                 let acs = match plane {
@@ -252,16 +254,18 @@ pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, skip_dc: bool, q
 }
 
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
-pub fn dc_scale_4x4_block(block: &mut [i32], qp: u8) {
+pub fn dc_scale_4x4_block(block: &mut Block4x4, qp: u8) {
     let m = qp % 6;
     let is_inter = false;
-    for c in &mut block.iter_mut() {
-        let d = if qp >= 36 {
-            (*c * level_scale_4x4(is_inter, m, 0)) << (qp / 6 - 6)
-        } else {
-            (*c * level_scale_4x4(is_inter, m, 0) + (1 << (5 - qp / 6))) >> (6 - qp / 6)
-        };
-        *c = d;
+    for row in block.samples.iter_mut() {
+        for c in row.iter_mut() {
+            let d = if qp >= 36 {
+                (*c * level_scale_4x4(is_inter, m, 0)) << (qp / 6 - 6)
+            } else {
+                (*c * level_scale_4x4(is_inter, m, 0) + (1 << (5 - qp / 6))) >> (6 - qp / 6)
+            };
+            *c = d;
+        }
     }
 }
 

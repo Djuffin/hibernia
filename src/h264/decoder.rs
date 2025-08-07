@@ -493,7 +493,7 @@ pub fn render_luma_4x4_intra_prediction(
         if let Some(residual) = residuals.get(blk_idx as usize) {
             for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                 for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                    *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
+                    *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;
                 }
             }
         }
@@ -735,7 +735,7 @@ pub fn render_chroma_intra_prediction(
         let mut target_slice = target.mut_slice(point_to_plain_offset(blk_loc));
         for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
             for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                *pixel = (*pixel as i32 + residual.samples[y][x]).abs().clamp(0, 255) as u8;
+                *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;
             }
         }
     }

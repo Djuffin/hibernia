@@ -604,7 +604,7 @@ pub fn render_luma_16x16_intra_prediction(
         let mut plane_slice = target.mut_slice(point_to_plain_offset(blk_loc));
         for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
             for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                *pixel = (*pixel as i32 + blk.samples[y][x]).abs().clamp(0, 255) as u8;
+                *pixel = (*pixel as i32 + blk.samples[y][x]).clamp(0, 255) as u8;
             }
         }
     }

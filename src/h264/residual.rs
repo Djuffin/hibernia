@@ -104,14 +104,15 @@ impl Residual {
 
         if plane == ColorPlane::Y {
             if self.has_separate_luma_dc() {
-                let mut dcs_block = unscan_block_4x4(&self.dc_level16x16);
+                // Section 8.5.2 Specification of transform decoding process for luma samples
+                // of Intra_16x16 macroblock prediction mode
+                let mut dcs_block = unzip_block_4x4(&self.dc_level16x16);
                 dcs_block = transform_dc(&dcs_block);
                 dc_scale_4x4_block(&mut dcs_block, qp);
-                info!("DC residual {dcs_block:?}");
 
                 for blk_idx in 0..16 {
                     let mut idct_coefficients = [0i32; 16];
-                    let (dc_row, dc_column) = un_zig_zag_4x4(blk_idx);
+                    let (dc_row, dc_column) = unscan_4x4(blk_idx);
                     idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
                     idct_coefficients[1..].copy_from_slice(&self.ac_level16x16[blk_idx]);
                     level_scale_4x4_block(
@@ -173,6 +174,13 @@ impl Residual {
 
         result
     }
+}
+
+// Figure 8-6 – Assignment of the indices of dcY to luma4x4BlkIdx
+#[inline]
+pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
+    let p = macroblock::get_4x4luma_block_location(idx as u8);
+    (p.y as usize / 4, p.x as usize / 4)
 }
 
 // Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
@@ -281,8 +289,8 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     assert_eq!(block.len(), 16);
     let mut result = Block4x4::default();
     for (idx, value) in block.iter().enumerate() {
-        let (i, j) = un_zig_zag_4x4(idx);
-        result.samples[i][j] = *value;
+        let (row, column) = un_zig_zag_4x4(idx);
+        result.samples[row][column] = *value;
     }
     result
 }
@@ -290,8 +298,8 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
 pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
     let mut result = Block4x4::default();
     for (idx, value) in block.iter().enumerate() {
-        let p = macroblock::get_4x4luma_block_location(idx as u8);
-        result.samples[p.y as usize / 4][p.x as usize / 4] = *value;
+        let (row, column) = unscan_4x4(idx);
+        result.samples[row][column] = *value;
     }
     result
 }
@@ -323,9 +331,9 @@ pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
         // (8-339)
         e.samples[i][1] = d.samples[i][0] - d.samples[i][2];
         // (8-340)
-        e.samples[i][2] = d.samples[i][1] / 2 - d.samples[i][3];
+        e.samples[i][2] = (d.samples[i][1] >> 1) - d.samples[i][3];
         // (8-341)
-        e.samples[i][3] = d.samples[i][1] + d.samples[i][3] / 2;
+        e.samples[i][3] = d.samples[i][1] + (d.samples[i][3] >> 1);
     }
 
     let mut f = Block4x4::default();
@@ -347,9 +355,9 @@ pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
         // (8-347)
         g.samples[1][j] = f.samples[0][j] - f.samples[2][j];
         // (8-348)
-        g.samples[2][j] = f.samples[1][j] / 2 - f.samples[3][j];
+        g.samples[2][j] = (f.samples[1][j] >> 1) - f.samples[3][j];
         // (8-349)
-        g.samples[3][j] = f.samples[1][j] + f.samples[3][j] / 2;
+        g.samples[3][j] = f.samples[1][j] + (f.samples[3][j] >> 1);
     }
 
     let mut h = Block4x4::default();

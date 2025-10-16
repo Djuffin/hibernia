@@ -68,7 +68,7 @@ pub fn get_neighbor_mbs(
 }
 
 #[inline(always)]
-fn inverse_raster_scan(a: u32, b: u32, c: u32, d: u32, e: bool) -> u32 {
+const fn inverse_raster_scan(a: u32, b: u32, c: u32, d: u32, e: bool) -> u32 {
     if e {
         (a / (d / b)) * c
     } else {
@@ -91,7 +91,7 @@ fn inverse_raster_scan(a: u32, b: u32, c: u32, d: u32, e: bool) -> u32 {
 */
 
 // Section 6.4.3 Inverse 4x4 luma block scanning process
-pub fn get_4x4luma_block_location(idx: u8) -> Point {
+pub const fn get_4x4luma_block_location(idx: u8) -> Point {
     let idx = idx as u32;
     let x = inverse_raster_scan(idx / 4, 8, 8, 16, false)
         + inverse_raster_scan(idx % 4, 4, 4, 8, false);

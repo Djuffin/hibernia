@@ -813,7 +813,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
 mod tests {
     use super::*;
 
-    pub fn reader(bytes: &[u8]) -> BitReader {
+    pub fn reader(bytes: &[u8]) -> BitReader<'_> {
         BitReader::new(bytes)
     }
 

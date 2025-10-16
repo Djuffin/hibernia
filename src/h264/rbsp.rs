@@ -119,7 +119,7 @@ impl<'a> RbspReader<'a> {
 mod tests {
     use super::*;
 
-    pub fn reader(bytes: &[u8]) -> RbspReader {
+    pub fn reader(bytes: &[u8]) -> RbspReader<'_> {
         RbspReader::new(bytes)
     }
 

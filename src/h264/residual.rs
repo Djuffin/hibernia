@@ -344,62 +344,54 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks
 pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
     let d = &block.samples;
-    let mut tmp_block1 = Block4x4::default();
-    let mut tmp_block2 = Block4x4::default();
-    let e = &mut tmp_block1.samples;
+    let mut tmp_block = Block4x4::default();
+
+    let f = &mut tmp_block.samples;
     for i in 0..4 {
         // (8-338)
-        e[i][0] = d[i][0] + d[i][2];
+        let e0 = d[i][0] + d[i][2];
         // (8-339)
-        e[i][1] = d[i][0] - d[i][2];
+        let e1 = d[i][0] - d[i][2];
         // (8-340)
-        e[i][2] = (d[i][1] >> 1) - d[i][3];
+        let e2 = (d[i][1] >> 1) - d[i][3];
         // (8-341)
-        e[i][3] = d[i][1] + (d[i][3] >> 1);
-    }
+        let e3 = d[i][1] + (d[i][3] >> 1);
 
-    let f = &mut tmp_block2.samples;
-    for i in 0..4 {
         // (8-342)
-        f[i][0] = e[i][0] + e[i][3];
+        f[i][0] = e0 + e3;
         // (8-343)
-        f[i][1] = e[i][1] + e[i][2];
+        f[i][1] = e1 + e2;
         // (8-344)
-        f[i][2] = e[i][1] - e[i][2];
+        f[i][2] = e1 - e2;
         // (8-345)
-        f[i][3] = e[i][0] - e[i][3];
-    }
-
-    let g = &mut tmp_block1.samples;
-    for j in 0..4 {
-        // (8-346)
-        g[0][j] = f[0][j] + f[2][j];
-        // (8-347)
-        g[1][j] = f[0][j] - f[2][j];
-        // (8-348)
-        g[2][j] = (f[1][j] >> 1) - f[3][j];
-        // (8-349)
-        g[3][j] = f[1][j] + (f[3][j] >> 1);
-    }
-
-    let h = &mut tmp_block2.samples;
-    for j in 0..4 {
-        // (8-350)
-        h[0][j] = g[0][j] + g[3][j];
-        // (8-351)
-        h[1][j] = g[1][j] + g[2][j];
-        // (8-352)
-        h[2][j] = g[1][j] - g[2][j];
-        // (8-353)
-        h[3][j] = g[0][j] - g[3][j];
+        f[i][3] = e0 - e3;
     }
 
     let mut r_block = Block4x4::default();
     let r = &mut r_block.samples;
-    for i in 0..4 {
-        for j in 0..4 {
-            r[i][j] = (h[i][j] + 32) >> 6;
-        }
+    for j in 0..4 {
+        // (8-346)
+        let g0 = f[0][j] + f[2][j];
+        // (8-347)
+        let g1 = f[0][j] - f[2][j];
+        // (8-348)
+        let g2 = (f[1][j] >> 1) - f[3][j];
+        // (8-349)
+        let g3 = f[1][j] + (f[3][j] >> 1);
+
+        // (8-350)
+        let h0 = g0 + g3;
+        // (8-351)
+        let h1 = g1 + g2;
+        // (8-352)
+        let h2 = g1 - g2;
+        // (8-353)
+        let h3 = g0 - g3;
+
+        r[0][j] = (h0 + 32) >> 6;
+        r[1][j] = (h1 + 32) >> 6;
+        r[2][j] = (h2 + 32) >> 6;
+        r[3][j] = (h3 + 32) >> 6;
     }
 
     r_block

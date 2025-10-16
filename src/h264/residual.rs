@@ -343,63 +343,66 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
 
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks
 pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
-    let d = block;
-    let mut e = Block4x4::default();
+    let d = &block.samples;
+    let mut tmp_block1 = Block4x4::default();
+    let mut tmp_block2 = Block4x4::default();
+    let e = &mut tmp_block1.samples;
     for i in 0..4 {
         // (8-338)
-        e.samples[i][0] = d.samples[i][0] + d.samples[i][2];
+        e[i][0] = d[i][0] + d[i][2];
         // (8-339)
-        e.samples[i][1] = d.samples[i][0] - d.samples[i][2];
+        e[i][1] = d[i][0] - d[i][2];
         // (8-340)
-        e.samples[i][2] = (d.samples[i][1] >> 1) - d.samples[i][3];
+        e[i][2] = (d[i][1] >> 1) - d[i][3];
         // (8-341)
-        e.samples[i][3] = d.samples[i][1] + (d.samples[i][3] >> 1);
+        e[i][3] = d[i][1] + (d[i][3] >> 1);
     }
 
-    let mut f = Block4x4::default();
+    let f = &mut tmp_block2.samples;
     for i in 0..4 {
         // (8-342)
-        f.samples[i][0] = e.samples[i][0] + e.samples[i][3];
+        f[i][0] = e[i][0] + e[i][3];
         // (8-343)
-        f.samples[i][1] = e.samples[i][1] + e.samples[i][2];
+        f[i][1] = e[i][1] + e[i][2];
         // (8-344)
-        f.samples[i][2] = e.samples[i][1] - e.samples[i][2];
+        f[i][2] = e[i][1] - e[i][2];
         // (8-345)
-        f.samples[i][3] = e.samples[i][0] - e.samples[i][3];
+        f[i][3] = e[i][0] - e[i][3];
     }
 
-    let mut g = Block4x4::default();
+    let g = &mut tmp_block1.samples;
     for j in 0..4 {
         // (8-346)
-        g.samples[0][j] = f.samples[0][j] + f.samples[2][j];
+        g[0][j] = f[0][j] + f[2][j];
         // (8-347)
-        g.samples[1][j] = f.samples[0][j] - f.samples[2][j];
+        g[1][j] = f[0][j] - f[2][j];
         // (8-348)
-        g.samples[2][j] = (f.samples[1][j] >> 1) - f.samples[3][j];
+        g[2][j] = (f[1][j] >> 1) - f[3][j];
         // (8-349)
-        g.samples[3][j] = f.samples[1][j] + (f.samples[3][j] >> 1);
+        g[3][j] = f[1][j] + (f[3][j] >> 1);
     }
 
-    let mut h = Block4x4::default();
+    let h = &mut tmp_block2.samples;
     for j in 0..4 {
         // (8-350)
-        h.samples[0][j] = g.samples[0][j] + g.samples[3][j];
+        h[0][j] = g[0][j] + g[3][j];
         // (8-351)
-        h.samples[1][j] = g.samples[1][j] + g.samples[2][j];
+        h[1][j] = g[1][j] + g[2][j];
         // (8-352)
-        h.samples[2][j] = g.samples[1][j] - g.samples[2][j];
+        h[2][j] = g[1][j] - g[2][j];
         // (8-353)
-        h.samples[3][j] = g.samples[0][j] - g.samples[3][j];
+        h[3][j] = g[0][j] - g[3][j];
     }
 
-    let mut r = Block4x4::default();
+    let mut r_block = Block4x4::default();
+    let r = &mut r_block.samples;
     for i in 0..4 {
         for j in 0..4 {
-            r.samples[i][j] = (h.samples[i][j] + 32) >> 6;
+            r[i][j] = (h[i][j] + 32) >> 6;
         }
     }
 
-    r
+    r_block
 }
 
 #[cfg(test)]

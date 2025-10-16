@@ -367,8 +367,8 @@ pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
         f[i][3] = e0 - e3;
     }
 
-    let mut r_block = Block4x4::default();
-    let r = &mut r_block.samples;
+    let mut result = Block4x4::default();
+    let r = &mut result.samples;
     for j in 0..4 {
         // (8-346)
         let g0 = f[0][j] + f[2][j];
@@ -394,7 +394,7 @@ pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
         r[3][j] = (h3 + 32) >> 6;
     }
 
-    r_block
+    result
 }
 
 #[cfg(test)]

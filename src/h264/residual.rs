@@ -279,10 +279,47 @@ pub fn dc_scale_4x4_block(block: &mut Block4x4, qp: u8) {
 
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
 pub fn transform_dc(block: &Block4x4) -> Block4x4 {
-    const T: Block4x4 =
-        Block4x4 { samples: [[1, 1, 1, 1], [1, 1, -1, -1], [1, -1, -1, 1], [1, -1, 1, -1]] };
-    let f = matrix_mul(&T, block);
-    matrix_mul(&f, &T)
+let b = &block.samples;
+    let mut result = Block4x4::default();
+    let r = &mut result.samples;
+
+    /*
+    r = [ 1  1  1  1 ]   [ b00 b01 b02 b03 ]   [ 1  1  1  1 ]
+        [ 1  1 -1 -1 ] * [ b10 b11 b12 b13 ] * [ 1  1 -1 -1 ]
+        [ 1 -1 -1  1 ]   [ b20 b21 b22 b23 ]   [ 1 -1 -1  1 ]
+        [ 1 -1  1 -1 ]   [ b30 b31 b32 b33 ]   [ 1 -1  1 -1 ]
+    */
+
+    // This is a temporary storage for the intermediate matrix after first multiplication
+    let mut f = [[0i32; 4]; 4];
+
+    // Calculate the result of the first multiplication using only +/-.
+    for j in 0..4 {
+        let b0 = b[0][j];
+        let b1 = b[1][j];
+        let b2 = b[2][j];
+        let b3 = b[3][j];
+
+        f[0][j] = b0 + b1 + b2 + b3;
+        f[1][j] = b0 + b1 - b2 - b3;
+        f[2][j] = b0 - b1 - b2 + b3;
+        f[3][j] = b0 - b1 + b2 - b3;
+    }
+
+    // Calculate the final result using the intermediate 'f' matrix.
+    for i in 0..4 {
+        let f0 = f[i][0];
+        let f1 = f[i][1];
+        let f2 = f[i][2];
+        let f3 = f[i][3];
+
+        r[i][0] = f0 + f1 + f2 + f3;
+        r[i][1] = f0 + f1 - f2 - f3;
+        r[i][2] = f0 - f1 - f2 + f3;
+        r[i][3] = f0 - f1 + f2 - f3;
+    }
+
+    result
 }
 
 pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
@@ -300,23 +337,6 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
     for (idx, value) in block.iter().enumerate() {
         let (row, column) = unscan_4x4(idx);
         result.samples[row][column] = *value;
-    }
-    result
-}
-
-pub fn matrix_mul(m1: &Block4x4, m2: &Block4x4) -> Block4x4 {
-    let mut result = Block4x4::default();
-    let a = &m1.samples;
-    let b = &m2.samples;
-    let r = &mut result.samples;
-    for i in 0..4 {
-        for j in 0..4 {
-            let mut v = 0;
-            for k in 0..4 {
-                v += a[i][k] * b[k][j];
-            }
-            r[i][j] = v;
-        }
     }
     result
 }
@@ -484,19 +504,5 @@ mod tests {
         let block =
             Block4x4 { samples: [[0, 1, 4, 5], [2, 3, 6, 7], [8, 9, 12, 13], [10, 11, 14, 15]] };
         assert_eq!(block, unscan_block_4x4(&input));
-    }
-
-    #[test]
-    pub fn test_matrix_mut() {
-        let zero = Block4x4::default();
-        let identity =
-            Block4x4 { samples: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] };
-        let m1 = Block4x4 {
-            samples: [[12, 32, 56, 17], [45, -34, 56, 21], [-8, -45, 3, -99], [0, -1, 8, 17]],
-        };
-
-        assert_eq!(m1, matrix_mul(&m1, &identity));
-        assert_eq!(m1, matrix_mul(&identity, &m1));
-        assert_eq!(zero, matrix_mul(&zero, &m1));
     }
 }

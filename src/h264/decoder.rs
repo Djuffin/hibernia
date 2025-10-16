@@ -572,13 +572,10 @@ pub fn render_luma_16x16_intra_prediction(
             }
 
             let mut h = 0i32;
-            for x in 0..8 {
-                h += (x as i32 + 1) * (top[1 + x + 8] as i32 - top[1 + 6 - x] as i32);
-            }
-
             let mut v = 0i32;
-            for y in 0..8 {
-                v += (y as i32 + 1) * (left[1 + y + 8] as i32 - left[1 + 6 - y] as i32);
+            for i in 1..=8 {
+                h += (i as i32) * (top[i + 8] as i32 - top[8 - i] as i32);
+                v += (i as i32) * (left[i + 8] as i32 - left[8 - i] as i32);
             }
             let a = (top[16] as i32 + left[16] as i32) * 16;
             let b = (5 * h + 32) >> 6;
@@ -722,7 +719,6 @@ pub fn render_chroma_intra_prediction(
                     let x = x as isize;
                     let y = y as isize;
                     *pixel = ((a + b * (x - 3) + c * (y - 3) + 16) >> 5) as u8;
-                    info!("    > {x},{y} = {}", *pixel);
                 }
             }
         }

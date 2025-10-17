@@ -12,6 +12,11 @@ pub struct Block4x4 {
     pub samples: [[i32; 4]; 4],
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Block2x2 {
+    pub samples: [[i32; 2]; 2],
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Residual {
     pub prediction_mode: MbPredictionMode,
@@ -141,14 +146,20 @@ impl Residual {
                 }
             }
         } else {
+            // Section 8.5.8, 8.5.11 Specification of transform decoding process for chroma samples
             let dcs = match plane {
-                ColorPlane::Cb => self.chroma_cb_dc_level,
-                ColorPlane::Cr => self.chroma_cr_dc_level,
+                ColorPlane::Cb => &self.chroma_cb_dc_level,
+                ColorPlane::Cr => &self.chroma_cr_dc_level,
                 _ => unreachable!(),
             };
-            let mut dcs_block = unscan_block_4x4(&dcs);
-            dcs_block = transform_dc(&dcs_block);
-            dc_scale_4x4_block(&mut dcs_block, qp);
+            let mut dcs_block = Block2x2 {
+                samples: [
+                    [dcs[0], dcs[1]],
+                    [dcs[2], dcs[3]],
+                ]
+            };
+            dcs_block = transform_chroma_dc(&dcs_block);
+            dc_scale_2x2_block(&mut dcs_block, qp);
 
             for blk_idx in 0..4 {
                 let acs = match plane {
@@ -157,7 +168,7 @@ impl Residual {
                     _ => unreachable!(),
                 };
                 let mut idct_coefficients = [0i32; 16];
-                let (dc_row, dc_column) = un_zig_zag_4x4(blk_idx);
+                let (dc_row, dc_column) = unscan_2x2(blk_idx);
                 idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
                 idct_coefficients[1..].copy_from_slice(acs);
                 level_scale_4x4_block(
@@ -181,6 +192,18 @@ impl Residual {
 pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
     let p = macroblock::get_4x4luma_block_location(idx as u8);
     (p.y as usize / 4, p.x as usize / 4)
+}
+
+// Figure 8-7 – Assignment of the indices of dcC to chroma4x4BlkIdx
+#[inline]
+pub const fn unscan_2x2(idx: usize) -> (/* row */ usize, /* column */ usize) {
+    match idx {
+        0 => (0, 0),
+        1 => (0, 1),
+        2 => (1, 0),
+        3 => (1, 1),
+        _ => panic!("Out of bounds unscan_2x2 index"),
+    }
 }
 
 // Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
@@ -277,6 +300,18 @@ pub fn dc_scale_4x4_block(block: &mut Block4x4, qp: u8) {
     }
 }
 
+// Section 8.5.11.2 Scaling and transformation process for chroma DC transform coefficients
+pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
+    let m = qp % 6;
+    let is_inter = false;
+    for row in block.samples.iter_mut() {
+        for c in row.iter_mut() {
+            let d = (*c * level_scale_4x4(is_inter, m, 0)  << (qp / 6)) >> 5;
+            *c = d;
+        }
+    }
+}
+
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
 pub fn transform_dc(block: &Block4x4) -> Block4x4 {
 let b = &block.samples;
@@ -320,6 +355,27 @@ let b = &block.samples;
     }
 
     result
+}
+
+// Section 8.5.11.1 Transformation process for chroma DC transform coefficients
+pub fn transform_chroma_dc(block: &Block2x2) -> Block2x2 {
+    let c = &block.samples;
+
+    // This is a 2x2 Hadamard transform: f = H * c * H, where
+    //
+    // H =  [1  1]
+    //      [1 -1]
+    let hc00 = c[0][0] + c[1][0];
+    let hc01 = c[0][1] + c[1][1];
+    let hc10 = c[0][0] - c[1][0];
+    let hc11 = c[0][1] - c[1][1];
+
+    Block2x2 {
+        samples: [
+            [hc00 + hc01, hc00 - hc01],
+            [hc10 + hc11, hc10 - hc11],
+        ],
+    }
 }
 
 pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {

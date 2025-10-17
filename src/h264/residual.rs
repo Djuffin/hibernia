@@ -190,8 +190,25 @@ impl Residual {
 // Figure 8-6 – Assignment of the indices of dcY to luma4x4BlkIdx
 #[inline]
 pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
-    let p = macroblock::get_4x4luma_block_location(idx as u8);
-    (p.y as usize / 4, p.x as usize / 4)
+    match idx {
+        0 => (0, 0),
+        1 => (0, 1),
+        2 => (1, 0),
+        3 => (1, 1),
+        4 => (0, 2),
+        5 => (0, 3),
+        6 => (1, 2),
+        7 => (1, 3),
+        8 => (2, 0),
+        9 => (2, 1),
+        10 => (3, 0),
+        11 => (3, 1),
+        12 => (2, 2),
+        13 => (2, 3),
+        14 => (3, 2),
+        15 => (3, 3),
+        _ => panic!("Out of bounds unscan_4x4 index"),
+    }
 }
 
 // Figure 8-7 – Assignment of the indices of dcC to chroma4x4BlkIdx

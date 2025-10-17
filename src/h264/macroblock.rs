@@ -327,6 +327,38 @@ impl TryFrom<u32> for Intra_Chroma_Pred_Mode {
     }
 }
 
+// Motion vector
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Mv {
+    pub x: i16,
+    pub y: i16,
+}
+
+// Table 7-17 – Sub-macroblock types for P_8x8 macroblock type
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
+pub enum SubMbType {
+    #[default]
+    P_L0_8x8 = 0,
+    P_L0_8x4 = 1,
+    P_L0_4x8 = 2,
+    P_L0_4x4 = 3,
+}
+
+impl TryFrom<u32> for SubMbType {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or("Unknown sub-macroblock type.")
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SubMbPred {
+    pub sub_mb_type: SubMbType,
+    pub mv_l0: [Mv; 4],
+    pub ref_idx_l0: [u8; 4],
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct CodedBlockPattern(pub u8);
 
@@ -373,15 +405,21 @@ pub struct IMb {
 
 // Macroblock of type P
 #[derive(Clone, Debug, Default)]
-pub struct P {
+pub struct PMb {
     pub mb_type: PMbType,
+    pub sub_mb_pred: [SubMbPred; 4], // For P_8x8
+    pub mv_l0: [Mv; 4],              // For 16x16, 16x8, 8x16
+    pub ref_idx_l0: [u8; 4],         // For 16x16, 16x8, 8x16
+    pub coded_block_pattern: CodedBlockPattern,
+    pub mb_qp_delta: i32,
+    pub residual: Option<Box<Residual>>,
 }
 
 #[derive(Clone, Debug)]
 pub enum Macroblock {
     I(IMb),
     PCM(PcmMb),
-    P(P),
+    P(PMb),
 }
 
 #[allow(non_snake_case)]
@@ -403,11 +441,29 @@ impl IMb {
 }
 
 #[allow(non_snake_case)]
+impl PMb {
+    #[inline]
+    pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
+        match self.mb_type {
+            PMbType::P_L0_16x16 | PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 | PMbType::P_Skip => {
+                MbPredictionMode::Pred_L0
+            }
+            PMbType::P_8x8 | PMbType::P_8x8ref0 => {
+                // This is more complex, depends on sub_mb_type.
+                // For now, let's assume inter.
+                MbPredictionMode::Pred_L0
+            }
+        }
+    }
+}
+
+#[allow(non_snake_case)]
 impl Macroblock {
     #[inline]
     pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self {
             Macroblock::I(mb) => mb.MbPartPredMode(partition),
+            Macroblock::P(mb) => mb.MbPartPredMode(partition),
             _ => MbPredictionMode::None,
         }
     }
@@ -415,25 +471,22 @@ impl Macroblock {
     // Calculates nC for the block withing the macroblock
     pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         // Section 9.2.1
-        match self {
-            Macroblock::I(mb) => match &mb.residual {
-                Some(r) => r.get_nc(blk_idx, plane),
-                None => 0,
-            },
-            Macroblock::PCM(_) => 16,
-            Macroblock::P(_) => {
-                todo!("P blocks")
-            }
+        let residual = match self {
+            Macroblock::I(mb) => mb.residual.as_ref(),
+            Macroblock::P(mb) => mb.residual.as_ref(),
+            Macroblock::PCM(_) => return 16,
+        };
+        match residual {
+            Some(r) => r.get_nc(blk_idx, plane),
+            None => 0,
         }
     }
 
     pub fn get_coded_block_pattern(&self) -> CodedBlockPattern {
         match self {
             Macroblock::I(mb) => mb.coded_block_pattern,
+            Macroblock::P(mb) => mb.coded_block_pattern,
             Macroblock::PCM(_) => CodedBlockPattern::default(),
-            Macroblock::P(_) => {
-                todo!("P blocks")
-            }
         }
     }
 
@@ -442,10 +495,10 @@ impl Macroblock {
             Macroblock::I(mb) => {
                 mb.residual = r;
             }
-            Macroblock::PCM(_) => {}
-            Macroblock::P(_) => {
-                todo!("P blocks")
+            Macroblock::P(mb) => {
+                mb.residual = r;
             }
+            Macroblock::PCM(_) => {}
         }
     }
 }

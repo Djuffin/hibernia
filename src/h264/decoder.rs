@@ -8,7 +8,7 @@ use crate::h264::ColorPlane;
 use super::macroblock::{
     self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
     get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
-    Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName, MbPredictionMode,
+    Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName, MbPredictionMode, PMb,
 };
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
@@ -26,6 +26,25 @@ pub enum DecodingError {
     MisformedData(String),
     OutOfRange(String),
     Wtf,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DecodedPictureBuffer {
+    frames: Vec<VideoFrame>,
+}
+
+impl DecodedPictureBuffer {
+    pub fn new() -> Self {
+        Self { frames: Vec::new() }
+    }
+
+    pub fn add_frame(&mut self, frame: VideoFrame) {
+        self.frames.push(frame);
+    }
+
+    pub fn get_ref_frame(&self, index: usize) -> Option<&VideoFrame> {
+        self.frames.get(index)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -60,11 +79,16 @@ impl DecoderContext {
 pub struct Decoder {
     context: DecoderContext,
     frame_buffer: Option<VideoFrame>,
+    frame_store: DecodedPictureBuffer,
 }
 
 impl Decoder {
     pub fn new() -> Decoder {
-        Decoder::default()
+        Decoder {
+            context: DecoderContext::default(),
+            frame_buffer: None,
+            frame_store: DecodedPictureBuffer::new(),
+        }
     }
 
     pub fn decode(&mut self, data: &[u8]) -> Result<(), DecodingError> {
@@ -107,13 +131,11 @@ impl Decoder {
                             .map_err(parse_error_handler)?;
 
                     info!("non-IDR Slice: {:#?}", slice);
-                    if slice.header.slice_type != SliceType::I {
-                        break;
-                    }
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
                     self.process_slice(&mut slice)?;
+                    break; // Temporarily stop after first non-IDR slice
                 }
                 NalUnitType::IDRSlice => {
                     let mut slice =
@@ -124,7 +146,7 @@ impl Decoder {
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
-                    return self.process_slice(&mut slice); // Temporarily stop after first slice
+                    self.process_slice(&mut slice)?;
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {
@@ -171,6 +193,14 @@ impl Decoder {
             return Err(DecodingError::Wtf);
         }
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
+
+        // Get the reference frame from the store before mutably borrowing the frame_buffer
+        let ref_frame = if slice.header.slice_type == SliceType::P {
+            self.frame_store.get_ref_frame(0) // Assuming ref_idx 0 for now
+        } else {
+            None
+        };
+
         let frame = self.frame_buffer.as_mut().unwrap();
         for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
             let mb_loc = slice.get_mb_location(mb_addr);
@@ -242,14 +272,63 @@ impl Decoder {
                             )
                         }
                     }
-                    Macroblock::P(block) => {
-                        todo!("implement P blocks!");
+                    Macroblock::P(pmb) => {
+                        let ref_frame = ref_frame.ok_or(DecodingError::OutOfRange(
+                            "Invalid reference frame index".to_string(),
+                        ))?;
+                        render_p_macroblock(slice, mb_addr, pmb, mb_loc, &mut qp, ref_frame, frame)?;
                     }
                 }
             }
         }
+        self.frame_store.add_frame(frame.clone());
         Ok(())
     }
+}
+
+fn render_p_macroblock(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    pmb: &PMb,
+    mb_loc: Point,
+    qp: &mut i32,
+    ref_frame: &VideoFrame,
+    frame: &mut VideoFrame,
+) -> Result<(), DecodingError> {
+    *qp = (*qp + pmb.mb_qp_delta).clamp(0, 51);
+    let qp_val = (*qp).try_into().unwrap();
+
+    let luma_plane = &mut frame.planes[0];
+    let mv = pmb.mv_l0[0];
+    let ref_loc = PlaneOffset {
+        x: (mb_loc.x as i16 + mv.x) as isize,
+        y: (mb_loc.y as i16 + mv.y) as isize,
+    };
+
+    let ref_slice = ref_frame.planes[0].slice(ref_loc);
+    let mut dest_slice = luma_plane.mut_slice(point_to_plain_offset(mb_loc));
+
+    for y in 0..MB_HEIGHT {
+        dest_slice[y][..MB_WIDTH].copy_from_slice(&ref_slice[y][..MB_WIDTH]);
+    }
+
+    if let Some(residual) = pmb.residual.as_ref() {
+        let residuals = residual.restore(ColorPlane::Y, qp_val);
+        for (blk_idx, blk) in residuals.iter().enumerate() {
+            let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
+            blk_loc.x += mb_loc.x;
+            blk_loc.y += mb_loc.y;
+
+            let mut plane_slice = luma_plane.mut_slice(point_to_plain_offset(blk_loc));
+            for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+                for (x, pixel) in row.iter_mut().take(4).enumerate() {
+                    *pixel = (*pixel as i32 + blk.samples[y][x]).clamp(0, 255) as u8;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[inline]

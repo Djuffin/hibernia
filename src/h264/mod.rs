@@ -1,6 +1,7 @@
 pub mod cavlc;
 pub mod decoder;
 pub mod macroblock;
+pub mod mv;
 pub mod nal;
 pub mod parser;
 pub mod pps;

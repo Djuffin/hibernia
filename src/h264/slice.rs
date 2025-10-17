@@ -66,17 +66,72 @@ pub struct SliceHeader {
     pub delta_pic_order_cnt_bottom: Option<i32>,
     pub redundant_pic_cnt: Option<u32>,
 
-    //pub direct_spatial_mv_pred_flag: Option<bool>,
-    //pub num_ref_idx_active: Option<NumRefIdxActive>,
-    // may become an enum rather than Option in future (for ref_pic_list_mvc_modification)
-    //pub ref_pic_list_modification: Option<RefPicListModifications>,
-    //pub pred_weight_table: Option<PredWeightTable>,
-    //pub dec_ref_pic_marking: Option<DecRefPicMarking>,
-    //pub cabac_init_idc: Option<u32>,
     pub slice_qp_delta: i32,
     pub sp_for_switch_flag: Option<bool>,
     pub slice_qs: Option<u32>,
     pub deblocking_filter_idc: DeblockingFilterIdc,
+    pub num_ref_idx_active_override_flag: bool,
+    pub ref_pic_list_modification: Option<RefPicListModifications>,
+    pub pred_weight_table: Option<PredWeightTable>,
+    pub dec_ref_pic_marking: Option<DecRefPicMarking>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum RefPicListMod {
+    #[default]
+    NoModification,
+    Modify {
+        modification_of_pic_nums_idc: u32,
+        abs_diff_pic_num_minus1: u32,
+        long_term_pic_num: u32,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct RefPicListModifications {
+    pub ref_pic_list_modification_flag_l0: bool,
+    pub modifications_l0: Vec<RefPicListMod>,
+    pub ref_pic_list_modification_flag_l1: bool,
+    pub modifications_l1: Vec<RefPicListMod>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct PredWeightTable {
+    pub luma_log2_weight_denom: u32,
+    pub chroma_log2_weight_denom: u32,
+    pub luma_weights: Vec<(i32, i32)>,
+    pub chroma_weights: Vec<(i32, i32, i32, i32)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum MemoryManagementControlOp {
+    #[default]
+    End,
+    UnusedShortTerm {
+        difference_of_pic_nums_minus1: u32,
+    },
+    UnusedLongTerm {
+        long_term_pic_num: u32,
+    },
+    AssignLongTerm {
+        difference_of_pic_nums_minus1: u32,
+        long_term_frame_idx: u32,
+    },
+    MaxLongTermIdx {
+        max_long_term_frame_idx_plus1: u32,
+    },
+    Clear,
+    SetLongTerm {
+        long_term_frame_idx: u32,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct DecRefPicMarking {
+    pub no_output_of_prior_pics_flag: bool,
+    pub long_term_reference_flag: bool,
+    pub adaptive_ref_pic_marking_mode_flag: bool,
+    pub memory_management_control_operations: Vec<MemoryManagementControlOp>,
 }
 
 #[derive(Clone)]

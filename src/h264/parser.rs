@@ -4,6 +4,7 @@ use crate::h264::slice::DeblockingFilterIdc;
 
 use super::decoder;
 use super::macroblock;
+use super::mv;
 use super::nal;
 use super::pps;
 use super::rbsp;
@@ -19,11 +20,14 @@ use log::trace;
 use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, IMb, IMbType,
     Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
-    MbPredictionMode, PcmMb,
+    MbPredictionMode, PcmMb, PMb, PMbType,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use slice::{Slice, SliceHeader, SliceType};
+use slice::{
+    DecRefPicMarking, MemoryManagementControlOp, PredWeightTable, RefPicListMod,
+    RefPicListModifications, Slice, SliceHeader, SliceType,
+};
 use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 
 pub type BitReader<'a> = rbsp::RbspReader<'a>;
@@ -474,14 +478,14 @@ pub fn parse_slice_header(
     read_value!(input, header.slice_type, ue, 8);
     read_value!(input, header.pic_parameter_set_id, ue, 8);
 
-    let pps = match ctx.get_pps(header.pic_parameter_set_id) {
-        Some(pps) => pps,
+    let mut pps = match ctx.get_pps(header.pic_parameter_set_id) {
+        Some(pps) => pps.clone(),
         None => {
             return Err("PPS is missing in context".to_owned());
         }
     };
     let sps = match ctx.get_sps(pps.seq_parameter_set_id) {
-        Some(sps) => sps,
+        Some(sps) => sps.clone(),
         None => {
             return Err("SPS is missing in context".to_owned());
         }
@@ -528,18 +532,75 @@ pub fn parse_slice_header(
         read_value!(input, header.redundant_pic_cnt, ue);
     }
 
+    if header.slice_type == SliceType::P || header.slice_type == SliceType::SP {
+        read_value!(input, header.num_ref_idx_active_override_flag, f);
+        if header.num_ref_idx_active_override_flag {
+            read_value!(input, pps.num_ref_idx_l0_default_active_minus1, ue);
+        }
+    }
+
     if nal.nal_ref_idc != 0 {
         if idr_pic_flag {
-            let no_output_of_prior_pics_flag: bool;
-            let long_term_reference_flag: bool;
-            read_value!(input, no_output_of_prior_pics_flag, f);
-            read_value!(input, long_term_reference_flag, f);
+            let mut marking = DecRefPicMarking::default();
+            read_value!(input, marking.no_output_of_prior_pics_flag, f);
+            read_value!(input, marking.long_term_reference_flag, f);
+            header.dec_ref_pic_marking = Some(marking);
         } else {
-            let adaptive_ref_pic_marking_mode_flag: bool;
-            read_value!(input, adaptive_ref_pic_marking_mode_flag, f);
-            if adaptive_ref_pic_marking_mode_flag {
-                todo!("memory_management_control_operation");
+            let mut marking = DecRefPicMarking::default();
+            read_value!(input, marking.adaptive_ref_pic_marking_mode_flag, f);
+            if marking.adaptive_ref_pic_marking_mode_flag {
+                loop {
+                    let op_val: u32;
+                    read_value!(input, op_val, ue);
+                    let op = match op_val {
+                        0 => MemoryManagementControlOp::End,
+                        1 => {
+                            let difference_of_pic_nums_minus1: u32;
+                            read_value!(input, difference_of_pic_nums_minus1, ue);
+                            MemoryManagementControlOp::UnusedShortTerm {
+                                difference_of_pic_nums_minus1,
+                            }
+                        }
+                        2 => {
+                            let long_term_pic_num: u32;
+                            read_value!(input, long_term_pic_num, ue);
+                            MemoryManagementControlOp::UnusedLongTerm { long_term_pic_num }
+                        }
+                        3 => {
+                            let difference_of_pic_nums_minus1: u32;
+                            let long_term_frame_idx: u32;
+                            read_value!(input, difference_of_pic_nums_minus1, ue);
+                            read_value!(input, long_term_frame_idx, ue);
+                            MemoryManagementControlOp::AssignLongTerm {
+                                difference_of_pic_nums_minus1,
+                                long_term_frame_idx,
+                            }
+                        }
+                        4 => {
+                            let max_long_term_frame_idx_plus1: u32;
+                            read_value!(input, max_long_term_frame_idx_plus1, ue);
+                            MemoryManagementControlOp::MaxLongTermIdx {
+                                max_long_term_frame_idx_plus1,
+                            }
+                        }
+                        5 => MemoryManagementControlOp::Clear,
+                        6 => {
+                            let long_term_frame_idx: u32;
+                            read_value!(input, long_term_frame_idx, ue);
+                            MemoryManagementControlOp::SetLongTerm { long_term_frame_idx }
+                        }
+                        _ => {
+                            return Err(format!("Invalid memory_management_control_operation: {}", op_val));
+                        }
+                    };
+                    let is_end = matches!(op, MemoryManagementControlOp::End);
+                    marking.memory_management_control_operations.push(op);
+                    if is_end {
+                        break;
+                    }
+                }
             }
+            header.dec_ref_pic_marking = Some(marking);
         }
     }
 
@@ -679,9 +740,81 @@ fn calc_prev_intra4x4_pred_mode(
 }
 
 pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
-    let mb_type: IMbType;
-    read_value!(input, mb_type, ue);
+    let mb_type_val: u32;
+    read_value!(input, mb_type_val, ue);
 
+    if slice.header.slice_type == SliceType::I || slice.header.slice_type == SliceType::SI {
+        let mb_type = IMbType::try_from(mb_type_val)?;
+        parse_i_macroblock(input, slice, mb_type)
+    } else {
+        let mb_type = PMbType::try_from(mb_type_val)?;
+        parse_p_macroblock(input, slice, mb_type)
+    }
+}
+
+pub fn parse_p_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    mb_type: PMbType,
+) -> ParseResult<Macroblock> {
+    let mut block = PMb { mb_type, ..PMb::default() };
+    let this_mb_addr = slice.get_next_mb_addr();
+
+    if mb_type == PMbType::P_8x8 || mb_type == PMbType::P_8x8ref0 {
+        for i in 0..4 {
+            let sub_mb_type_val: u32;
+            read_value!(input, sub_mb_type_val, ue);
+            block.sub_mb_pred[i].sub_mb_type = sub_mb_type_val.try_into()?;
+        }
+    }
+
+    let num_mb_part = match mb_type {
+        PMbType::P_L0_16x16 => 1,
+        PMbType::P_L0_L0_16x8 => 2,
+        PMbType::P_L0_L0_8x16 => 2,
+        PMbType::P_8x8 | PMbType::P_8x8ref0 => 4,
+        PMbType::P_Skip => 0,
+    };
+
+    for i in 0..num_mb_part {
+        if mb_type != PMbType::P_8x8ref0 {
+            read_value!(input, block.ref_idx_l0[i], ue);
+        }
+    }
+
+    for i in 0..num_mb_part {
+        let mvd_l0_x: i32;
+        let mvd_l0_y: i32;
+        read_value!(input, mvd_l0_x, se);
+        read_value!(input, mvd_l0_y, se);
+        let mvp = mv::predict_motion_vector(slice, this_mb_addr, i as u8);
+        block.mv_l0[i].x = (mvp.x as i32 + mvd_l0_x) as i16;
+        block.mv_l0[i].y = (mvp.y as i32 + mvd_l0_y) as i16;
+    }
+
+    let coded_block_pattern_num: u8;
+    read_value!(input, coded_block_pattern_num, ue, 8);
+    block.coded_block_pattern =
+        tables::code_num_to_intra_coded_block_pattern(coded_block_pattern_num)
+            .ok_or("Invalid coded_block_pattern")?;
+
+    if !block.coded_block_pattern.is_zero() {
+        read_value!(input, block.mb_qp_delta, se);
+        let mut residual = Box::<Residual>::default();
+        residual.coded_block_pattern = block.coded_block_pattern;
+        residual.prediction_mode = block.MbPartPredMode(0);
+        parse_residual(input, slice, &mut residual)?;
+        block.residual = Some(residual);
+    }
+
+    Ok(Macroblock::P(block))
+}
+
+pub fn parse_i_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    mb_type: IMbType,
+) -> ParseResult<Macroblock> {
     if mb_type == IMbType::I_PCM {
         let mut block = PcmMb::default();
         input.align();
@@ -785,10 +918,6 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
 
     if slice.pps.entropy_coding_mode_flag {
         input.align();
-    }
-
-    if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
-        todo!("non I-slices");
     }
 
     let mut more_data = true;

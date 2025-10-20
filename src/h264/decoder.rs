@@ -226,9 +226,11 @@ impl Decoder {
                         }
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
+                            let chroma_qp = get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0).try_into().unwrap();
+                            info!("QP: {qp} chroma qp: {chroma_qp}");
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
-                                residual.restore(plane_name, qp)
+                                residual.restore(plane_name, chroma_qp)
                             } else {
                                 Vec::new()
                             };
@@ -310,6 +312,42 @@ impl Surroundings4x4 {
         &self.left_column[1..5]
     }
 }
+
+// Section 8.5.8 Derivation process for chroma quantization parameters
+pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -> i32 {
+    let qp_i = (luma_qp + chroma_qp_offset).clamp(-qp_bd_offset_c, 51);
+
+    // 2. Look up qP_C from qP_I using Table 8-15
+    let qp_c = match qp_i {
+        i if i < 30 => i,
+        30 => 29,
+        31 => 30,
+        32 => 31,
+        33 => 32,
+        34 => 32,
+        35 => 33,
+        36 => 34,
+        37 => 34,
+        38 => 35,
+        39 => 35,
+        40 => 36,
+        41 => 36,
+        42 => 37,
+        43 => 37,
+        44 => 38,
+        45 => 38,
+        46 => 38,
+        47 => 39,
+        48 => 39,
+        49 => 39,
+        50 => 39,
+        51 => 39,
+        _ => unreachable!(),
+    };
+
+    qp_c + qp_bd_offset_c
+}
+
 
 // Section 8.3.1.1 Derivation process for Intra4x4PredMode
 pub fn render_luma_4x4_intra_prediction(

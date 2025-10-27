@@ -226,7 +226,10 @@ impl Decoder {
                         }
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
-                            let chroma_qp = get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0).try_into().unwrap();
+                            let chroma_qp =
+                                get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0)
+                                    .try_into()
+                                    .unwrap();
                             info!("QP: {qp} chroma qp: {chroma_qp}");
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
@@ -347,7 +350,6 @@ pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -
 
     qp_c + qp_bd_offset_c
 }
-
 
 // Section 8.3.1.1 Derivation process for Intra4x4PredMode
 pub fn render_luma_4x4_intra_prediction(
@@ -657,6 +659,7 @@ pub fn render_chroma_intra_prediction(
     let loc = Point { x: loc.x >> chroma_shift.width, y: loc.y >> chroma_shift.width };
     let mb_width = MB_WIDTH >> chroma_shift.width;
     let mb_height = MB_HEIGHT >> chroma_shift.height;
+    let offset = point_to_plain_offset(loc);
 
     #[inline]
     fn sum(slice: &[u8]) -> u32 {
@@ -670,14 +673,13 @@ pub fn render_chroma_intra_prediction(
             let y = loc.y as usize;
             let mut src_row = [0; 16];
             src_row[0..mb_width].copy_from_slice(&target.row(y as isize - 1)[x..(x + mb_width)]);
-            let mut target_slice = target.mut_slice(point_to_plain_offset(loc));
+            let mut target_slice = target.mut_slice(offset);
             for row in target_slice.rows_iter_mut().take(mb_height) {
                 row[0..mb_width].copy_from_slice(&src_row[0..mb_width]);
             }
         }
         Intra_Chroma_Pred_Mode::Horizontal => {
             // Section 8.3.4.2 Specification of Intra_Chroma_Horizontal prediction mode
-            let offset = point_to_plain_offset(loc);
             let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
             for row in target_slice.rows_iter_mut().take(mb_height) {
                 let src = row[0];
@@ -686,7 +688,6 @@ pub fn render_chroma_intra_prediction(
         }
         Intra_Chroma_Pred_Mode::DC => {
             // Section 8.3.4.1 Specification of Intra_Chroma_DC prediction mode
-            let offset = point_to_plain_offset(loc);
 
             // Calculate the sum of all the values at the top of the current block
             let mut top_left = None;
@@ -711,9 +712,10 @@ pub fn render_chroma_intra_prediction(
             }
 
             for blk_idx in 0..4 {
-                const DEFAULT_VALUE : u32 = 1 << 7; // = 1 << ( BitDepthC − 1 )
+                const DEFAULT_VALUE: u32 = 1 << 7; // = 1 << ( BitDepthC − 1 )
                 let result = match blk_idx {
-                    0 => { // If ( xO, yO ) is equal to ( 0, 0 ) or xO and yO are greater than 0
+                    0 => {
+                        // If ( xO, yO ) is equal to ( 0, 0 ) or xO and yO are greater than 0
                         if let (Some(left), Some(top)) = (left_top, top_left) {
                             (left + top + 4) >> 3
                         } else if let Some(s) = top_left {
@@ -724,7 +726,8 @@ pub fn render_chroma_intra_prediction(
                             DEFAULT_VALUE
                         }
                     }
-                    1 => { // If xO is greater than 0 and yO is equal to 0
+                    1 => {
+                        // If xO is greater than 0 and yO is equal to 0
                         if let Some(s) = top_right {
                             (s + 2) >> 2
                         } else if let Some(s) = left_top {
@@ -733,7 +736,8 @@ pub fn render_chroma_intra_prediction(
                             DEFAULT_VALUE
                         }
                     }
-                    2 => { // If xO is equal to 0 and yO is greater than 0
+                    2 => {
+                        // If xO is equal to 0 and yO is greater than 0
                         if let Some(s) = left_bottom {
                             (s + 2) >> 2
                         } else if let Some(s) = top_left {
@@ -742,8 +746,8 @@ pub fn render_chroma_intra_prediction(
                             DEFAULT_VALUE
                         }
                     }
-                    3 => { // If xO is equal to 0 and yO is greater than 0
-                       if let (Some(left), Some(top)) = (left_bottom, top_right) {
+                    3 => {
+                        if let (Some(left), Some(top)) = (left_bottom, top_right) {
                             (left + top + 4) >> 3
                         } else if let Some(s) = top_right {
                             (s + 2) >> 2
@@ -753,7 +757,7 @@ pub fn render_chroma_intra_prediction(
                             DEFAULT_VALUE
                         }
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
 
                 let mut blk_loc = get_4x4chroma_block_location(blk_idx);
@@ -768,10 +772,7 @@ pub fn render_chroma_intra_prediction(
         Intra_Chroma_Pred_Mode::Plane => {
             // Section 8.3.4.4 Specification of Intra_Chroma_Plane prediction mode
             // yCF = 0 and xCF = 0
-            let mut offset = point_to_plain_offset(loc);
-            offset.x -= 1;
-            offset.y -= 1;
-            let target_slice = target.slice(offset);
+            let target_slice = target.slice(PlaneOffset { x: offset.x - 1, y: offset.y - 1 });
             let mut h = 0;
             let mut top_row = [0u8; 9];
             top_row.copy_from_slice(&target_slice[0][0..9]);
@@ -793,7 +794,6 @@ pub fn render_chroma_intra_prediction(
             let b = (34 * h + 32) >> 6;
             let c = (34 * v + 32) >> 6;
 
-            let offset = point_to_plain_offset(loc);
             let mut target_slice = target.mut_slice(offset);
             for (y, row) in target_slice.rows_iter_mut().take(mb_height).enumerate() {
                 for (x, pixel) in row.iter_mut().take(mb_width).enumerate() {

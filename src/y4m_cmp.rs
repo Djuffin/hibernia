@@ -47,7 +47,9 @@ pub fn compare_frames(
     if let Some((x, y, a, e)) = compare_plane(width / 2, height / 2, actual_v, expected_v) {
         let width_in_mb = width / 2 / chroma_mb_width;
         let mb_idx = x / chroma_mb_width + (y / chroma_mb_width) * width_in_mb;
-        result.push_str(&format!("V-plane mismatch at {x},{y} (MB:{mb_idx}) width_in_mb:{width_in_mb} : {a} != {e}\n"));
+        result.push_str(&format!(
+            "V-plane mismatch at {x},{y} (MB:{mb_idx}) width_in_mb:{width_in_mb} : {a} != {e}\n"
+        ));
     }
 
     result

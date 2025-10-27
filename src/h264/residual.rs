@@ -152,12 +152,7 @@ impl Residual {
                 ColorPlane::Cr => &self.chroma_cr_dc_level,
                 _ => unreachable!(),
             };
-            let mut dcs_block = Block2x2 {
-                samples: [
-                    [dcs[0], dcs[1]],
-                    [dcs[2], dcs[3]],
-                ]
-            };
+            let mut dcs_block = Block2x2 { samples: [[dcs[0], dcs[1]], [dcs[2], dcs[3]]] };
             dcs_block = transform_chroma_dc(&dcs_block);
             dc_scale_2x2_block(&mut dcs_block, qp);
 
@@ -324,7 +319,7 @@ pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
     let is_inter = false;
     for row in block.samples.iter_mut() {
         for c in row.iter_mut() {
-            let d = (*c * level_scale_4x4(is_inter, m, 0)  << (qp / 6)) >> 5;
+            let d = (*c * level_scale_4x4(is_inter, m, 0) << (qp / 6)) >> 5;
             *c = d;
         }
     }
@@ -332,7 +327,7 @@ pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
 
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
 pub fn transform_dc(block: &Block4x4) -> Block4x4 {
-let b = &block.samples;
+    let b = &block.samples;
     let mut result = Block4x4::default();
     let r = &mut result.samples;
 
@@ -388,12 +383,7 @@ pub fn transform_chroma_dc(block: &Block2x2) -> Block2x2 {
     let hc10 = c[0][0] - c[1][0];
     let hc11 = c[0][1] - c[1][1];
 
-    Block2x2 {
-        samples: [
-            [hc00 + hc01, hc00 - hc01],
-            [hc10 + hc11, hc10 - hc11],
-        ],
-    }
+    Block2x2 { samples: [[hc00 + hc01, hc00 - hc01], [hc10 + hc11, hc10 - hc11]] }
 }
 
 pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
@@ -527,13 +517,10 @@ mod tests {
     pub fn test_transform_4x4_zeros() {
         test_transform_4x4(
             Block4x4 { samples: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] },
-            Block4x4 {
-                samples: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
-            },
+            Block4x4 { samples: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] },
             28,
         );
     }
-
 
     #[test]
     pub fn test_transform_4x4_ex1() {

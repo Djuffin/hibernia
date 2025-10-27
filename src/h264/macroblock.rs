@@ -102,10 +102,13 @@ pub const fn get_4x4luma_block_location(idx: u8) -> Point {
 
 // Section 6.4.7 Inverse 4x4 chroma block scanning process
 pub fn get_4x4chroma_block_location(idx: u8) -> Point {
-    let idx = idx as u32;
-    let x = inverse_raster_scan(idx, 4, 4, 8, false);
-    let y = inverse_raster_scan(idx, 4, 4, 8, true);
-    Point { x, y }
+    match idx {
+        0 => Point { x: 0, y: 0 },
+        1 => Point { x: 4, y: 0 },
+        2 => Point { x: 0, y: 4 },
+        3 => Point { x: 4, y: 4 },
+        _ => unreachable!(),
+    }
 }
 
 // Section 6.4.13.1 Derivation process for 4x4 luma block indices

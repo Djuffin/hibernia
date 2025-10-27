@@ -378,7 +378,6 @@ pub fn render_luma_4x4_intra_prediction(
         let mut target_slice = target.mut_slice(ctx.offset);
 
         let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
-        info!(" >{blk_idx}: {mode}");
         match mode {
             Intra_4x4_SamplePredMode::Vertical => {
                 // Section 8.3.1.2.1 Specification of Intra_4x4_Vertical prediction mode
@@ -659,6 +658,11 @@ pub fn render_chroma_intra_prediction(
     let mb_width = MB_WIDTH >> chroma_shift.width;
     let mb_height = MB_HEIGHT >> chroma_shift.height;
 
+    #[inline]
+    fn sum(slice: &[u8]) -> u32 {
+        slice.iter().map(|v| *v as u32).sum::<u32>()
+    }
+
     match mode {
         Intra_Chroma_Pred_Mode::Vertical => {
             // Section 8.3.4.3 Specification of Intra_Chroma_Vertical prediction mode
@@ -691,33 +695,65 @@ pub fn render_chroma_intra_prediction(
 
                 // Calculate the sum of all the values at the left of the current block
                 let same_mb = get_4x4chroma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
-                let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
-                    Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
+                let left_sum = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+                    Some(sum(ctx.left4()))
                 } else {
                     None
                 };
 
                 // Calculate the sum of all the values at the top of the current block
                 let same_mb = get_4x4chroma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
-                let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
-                    Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
+                let top_sum = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                    Some(sum(ctx.top4()))
                 } else {
                     None
                 };
 
-                let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
-                if sum_a.is_some() && sum_b.is_some() {
-                    sum = (sum + 4) >> 3;
-                } else if sum_a.is_some() != sum_b.is_some() {
-                    sum = (sum + 2) >> 2;
-                } else {
-                    sum = 1 << 7;
-                }
+                const DEFAULT_VALUE : u32 = 1 << 7; // = 1 << ( BitDepthC − 1 )
+                let result = match blk_idx {
+                    0 => { // If ( xO, yO ) is equal to ( 0, 0 ) or xO and yO are greater than 0
+                        if let (Some(left), Some(top)) = (left_sum, top_sum) {
+                            (left + top + 4) >> 3
+                        } else if let Some(s) = top_sum {
+                            (s + 2) >> 2
+                        } else if let Some(s) = left_sum {
+                            (s + 2) >> 2
+                        } else {
+                            DEFAULT_VALUE
+                        }
+                    }
+                    1 => { // If xO is greater than 0 and yO is equal to 0
+                        if let Some(s) = top_sum {
+                            (s + 2) >> 2
+                        } else if let Some(s) = left_sum {
+                            (s + 2) >> 2
+                        } else {
+                            DEFAULT_VALUE
+                        }
+                    }
+                    2 => { // If xO is equal to 0 and yO is greater than 0
+                        if let Some(s) = left_sum {
+                            (s + 2) >> 2
+                        } else if let Some(s) = top_sum {
+                            (s + 2) >> 2
+                        } else {
+                            DEFAULT_VALUE
+                        }
+                    }
+                    3 => {
+                        if let (Some(left), Some(top)) = (left_sum, top_sum) {
+                            (left + top + 4) >> 3
+                        } else {
+                            DEFAULT_VALUE
+                        }
+                    }
+                    _ => unreachable!()
+                };
 
-                info!(" >chroma DC  blk: {blk_loc:?} A: {sum_a:?} B: {sum_b:?} sum: {sum}");
+                info!(" >chroma DC  blk: {blk_idx:?} left: {left_sum:?} top: {top_sum:?} sum: {result}");
                 let mut target_slice = target.mut_slice(point_to_plain_offset(blk_loc));
                 for row in target_slice.rows_iter_mut().take(4) {
-                    row[0..4].fill(sum as u8);
+                    row[0..4].fill(result as u8);
                 }
             }
         }

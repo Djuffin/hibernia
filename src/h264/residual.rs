@@ -282,6 +282,7 @@ const fn norm_adjust_4x4(m: u8, idx: usize) -> u8 {
 // Section 8.5.9 Derivation process for scaling functions
 #[inline]
 pub const fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
+    // See seq_scaling_matrix_present_flag=0, all values in Flat_4x4_16 are equal 16.
     let scaling_list = 16;
     scaling_list * (norm_adjust_4x4(m, idx) as i32)
 }
@@ -521,6 +522,18 @@ mod tests {
         let output = transform_4x4(&unzip_block_4x4(&block));
         assert_eq!(output.samples, expected.samples);
     }
+
+    #[test]
+    pub fn test_transform_4x4_zeros() {
+        test_transform_4x4(
+            Block4x4 { samples: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] },
+            Block4x4 {
+                samples: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+            },
+            28,
+        );
+    }
+
 
     #[test]
     pub fn test_transform_4x4_ex1() {

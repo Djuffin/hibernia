@@ -34,15 +34,20 @@ pub fn compare_frames(
         let mb_idx = x / MB_WIDTH + y / MB_WIDTH * width_in_mb;
         result.push_str(&format!("Y-plane mismatch at {x},{y} (MB:{mb_idx}) : {a} != {e}\n"));
     }
+    let chroma_mb_width = MB_WIDTH / 2;
     let actual_u = actual.get_u_plane();
     let expected_u = expected.get_u_plane();
     if let Some((x, y, a, e)) = compare_plane(width / 2, height / 2, actual_u, expected_u) {
-        result.push_str(&format!("U-plane mismatch at {x},{y} : {a} != {e}\n"));
+        let width_in_mb = width / 2 / chroma_mb_width;
+        let mb_idx = x / chroma_mb_width + (y / chroma_mb_width) * width_in_mb;
+        result.push_str(&format!("U-plane mismatch at {x},{y} (MB:{mb_idx}) : {a} != {e}\n"));
     }
     let actual_v = actual.get_v_plane();
     let expected_v = expected.get_v_plane();
     if let Some((x, y, a, e)) = compare_plane(width / 2, height / 2, actual_v, expected_v) {
-        result.push_str(&format!("V-plane mismatch at {x},{y} : {a} != {e}\n"));
+        let width_in_mb = width / 2 / chroma_mb_width;
+        let mb_idx = x / chroma_mb_width + (y / chroma_mb_width) * width_in_mb;
+        result.push_str(&format!("V-plane mismatch at {x},{y} (MB:{mb_idx}) width_in_mb:{width_in_mb} : {a} != {e}\n"));
     }
 
     result

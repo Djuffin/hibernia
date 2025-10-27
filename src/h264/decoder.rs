@@ -686,63 +686,69 @@ pub fn render_chroma_intra_prediction(
         }
         Intra_Chroma_Pred_Mode::DC => {
             // Section 8.3.4.1 Specification of Intra_Chroma_DC prediction mode
-            let mut ctx = Surroundings4x4::default();
+            let offset = point_to_plain_offset(loc);
+
+            // Calculate the sum of all the values at the top of the current block
+            let mut top_left = None;
+            let mut top_right = None;
+            if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                let target_slice = target.slice(PlaneOffset { y: offset.y - 1, ..offset });
+                top_left = Some(sum(&target_slice[0][0..4]));
+                top_right = Some(sum(&target_slice[0][4..8]));
+            }
+
+            // Calculate the sum of all the values at the left of the current block
+            let mut left_top = None;
+            let mut left_bottom = None;
+            if slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+                let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
+                let mut left_column = [0u8; 8];
+                for (idx, row) in target_slice.rows_iter().take(8).enumerate() {
+                    left_column[idx] = row[0];
+                }
+                left_top = Some(sum(&left_column[0..4]));
+                left_bottom = Some(sum(&left_column[4..8]));
+            }
+
             for blk_idx in 0..4 {
-                let mut blk_loc = get_4x4chroma_block_location(blk_idx);
-                blk_loc.x += loc.x;
-                blk_loc.y += loc.y;
-                ctx.load(target, blk_loc, false);
-
-                // Calculate the sum of all the values at the left of the current block
-                let same_mb = get_4x4chroma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
-                let left_sum = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
-                    Some(sum(ctx.left4()))
-                } else {
-                    None
-                };
-
-                // Calculate the sum of all the values at the top of the current block
-                let same_mb = get_4x4chroma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
-                let top_sum = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
-                    Some(sum(ctx.top4()))
-                } else {
-                    None
-                };
-
                 const DEFAULT_VALUE : u32 = 1 << 7; // = 1 << ( BitDepthC − 1 )
                 let result = match blk_idx {
                     0 => { // If ( xO, yO ) is equal to ( 0, 0 ) or xO and yO are greater than 0
-                        if let (Some(left), Some(top)) = (left_sum, top_sum) {
+                        if let (Some(left), Some(top)) = (left_top, top_left) {
                             (left + top + 4) >> 3
-                        } else if let Some(s) = top_sum {
+                        } else if let Some(s) = top_left {
                             (s + 2) >> 2
-                        } else if let Some(s) = left_sum {
+                        } else if let Some(s) = left_top {
                             (s + 2) >> 2
                         } else {
                             DEFAULT_VALUE
                         }
                     }
                     1 => { // If xO is greater than 0 and yO is equal to 0
-                        if let Some(s) = top_sum {
+                        if let Some(s) = top_right {
                             (s + 2) >> 2
-                        } else if let Some(s) = left_sum {
+                        } else if let Some(s) = left_top {
                             (s + 2) >> 2
                         } else {
                             DEFAULT_VALUE
                         }
                     }
                     2 => { // If xO is equal to 0 and yO is greater than 0
-                        if let Some(s) = left_sum {
+                        if let Some(s) = left_bottom {
                             (s + 2) >> 2
-                        } else if let Some(s) = top_sum {
+                        } else if let Some(s) = top_left {
                             (s + 2) >> 2
                         } else {
                             DEFAULT_VALUE
                         }
                     }
-                    3 => {
-                        if let (Some(left), Some(top)) = (left_sum, top_sum) {
+                    3 => { // If xO is equal to 0 and yO is greater than 0
+                       if let (Some(left), Some(top)) = (left_bottom, top_right) {
                             (left + top + 4) >> 3
+                        } else if let Some(s) = top_right {
+                            (s + 2) >> 2
+                        } else if let Some(s) = left_bottom {
+                            (s + 2) >> 2
                         } else {
                             DEFAULT_VALUE
                         }
@@ -750,7 +756,9 @@ pub fn render_chroma_intra_prediction(
                     _ => unreachable!()
                 };
 
-                info!(" >chroma DC  blk: {blk_idx:?} left: {left_sum:?} top: {top_sum:?} sum: {result}");
+                let mut blk_loc = get_4x4chroma_block_location(blk_idx);
+                blk_loc.x += loc.x;
+                blk_loc.y += loc.y;
                 let mut target_slice = target.mut_slice(point_to_plain_offset(blk_loc));
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].fill(result as u8);
@@ -786,7 +794,6 @@ pub fn render_chroma_intra_prediction(
             let c = (34 * v + 32) >> 6;
 
             let offset = point_to_plain_offset(loc);
-            info!(" >chroma Plane  blk: {loc:?} A: {a:?} B: {b:?} c: {c}");
             let mut target_slice = target.mut_slice(offset);
             for (y, row) in target_slice.rows_iter_mut().take(mb_height).enumerate() {
                 for (x, pixel) in row.iter_mut().take(mb_width).enumerate() {

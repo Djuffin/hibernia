@@ -59,7 +59,7 @@ impl DecoderContext {
 #[derive(Debug, Default)]
 pub struct Decoder {
     context: DecoderContext,
-    frame_buffer: Option<VideoFrame>,
+    frame_buffer: Vec<VideoFrame>,
 }
 
 impl Decoder {
@@ -108,8 +108,17 @@ impl Decoder {
 
                     info!("non-IDR Slice: {:#?}", slice);
                     if slice.header.slice_type != SliceType::I {
-                        break;
+                        todo!("implement P-slices")
                     }
+
+                    let frame = VideoFrame::new_with_padding(
+                        slice.sps.pic_width(),
+                        slice.sps.pic_hight(),
+                        v_frame::pixel::ChromaSampling::Cs420,
+                        16,
+                    );
+                    self.frame_buffer.push(frame);
+
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
@@ -121,23 +130,24 @@ impl Decoder {
                             .map_err(parse_error_handler)?;
 
                     info!("IDR Slice: {:#?}", slice);
+                    let frame = VideoFrame::new_with_padding(
+                        slice.sps.pic_width(),
+                        slice.sps.pic_hight(),
+                        v_frame::pixel::ChromaSampling::Cs420,
+                        16,
+                    );
+                    self.frame_buffer.push(frame);
+
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
-                    return self.process_slice(&mut slice); // Temporarily stop after first slice
+                    self.process_slice(&mut slice)?; // Temporarily stop after first slice
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {
                     let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
                     info!("SPS: {:#?}", sps);
                     assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
-                    let frame = VideoFrame::new_with_padding(
-                        sps.pic_width(),
-                        sps.pic_hight(),
-                        v_frame::pixel::ChromaSampling::Cs420,
-                        16,
-                    );
-                    self.frame_buffer = Some(frame);
                     self.context.put_sps(sps);
                 }
                 NalUnitType::PicParameterSet => {
@@ -162,16 +172,16 @@ impl Decoder {
         Ok(())
     }
 
-    pub fn get_frame_buffer(&self) -> Option<&VideoFrame> {
-        self.frame_buffer.as_ref()
+    pub fn get_frame_buffer(&self) -> &[VideoFrame] {
+        self.frame_buffer.as_slice()
     }
 
     fn process_slice(&mut self, slice: &mut Slice) -> Result<(), DecodingError> {
-        if self.frame_buffer.is_none() {
+        if self.frame_buffer.is_empty() {
             return Err(DecodingError::Wtf);
         }
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
-        let frame = self.frame_buffer.as_mut().unwrap();
+        let frame = self.frame_buffer.last_mut().unwrap();
         for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
             let mb_loc = slice.get_mb_location(mb_addr);
             if let Some(mb) = slice.get_mb(mb_addr) {

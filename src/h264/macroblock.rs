@@ -16,9 +16,9 @@ pub enum MbNeighborName {
     A = 1,
     /// Above
     B = 2,
-    /// Above-left
-    C = 3,
     /// Above-right
+    C = 3,
+    /// Above-left
     D = 4,
 }
 

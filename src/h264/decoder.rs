@@ -240,7 +240,6 @@ impl Decoder {
                                 get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0)
                                     .try_into()
                                     .unwrap();
-                            info!("QP: {qp} chroma qp: {chroma_qp}");
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
@@ -381,11 +380,16 @@ pub fn render_luma_4x4_intra_prediction(
     }
 
     let mut ctx = Surroundings4x4::default();
+    let has_c_mb_neighbor = slice.has_mb_neighbor(mb_addr, MbNeighborName::C);
     for blk_idx in 0..16 {
         let mut blk_loc = get_4x4luma_block_location(blk_idx);
         blk_loc.x += mb_loc.x;
         blk_loc.y += mb_loc.y;
-        let substitute_right = matches!(blk_idx, 3 | 7 | 11 | 13 | 15);
+        let substitute_right = match blk_idx {
+            3 | 7 | 11 | 13 | 15 => true,
+            5 => !has_c_mb_neighbor,
+            _ => false,
+        };
         ctx.load(target, blk_loc, substitute_right);
         let mut target_slice = target.mut_slice(ctx.offset);
 
@@ -438,7 +442,7 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Left => {
                 // Section 8.3.1.2.4 Specification of Intra_4x4_Diagonal_Down_Left prediction mode
-                let top_row = &ctx.top_row[1..];
+                let top_row = &ctx.top_row[1..=8];
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
                         let i = x + y;

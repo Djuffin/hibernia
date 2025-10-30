@@ -27,7 +27,7 @@ fn compare_plane(
     None
 }
 
-pub fn compare_frames(
+fn compare_frames(
     width: usize,
     height: usize,
     actual: &y4m::Frame,
@@ -62,20 +62,15 @@ pub fn compare_frames(
     result
 }
 
-pub fn compare_files(actual_filename: &str, expected_filename: &str) -> Result<(), String> {
-    fn stringify(x: Error) -> String {
-        format!("error code: {x}")
-    }
+pub fn compare_y4m_buffers(actual_y4m_data: &[u8], expected_y4m_data: &[u8]) -> Result<(), String> {
     fn y4m_stringify(x: y4m::Error) -> String {
-        format!("error code: {x}")
+        format!("y4m decoding error: {x:?}")
     }
 
-    let expected_file = fs::File::open(expected_filename).map_err(stringify)?;
-    let expected_reader = io::BufReader::new(expected_file);
+    let expected_reader = io::BufReader::new(expected_y4m_data);
     let mut expected_decoder = y4m::Decoder::new(expected_reader).map_err(y4m_stringify)?;
 
-    let actual_file = fs::File::open(actual_filename).map_err(stringify)?;
-    let actual_reader = io::BufReader::new(actual_file);
+    let actual_reader = io::BufReader::new(actual_y4m_data);
     let mut actual_decoder = y4m::Decoder::new(actual_reader).map_err(y4m_stringify)?;
 
     let expected_h = expected_decoder.get_height();

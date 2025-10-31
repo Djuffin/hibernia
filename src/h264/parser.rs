@@ -529,18 +529,77 @@ pub fn parse_slice_header(
     }
 
     if nal.nal_ref_idc != 0 {
+        let mut dec_ref_pic_marking = slice::DecRefPicMarking::default();
         if idr_pic_flag {
             let no_output_of_prior_pics_flag: bool;
             let long_term_reference_flag: bool;
             read_value!(input, no_output_of_prior_pics_flag, f);
             read_value!(input, long_term_reference_flag, f);
+            dec_ref_pic_marking.no_output_of_prior_pics_flag = Some(no_output_of_prior_pics_flag);
+            dec_ref_pic_marking.long_term_reference_flag = Some(long_term_reference_flag);
         } else {
             let adaptive_ref_pic_marking_mode_flag: bool;
             read_value!(input, adaptive_ref_pic_marking_mode_flag, f);
+            dec_ref_pic_marking.adaptive_ref_pic_marking_mode_flag =
+                Some(adaptive_ref_pic_marking_mode_flag);
             if adaptive_ref_pic_marking_mode_flag {
-                todo!("memory_management_control_operation");
+                loop {
+                    let memory_management_control_operation_val: u32;
+                    read_value!(input, memory_management_control_operation_val, ue);
+
+                    let op = match memory_management_control_operation_val {
+                        0 => break,
+                        1 => {
+                            let difference_of_pic_nums_minus1: u32;
+                            read_value!(input, difference_of_pic_nums_minus1, ue);
+                            slice::MemoryManagementControlOperation::MarkShortTermUnused {
+                                difference_of_pic_nums_minus1,
+                            }
+                        }
+                        2 => {
+                            let long_term_pic_num: u32;
+                            read_value!(input, long_term_pic_num, ue);
+                            slice::MemoryManagementControlOperation::MarkLongTermUnused {
+                                long_term_pic_num,
+                            }
+                        }
+                        3 => {
+                            let difference_of_pic_nums_minus1: u32;
+                            read_value!(input, difference_of_pic_nums_minus1, ue);
+                            let long_term_frame_idx: u32;
+                            read_value!(input, long_term_frame_idx, ue);
+                            slice::MemoryManagementControlOperation::MarkShortTermAsLongTerm {
+                                difference_of_pic_nums_minus1,
+                                long_term_frame_idx,
+                            }
+                        }
+                        4 => {
+                            let max_long_term_frame_idx_plus1: u32;
+                            read_value!(input, max_long_term_frame_idx_plus1, ue);
+                            slice::MemoryManagementControlOperation::SetMaxLongTermFrameIdx {
+                                max_long_term_frame_idx_plus1,
+                            }
+                        }
+                        5 => slice::MemoryManagementControlOperation::MarkAllUnused,
+                        6 => {
+                            let long_term_frame_idx: u32;
+                            read_value!(input, long_term_frame_idx, ue);
+                            slice::MemoryManagementControlOperation::MarkCurrentAsLongTerm {
+                                long_term_frame_idx,
+                            }
+                        }
+                        _ => {
+                            return Err(format!(
+                                "Invalid memory_management_control_operation: {}",
+                                memory_management_control_operation_val
+                            ))
+                        }
+                    };
+                    dec_ref_pic_marking.memory_management_operations.push(op);
+                }
             }
         }
+        header.dec_ref_pic_marking = Some(dec_ref_pic_marking);
     }
 
     read_value!(input, header.slice_qp_delta, se);
@@ -888,6 +947,10 @@ mod tests {
         assert_eq!(header.pic_order_cnt_lsb, Some(0));
         assert_eq!(header.slice_qp_delta, -4);
         assert_eq!(header.deblocking_filter_idc, DeblockingFilterIdc::On);
+        let dec_ref_pic_marking =
+            header.dec_ref_pic_marking.as_ref().expect("dec_ref_pic_marking is missing");
+        assert_eq!(dec_ref_pic_marking.no_output_of_prior_pics_flag, Some(false));
+        assert_eq!(dec_ref_pic_marking.long_term_reference_flag, Some(false));
 
         parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
         assert_eq!(slice.get_macroblock_count(), 16);

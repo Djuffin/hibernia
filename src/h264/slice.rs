@@ -47,22 +47,22 @@ impl TryFrom<u32> for DeblockingFilterIdc {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, FromPrimitive)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoryManagementControlOperation {
-    End = 0,
-    MarkShortTermUnused = 1,
-    MarkLongTermUnused = 2,
-    MarkShortTermAsLongTerm = 3,
-    SetMaxLongTermFrameIdx = 4,
-    MarkAllUnused = 5,
-    MarkCurrentAsLongTerm = 6,
+    MarkShortTermUnused { difference_of_pic_nums_minus1: u32 },
+    MarkLongTermUnused { long_term_pic_num: u32 },
+    MarkShortTermAsLongTerm { difference_of_pic_nums_minus1: u32, long_term_frame_idx: u32 },
+    SetMaxLongTermFrameIdx { max_long_term_frame_idx_plus1: u32 },
+    MarkAllUnused,
+    MarkCurrentAsLongTerm { long_term_frame_idx: u32 },
 }
 
-impl TryFrom<u32> for MemoryManagementControlOperation {
-    type Error = &'static str;
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown memory_management_control_operation.")
-    }
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct DecRefPicMarking {
+    pub no_output_of_prior_pics_flag: Option<bool>,
+    pub long_term_reference_flag: Option<bool>,
+    pub adaptive_ref_pic_marking_mode_flag: Option<bool>,
+    pub memory_management_operations: Vec<MemoryManagementControlOperation>,
 }
 
 // Section 7.4.3 Slice header semantics
@@ -89,7 +89,7 @@ pub struct SliceHeader {
     // may become an enum rather than Option in future (for ref_pic_list_mvc_modification)
     //pub ref_pic_list_modification: Option<RefPicListModifications>,
     //pub pred_weight_table: Option<PredWeightTable>,
-    //pub dec_ref_pic_marking: Option<DecRefPicMarking>,
+    pub dec_ref_pic_marking: Option<DecRefPicMarking>,
     //pub cabac_init_idc: Option<u32>,
     pub slice_qp_delta: i32,
     pub sp_for_switch_flag: Option<bool>,

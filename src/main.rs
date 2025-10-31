@@ -124,11 +124,27 @@ mod tests {
 
     #[test]
     pub fn test_NL1_Sony_D() -> Result<(), String> {
+        // Decoding of I slices
         test_decoding_against_gold("data/NL1_Sony_D.jsv", "data/NL1_Sony_D.y4m")
     }
 
     #[test]
     pub fn test_SVA_NL1_B() -> Result<(), String> {
+        // Decoding of I slices
         test_decoding_against_gold("data/SVA_NL1_B.264", "data/SVA_NL1_B.y4m")
+    }
+
+    #[test]
+    #[ignore = "not yet implemented"]
+    pub fn test_BA1_Sony_D() -> Result<(), String> {
+        // Decoding of I slices with the deblocking filter process enabled.
+        test_decoding_against_gold("data/BA1_Sony_D.jsv", "data/BA1_Sony_D.y4m")
+    }
+
+    #[test]
+    #[ignore = "not yet implemented"]
+    pub fn test_NL2_Sony_H() -> Result<(), String> {
+        // Decoding of P slices.
+        test_decoding_against_gold("data/NL2_Sony_H.jsv", "data/NL2_Sony_H.y4m")
     }
 }

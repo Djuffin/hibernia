@@ -461,6 +461,7 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
     Ok(header)
 }
 
+// Section 7.3.3.3 Decoded reference picture marking syntax
 pub fn parse_dec_ref_pic_marking(
     input: &mut BitReader,
     idr_pic_flag: bool,

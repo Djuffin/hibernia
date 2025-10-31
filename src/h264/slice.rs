@@ -47,6 +47,24 @@ impl TryFrom<u32> for DeblockingFilterIdc {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, FromPrimitive)]
+pub enum MemoryManagementControlOperation {
+    End = 0,
+    MarkShortTermUnused = 1,
+    MarkLongTermUnused = 2,
+    MarkShortTermAsLongTerm = 3,
+    SetMaxLongTermFrameIdx = 4,
+    MarkAllUnused = 5,
+    MarkCurrentAsLongTerm = 6,
+}
+
+impl TryFrom<u32> for MemoryManagementControlOperation {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or("Unknown memory_management_control_operation.")
+    }
+}
+
 // Section 7.4.3 Slice header semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SliceHeader {

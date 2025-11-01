@@ -1,7 +1,4 @@
 #![macro_use]
-
-use crate::h264::slice::DeblockingFilterIdc;
-
 use super::decoder;
 use super::macroblock;
 use super::nal;
@@ -19,11 +16,14 @@ use log::trace;
 use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, IMb, IMbType,
     Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
-    MbPredictionMode, PcmMb,
+    MbPredictionMode, PMb, PMbType, PcmMb,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use slice::{DecRefPicMarking, MemoryManagementControlOperation, Slice, SliceHeader, SliceType};
+use slice::{
+    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, Slice, SliceHeader,
+    SliceType,
+};
 use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 
 pub type BitReader<'a> = rbsp::RbspReader<'a>;
@@ -852,17 +852,32 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
         input.align();
     }
 
-    if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
-        todo!("non I-slices");
-    }
-
     let mut more_data = true;
-    let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
     while more_data {
-        trace!(
-            "=============== Parsing macroblock: {} ===============",
-            slice.get_macroblock_count()
-        );
+        let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
+        if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
+            let mb_skip_run: usize;
+            read_value!(input, mb_skip_run, ue);
+            let blocks_left = pic_size_in_mbs - slice.get_next_mb_addr() as usize;
+            if mb_skip_run > blocks_left {
+                return Err(format!(
+                    "Trying to skip {mb_skip_run} blocks, only {blocks_left} blocks left"
+                ));
+            }
+            for i in 0..mb_skip_run {
+                let block = Macroblock::P(PMb { mb_type: PMbType::P_Skip });
+                slice.append_mb(block);
+            }
+            if mb_skip_run > 0 {
+                more_data = more_rbsp_data(input);
+                if more_data {
+                    continue;
+                }
+            }
+        }
+
+        let next_mb_addr = slice.get_next_mb_addr() as usize;
+        trace!("=============== Parsing macroblock: {next_mb_addr} ===============");
         let block = parse_macroblock(input, slice)?;
         slice.append_mb(block);
         if slice.get_macroblock_count() < pic_size_in_mbs {

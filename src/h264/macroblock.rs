@@ -376,7 +376,7 @@ pub struct IMb {
 
 // Macroblock of type P
 #[derive(Clone, Debug, Default)]
-pub struct P {
+pub struct PMb {
     pub mb_type: PMbType,
 }
 
@@ -384,7 +384,7 @@ pub struct P {
 pub enum Macroblock {
     I(IMb),
     PCM(PcmMb),
-    P(P),
+    P(PMb),
 }
 
 #[allow(non_snake_case)]

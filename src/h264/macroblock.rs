@@ -363,6 +363,7 @@ pub struct PcmMb {
     pub pcm_sample_chroma_cr: Vec<u8>,
 }
 
+// Macroblock of type I
 #[derive(Clone, Debug, Default)]
 pub struct IMb {
     pub mb_type: IMbType,
@@ -374,10 +375,59 @@ pub struct IMb {
     pub residual: Option<Box<Residual>>,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MotionVector {
+    pub x: i16,
+    pub y: i16,
+}
+
+// Holds prediction data for one partition
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PartitionInfo {
+    pub ref_idx_l0: u8,
+    pub mv_l0: MotionVector,
+}
+
+// Table 7-17 - Sub-macroblock types in P macroblock
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
+pub enum SubMbType {
+    #[default]
+    P_L0_8x8 = 0,
+    P_L0_8x4 = 1,
+    P_L0_4x8 = 2,
+    P_L0_4x4 = 3,
+}
+
+impl TryFrom<u32> for SubMbType {
+    type Error = &'static str;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or("Unknown sub-mb type.")
+    }
+}
+
+// Holds data for a P_8x8 sub-macroblock
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SubMacroblock {
+    pub sub_mb_type: SubMbType,
+    // A sub-macroblock can have up to 4 partitions (for 4x4)
+    pub partitions: [PartitionInfo; 4],
+}
+
+// Enum to hold the two different kinds of motion info
+#[derive(Clone, Debug)]
+pub enum PMbMotion {
+    // For 16x16, 16x8, 8x16 partitions
+    Partitions([PartitionInfo; 4]),
+    // For P_8x8 and P_8x8ref0
+    SubMacroblocks([SubMacroblock; 4]),
+}
+
 // Macroblock of type P
 #[derive(Clone, Debug, Default)]
 pub struct PMb {
     pub mb_type: PMbType,
+    pub motion: Option<PMbMotion>,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
     pub residual: Option<Box<Residual>>,

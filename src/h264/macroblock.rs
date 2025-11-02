@@ -378,6 +378,9 @@ pub struct IMb {
 #[derive(Clone, Debug, Default)]
 pub struct PMb {
     pub mb_type: PMbType,
+    pub coded_block_pattern: CodedBlockPattern,
+    pub mb_qp_delta: i32,
+    pub residual: Option<Box<Residual>>,
 }
 
 #[derive(Clone, Debug)]
@@ -401,6 +404,20 @@ impl IMb {
             }
             IMbType::I_PCM => MbPredictionMode::None,
             _ => MbPredictionMode::Intra_16x16,
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+impl PMb {
+    #[inline]
+    pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
+        match self.mb_type {
+            PMbType::P_Skip
+            | PMbType::P_L0_16x16
+            | PMbType::P_L0_L0_16x8
+            | PMbType::P_L0_L0_8x16 => MbPredictionMode::Pred_L0,
+            PMbType::P_8x8ref0 | PMbType::P_8x8 => MbPredictionMode::None,
         }
     }
 }
@@ -433,10 +450,8 @@ impl Macroblock {
     pub fn get_coded_block_pattern(&self) -> CodedBlockPattern {
         match self {
             Macroblock::I(mb) => mb.coded_block_pattern,
+            Macroblock::P(mb) => mb.coded_block_pattern,
             Macroblock::PCM(_) => CodedBlockPattern::default(),
-            Macroblock::P(_) => {
-                todo!("P blocks")
-            }
         }
     }
 
@@ -445,10 +460,10 @@ impl Macroblock {
             Macroblock::I(mb) => {
                 mb.residual = r;
             }
-            Macroblock::PCM(_) => {}
-            Macroblock::P(_) => {
-                todo!("P blocks")
+            Macroblock::P(mb) => {
+                mb.residual = r;
             }
+            Macroblock::PCM(_) => {}
         }
     }
 }

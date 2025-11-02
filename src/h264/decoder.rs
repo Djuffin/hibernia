@@ -107,10 +107,6 @@ impl Decoder {
                             .map_err(parse_error_handler)?;
 
                     info!("non-IDR Slice: {:#?}", slice);
-                    if slice.header.slice_type != SliceType::I {
-                        todo!("implement P-slices")
-                    }
-
                     let frame = VideoFrame::new_with_padding(
                         slice.sps.pic_width(),
                         slice.sps.pic_hight(),

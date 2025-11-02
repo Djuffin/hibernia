@@ -744,9 +744,52 @@ fn calc_prev_intra4x4_pred_mode(
 }
 
 pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
-    let mb_type: IMbType;
-    read_value!(input, mb_type, ue);
+    let mb_type_val: u32;
+    read_value!(input, mb_type_val, ue);
 
+    if slice.header.slice_type == SliceType::I || slice.header.slice_type == SliceType::SI {
+        let mb_type = IMbType::try_from(mb_type_val)?;
+        parse_i_macroblock(input, slice, mb_type)
+    } else {
+        let mb_type = PMbType::try_from(mb_type_val)?;
+        parse_p_macroblock(input, slice, mb_type)
+    }
+}
+
+pub fn parse_p_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    mb_type: PMbType,
+) -> ParseResult<Macroblock> {
+    let mut block = PMb { mb_type, ..PMb::default() };
+    let this_mb_addr = slice.get_next_mb_addr();
+    /*
+        TODO: Parse motion vectors here
+    */
+
+    let coded_block_pattern_num: u8;
+    read_value!(input, coded_block_pattern_num, ue, 8);
+    block.coded_block_pattern =
+        tables::code_num_to_inter_coded_block_pattern(coded_block_pattern_num)
+            .ok_or("Invalid coded_block_pattern")?;
+
+    if !block.coded_block_pattern.is_zero() {
+        read_value!(input, block.mb_qp_delta, se);
+        let mut residual = Box::<Residual>::default();
+        residual.coded_block_pattern = block.coded_block_pattern;
+        residual.prediction_mode = block.MbPartPredMode(0);
+        parse_residual(input, slice, &mut residual)?;
+        block.residual = Some(residual);
+    }
+
+    Ok(Macroblock::P(block))
+}
+
+pub fn parse_i_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    mb_type: IMbType,
+) -> ParseResult<Macroblock> {
     if mb_type == IMbType::I_PCM {
         let mut block = PcmMb::default();
         input.align();
@@ -865,7 +908,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
                 ));
             }
             for i in 0..mb_skip_run {
-                let block = Macroblock::P(PMb { mb_type: PMbType::P_Skip });
+                let block = Macroblock::P(PMb { mb_type: PMbType::P_Skip, ..Default::default() });
                 slice.append_mb(block);
             }
             if mb_skip_run > 0 {

@@ -22,11 +22,24 @@ const CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN: [u8; 48] = [
     35, 37, 42, 44, 1, 2, 4, 8, 17, 18, 20, 24, 6, 9, 22, 25, 32, 33, 34, 36, 40, 38, 41,
 ];
 
+const CODE_NUM_TO_INTER_CODED_BLOCK_PATTERN: [u8; 48] = [
+    0, 16, 1, 2, 4, 8, 32, 3, 5, 10, 12, 15, 47, 7, 11, 13, 14, 6, 9, 31, 35, 37, 42, 44, 33, 34,
+    36, 40, 39, 43, 45, 46, 17, 18, 20, 24, 19, 21, 26, 28, 23, 27, 29, 30, 22, 25, 38, 41,
+];
+
 #[inline]
 pub fn code_num_to_intra_coded_block_pattern(x: u8) -> Option<CodedBlockPattern> {
     let result =
         CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN.get(x as usize).map(|x| CodedBlockPattern(*x));
-    trace!("coded_block_pattern num: {} pattern: {:?}", x, result);
+    trace!("intra coded_block_pattern num: {} pattern: {:?}", x, result);
+    result
+}
+
+#[inline]
+pub fn code_num_to_inter_coded_block_pattern(x: u8) -> Option<CodedBlockPattern> {
+    let result =
+        CODE_NUM_TO_INTER_CODED_BLOCK_PATTERN.get(x as usize).map(|x| CodedBlockPattern(*x));
+    trace!("inter coded_block_pattern num: {} pattern: {:?}", x, result);
     result
 }
 

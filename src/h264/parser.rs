@@ -604,6 +604,20 @@ pub fn parse_slice_header(
         read_value!(input, header.redundant_pic_cnt, ue);
     }
 
+    if matches!(header.slice_type, SliceType::P | SliceType::SP | SliceType::B) {
+        let num_ref_idx_active_override_flag: bool;
+        read_value!(input, num_ref_idx_active_override_flag, f);
+        if num_ref_idx_active_override_flag {
+            read_value!(input, header.num_ref_idx_l0_active_minus1, ue);
+            if header.slice_type == SliceType::B {
+                read_value!(input, header.num_ref_idx_l1_active_minus1, ue);
+            }
+        } else {
+            header.num_ref_idx_l0_active_minus1 = pps.num_ref_idx_l0_default_active_minus1;
+            header.num_ref_idx_l1_active_minus1 = pps.num_ref_idx_l1_default_active_minus1;
+        }
+    }
+
     if nal.nal_ref_idc != 0 {
         header.dec_ref_pic_marking = Some(parse_dec_ref_pic_marking(input, idr_pic_flag)?);
     }
@@ -743,6 +757,7 @@ fn calc_prev_intra4x4_pred_mode(
     result
 }
 
+// Section 7.3.5 Macroblock layer syntax
 pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
     let mb_type_val: u32;
     read_value!(input, mb_type_val, ue);
@@ -763,8 +778,22 @@ pub fn parse_p_macroblock(
 ) -> ParseResult<Macroblock> {
     let mut block = PMb { mb_type, ..PMb::default() };
     let this_mb_addr = slice.get_next_mb_addr();
+    let num_mb_part = block.NumMbPart();
+
     /*
         TODO: Parse motion vectors here
+
+
+    let ref_idx_l0 = [0u8;4];
+    let ref_idx_l1 = [0u8;4];
+    for part_idx in 0..num_mb_part {
+        if slice.header.num_ref_idx_l0_active_minus1 > 0 &&
+           block.MbPartPredMode(part_idx) != MbPredictionMode::Pred_L1 {
+
+        }
+
+    }
+
     */
 
     let coded_block_pattern_num: u8;

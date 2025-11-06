@@ -85,7 +85,9 @@ pub struct SliceHeader {
     pub redundant_pic_cnt: Option<u32>,
 
     //pub direct_spatial_mv_pred_flag: Option<bool>,
-    //pub num_ref_idx_active: Option<NumRefIdxActive>,
+    pub num_ref_idx_l0_active_minus1: u32,
+    pub num_ref_idx_l1_active_minus1: u32,
+
     // may become an enum rather than Option in future (for ref_pic_list_mvc_modification)
     //pub ref_pic_list_modification: Option<RefPicListModifications>,
     //pub pred_weight_table: Option<PredWeightTable>,

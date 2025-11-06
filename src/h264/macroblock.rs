@@ -461,13 +461,22 @@ impl IMb {
 #[allow(non_snake_case)]
 impl PMb {
     #[inline]
-    pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
+    pub const fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self.mb_type {
             PMbType::P_Skip
             | PMbType::P_L0_16x16
             | PMbType::P_L0_L0_16x8
             | PMbType::P_L0_L0_8x16 => MbPredictionMode::Pred_L0,
             PMbType::P_8x8ref0 | PMbType::P_8x8 => MbPredictionMode::None,
+        }
+    }
+
+    #[inline]
+    pub const fn NumMbPart(&self) -> usize {
+        match self.mb_type {
+            PMbType::P_Skip | PMbType::P_L0_16x16 => 1,
+            PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => 2,
+            PMbType::P_8x8ref0 | PMbType::P_8x8 => 4,
         }
     }
 }

@@ -16,7 +16,8 @@ use log::trace;
 use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, IMb, IMbType,
     Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName,
-    MbPredictionMode, PMb, PMbType, PcmMb,
+    MbPredictionMode, MotionVector, PMb, PMbMotion, PMbType, PartitionInfo, PcmMb, SubMacroblock,
+    SubMbType,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -779,22 +780,77 @@ pub fn parse_p_macroblock(
     let mut block = PMb { mb_type, ..PMb::default() };
     let this_mb_addr = slice.get_next_mb_addr();
     let num_mb_part = block.NumMbPart();
+    let mb_part_pred_mode = block.MbPartPredMode(0);
 
-    /*
-        TODO: Parse motion vectors here
+    if mb_part_pred_mode != MbPredictionMode::None {
+        // P_L0_16x16, P_L0_L0_16x8, P_L0_L0_8x16
+        let mut partitions = [PartitionInfo::default(); 4];
+        assert!(num_mb_part <= partitions.len());
 
+        if mb_part_pred_mode != MbPredictionMode::Pred_L1 {
+            if slice.header.num_ref_idx_l0_active_minus1 > 0
+            {
+                for i in 0..num_mb_part {
+                    read_value!(input, partitions[i].ref_idx_l0, ue, 8);
+                }
+            }
 
-    let ref_idx_l0 = [0u8;4];
-    let ref_idx_l1 = [0u8;4];
-    for part_idx in 0..num_mb_part {
-        if slice.header.num_ref_idx_l0_active_minus1 > 0 &&
-           block.MbPartPredMode(part_idx) != MbPredictionMode::Pred_L1 {
-
+            for i in 0..num_mb_part {
+                let mvd_x: i32;
+                let mvd_y: i32;
+                read_value!(input, mvd_x, se);
+                read_value!(input, mvd_y, se);
+                partitions[i].mv_l0 = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+            }
         }
 
-    }
+        block.motion = Some(PMbMotion::Partitions(partitions));
+    } else {
+        // P_8x8 or P_8x8ref0
+        let mut sub_macroblocks = [SubMacroblock::default(); 4];
+        for i in 0..sub_macroblocks.len() {
+            // 4 sub-macroblocks
+            let sub_mb_type_val: u32;
+            read_value!(input, sub_mb_type_val, ue);
+            let sub_mb_type = SubMbType::try_from(sub_mb_type_val)?;
+            sub_macroblocks[i].sub_mb_type = sub_mb_type;
+        }
 
-    */
+        let mut ref_idx_l0 = [0u8; 4];
+        if slice.header.num_ref_idx_l0_active_minus1 > 0 {
+            for i in 0..4 {
+                if mb_type == PMbType::P_8x8ref0 {
+                    ref_idx_l0[i] = 0;
+                } else {
+                    read_value!(input, ref_idx_l0[i], ue, 8);
+                }
+            }
+        }
+
+        let mut mvd_l0 = [[MotionVector::default(); 4]; 4]; // For each sub-mb, for each partition
+        for i in 0..sub_macroblocks.len() {
+            // sub-macroblock index
+            let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
+            for j in 0..num_sub_mb_part {
+                // sub-macroblock partition index
+                let mvd_x: i32;
+                let mvd_y: i32;
+                read_value!(input, mvd_x, se);
+                read_value!(input, mvd_y, se);
+                mvd_l0[i][j] = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+            }
+        }
+
+        for i in 0..sub_macroblocks.len() {
+            let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
+            for j in 0..num_sub_mb_part {
+                sub_macroblocks[i].partitions[j].ref_idx_l0 = ref_idx_l0[i];
+                sub_macroblocks[i].partitions[j].mv_l0 = mvd_l0[i][j];
+            }
+        }
+
+        block.motion = Some(PMbMotion::SubMacroblocks(sub_macroblocks));
+    }
 
     let coded_block_pattern_num: u8;
     read_value!(input, coded_block_pattern_num, ue, 8);

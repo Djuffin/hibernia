@@ -406,6 +406,18 @@ impl TryFrom<u32> for SubMbType {
     }
 }
 
+#[allow(non_camel_case_types)]
+impl SubMbType {
+    // Table 7-17 – Sub-macroblock types in P macroblocks
+    pub fn NumSubMbPart(&self) -> usize {
+        match self {
+            SubMbType::P_L0_8x8 => 1,
+            SubMbType::P_L0_8x4 | SubMbType::P_L0_4x8 => 2,
+            SubMbType::P_L0_4x4 => 4,
+        }
+    }
+}
+
 // Holds data for a P_8x8 sub-macroblock
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SubMacroblock {

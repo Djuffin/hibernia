@@ -101,12 +101,12 @@ impl Decoder {
                 NalUnitType::SliceDataA => {}
                 NalUnitType::SliceDataB => {}
                 NalUnitType::SliceDataC => {}
-                NalUnitType::NonIDRSlice => {
+                NalUnitType::IDRSlice | NalUnitType::NonIDRSlice => {
                     let mut slice =
                         parser::parse_slice_header(&self.context, &nal, &mut unit_input)
                             .map_err(parse_error_handler)?;
 
-                    info!("non-IDR Slice: {:#?}", slice);
+                    info!("{:?} {:#?}", nal.nal_unit_type, slice);
                     let frame = VideoFrame::new_with_padding(
                         slice.sps.pic_width(),
                         slice.sps.pic_hight(),
@@ -119,25 +119,6 @@ impl Decoder {
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
                     self.process_slice(&mut slice)?;
-                }
-                NalUnitType::IDRSlice => {
-                    let mut slice =
-                        parser::parse_slice_header(&self.context, &nal, &mut unit_input)
-                            .map_err(parse_error_handler)?;
-
-                    info!("IDR Slice: {:#?}", slice);
-                    let frame = VideoFrame::new_with_padding(
-                        slice.sps.pic_width(),
-                        slice.sps.pic_hight(),
-                        v_frame::pixel::ChromaSampling::Cs420,
-                        16,
-                    );
-                    self.frame_buffer.push(frame);
-
-                    parser::parse_slice_data(&mut unit_input, &mut slice)
-                        .map_err(parse_error_handler)?;
-                    info!("Blocks: {:#?}", slice.get_macroblock_count());
-                    self.process_slice(&mut slice)?; // Temporarily stop after first slice
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {

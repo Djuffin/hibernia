@@ -41,9 +41,10 @@ pub enum DeblockingFilterIdc {
 }
 
 impl TryFrom<u32> for DeblockingFilterIdc {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown deblocking filter profile idc.")
+        FromPrimitive::from_u32(value)
+            .ok_or_else(|| format!("Unknown deblocking filter profile: {value}"))
     }
 }
 

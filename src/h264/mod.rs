@@ -46,9 +46,9 @@ impl Profile {
 }
 
 impl TryFrom<u32> for Profile {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown profile.")
+        FromPrimitive::from_u32(value).ok_or_else(|| format!("Unknown profile: {value}"))
     }
 }
 
@@ -91,9 +91,9 @@ impl ColorPlane {
 }
 
 impl TryFrom<u32> for ChromaFormat {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown chroma format.")
+        FromPrimitive::from_u32(value).ok_or_else(|| format!("Unknown chroma format: {value}"))
     }
 }
 

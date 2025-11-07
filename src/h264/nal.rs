@@ -27,12 +27,13 @@ pub enum NalUnitType {
 }
 
 impl TryFrom<u32> for NalUnitType {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             17 | 18 | 22 | 23 => Ok(NalUnitType::Reserved),
             0 | 24..=31 => Ok(NalUnitType::Unspecified),
-            _ => FromPrimitive::from_u32(value).ok_or("Unknown NAL unit type."),
+            _ => FromPrimitive::from_u32(value)
+                .ok_or_else(|| format!("Unknown NAL unit type: {value}")),
         }
     }
 }

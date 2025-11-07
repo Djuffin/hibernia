@@ -199,9 +199,9 @@ pub enum IMbType {
 }
 
 impl TryFrom<u32> for IMbType {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown I-mb type.")
+        FromPrimitive::from_u32(value).ok_or_else(|| format!("Unknown I-mb type: {value}"))
     }
 }
 
@@ -219,9 +219,9 @@ pub enum PMbType {
 }
 
 impl TryFrom<u32> for PMbType {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown P-mb type.")
+        FromPrimitive::from_u32(value).ok_or_else(|| format!("Unknown P-mb type: {value}"))
     }
 }
 
@@ -283,9 +283,10 @@ impl Intra_4x4_SamplePredMode {
 }
 
 impl TryFrom<u32> for Intra_4x4_SamplePredMode {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown 4x4 sample prediction mode.")
+        FromPrimitive::from_u32(value)
+            .ok_or_else(|| format!("Unknown 4x4 sample prediction mode: {value}"))
     }
 }
 
@@ -300,9 +301,10 @@ pub enum Intra_16x16_SamplePredMode {
 }
 
 impl TryFrom<u32> for Intra_16x16_SamplePredMode {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown 16x16 sample prediction mode.")
+        FromPrimitive::from_u32(value)
+            .ok_or_else(|| format!("Unknown 16x16 sample prediction mode: {value}"))
     }
 }
 
@@ -324,9 +326,10 @@ impl Display for Intra_Chroma_Pred_Mode {
 }
 
 impl TryFrom<u32> for Intra_Chroma_Pred_Mode {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown chroma prediction mode.")
+        FromPrimitive::from_u32(value)
+            .ok_or_else(|| format!("Unknown chrome prediction mode: {value}"))
     }
 }
 
@@ -400,9 +403,9 @@ pub enum SubMbType {
 }
 
 impl TryFrom<u32> for SubMbType {
-    type Error = &'static str;
+    type Error = String;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        FromPrimitive::from_u32(value).ok_or("Unknown sub-mb type.")
+        FromPrimitive::from_u32(value).ok_or_else(|| format!("Unknown sub-mb type: {value}"))
     }
 }
 

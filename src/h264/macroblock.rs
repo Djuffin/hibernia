@@ -512,9 +512,10 @@ impl Macroblock {
                 None => 0,
             },
             Macroblock::PCM(_) => 16,
-            Macroblock::P(_) => {
-                todo!("P blocks")
-            }
+            Macroblock::P(mb) => match &mb.residual {
+                Some(r) => r.get_nc(blk_idx, plane),
+                None => 0,
+            },
         }
     }
 

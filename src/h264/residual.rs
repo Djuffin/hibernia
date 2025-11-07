@@ -86,12 +86,12 @@ impl Residual {
         let blk_idx = blk_idx as usize;
         match plane {
             ColorPlane::Y => match self.prediction_mode {
-                MbPredictionMode::None => todo!(),
-                MbPredictionMode::Intra_8x8 => todo!(),
-                MbPredictionMode::Intra_4x4 => self.luma_level4x4_nc[blk_idx],
                 MbPredictionMode::Intra_16x16 => self.ac_level16x16_nc[blk_idx],
-                MbPredictionMode::Pred_L0 => todo!(),
-                MbPredictionMode::Pred_L1 => todo!(),
+                MbPredictionMode::Intra_4x4
+                | MbPredictionMode::Pred_L0
+                | MbPredictionMode::Pred_L1
+                | MbPredictionMode::None => self.luma_level4x4_nc[blk_idx],
+                MbPredictionMode::Intra_8x8 => todo!(),
             },
 
             ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx],

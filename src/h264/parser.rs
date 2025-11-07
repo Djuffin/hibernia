@@ -1063,8 +1063,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
         input.align();
     }
 
-    let mut more_data = true;
-    while more_data {
+    loop {
         let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
         if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
             let mb_skip_run: usize;
@@ -1080,9 +1079,8 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
                 slice.append_mb(block);
             }
             if mb_skip_run > 0 {
-                more_data = more_rbsp_data(input);
-                if more_data {
-                    continue;
+                if !more_rbsp_data(input) {
+                    break;
                 }
             }
         }
@@ -1092,9 +1090,11 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
         let block = parse_macroblock(input, slice)?;
         slice.append_mb(block);
         if slice.get_macroblock_count() < pic_size_in_mbs {
-            more_data = more_rbsp_data(input);
+            if !more_rbsp_data(input) {
+                break;
+            }
         } else {
-            more_data = false;
+            break;
         }
     }
     Ok(())

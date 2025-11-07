@@ -784,8 +784,7 @@ pub fn parse_slice_header(
 
     header.ref_pic_list_modification = parse_ref_pic_list_modification(input, header.slice_type)?;
 
-    if (pps.weighted_pred_flag
-        && (header.slice_type == SliceType::P || header.slice_type == SliceType::SP))
+    if (pps.weighted_pred_flag && matches!(header.slice_type, SliceType::P | SliceType::SP))
         || (pps.weighted_bipred_idc == 1 && header.slice_type == SliceType::B)
     {
         header.pred_weight_table = Some(parse_pred_weight_table(input, &header, sps, pps)?);
@@ -935,7 +934,7 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
     let mb_type_val: u32;
     read_value!(input, mb_type_val, ue);
 
-    if slice.header.slice_type == SliceType::I || slice.header.slice_type == SliceType::SI {
+    if matches!(slice.header.slice_type, SliceType::I | SliceType::SI) {
         let mb_type = IMbType::try_from(mb_type_val)?;
         parse_i_macroblock(input, slice, mb_type)
     } else {

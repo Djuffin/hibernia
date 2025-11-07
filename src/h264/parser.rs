@@ -22,8 +22,9 @@ use macroblock::{
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{
-    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation,
+    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, PredWeightTable,
     RefPicListModification, RefPicListModifications, Slice, SliceHeader, SliceType,
+    WeightingFactors,
 };
 use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 
@@ -544,6 +545,86 @@ pub fn parse_ref_pic_list_modification(
     Ok(modifications)
 }
 
+// Section 7.3.3.2 Prediction weight table syntax
+pub fn parse_pred_weight_table(
+    input: &mut BitReader,
+    slice_header: &SliceHeader,
+    sps: &SequenceParameterSet,
+    pps: &PicParameterSet,
+) -> ParseResult<PredWeightTable> {
+    let mut table = PredWeightTable::default();
+    read_value!(input, table.luma_log2_weight_denom, ue, 8);
+    if sps.ChromaArrayType() != ChromaFormat::Monochrome {
+        read_value!(input, table.chroma_log2_weight_denom, ue, 8);
+    }
+
+    for i in 0..=slice_header.num_ref_idx_l0_active_minus1 {
+        let mut factors = WeightingFactors {
+            luma_weight: 1 << table.luma_log2_weight_denom,
+            luma_offset: 0,
+            chroma_weights: [
+                1 << table.chroma_log2_weight_denom,
+                1 << table.chroma_log2_weight_denom,
+            ],
+            chroma_offsets: [0, 0],
+        };
+
+        let luma_weight_l0_flag: bool;
+        read_value!(input, luma_weight_l0_flag, f);
+        if luma_weight_l0_flag {
+            read_value!(input, factors.luma_weight, se);
+            read_value!(input, factors.luma_offset, se);
+        }
+
+        if sps.ChromaArrayType() != ChromaFormat::Monochrome {
+            let chroma_weight_l0_flag: bool;
+            read_value!(input, chroma_weight_l0_flag, f);
+            if chroma_weight_l0_flag {
+                for j in 0..2 {
+                    read_value!(input, factors.chroma_weights[j], se);
+                    read_value!(input, factors.chroma_offsets[j], se);
+                }
+            }
+        }
+        table.list0.push(factors);
+    }
+
+    if slice_header.slice_type == SliceType::B {
+        for i in 0..=slice_header.num_ref_idx_l1_active_minus1 {
+            let mut factors = WeightingFactors {
+                luma_weight: 1 << table.luma_log2_weight_denom,
+                luma_offset: 0,
+                chroma_weights: [
+                    1 << table.chroma_log2_weight_denom,
+                    1 << table.chroma_log2_weight_denom,
+                ],
+                chroma_offsets: [0, 0],
+            };
+
+            let luma_weight_l1_flag: bool;
+            read_value!(input, luma_weight_l1_flag, f);
+            if luma_weight_l1_flag {
+                read_value!(input, factors.luma_weight, se);
+                read_value!(input, factors.luma_offset, se);
+            }
+
+            if sps.ChromaArrayType() != ChromaFormat::Monochrome {
+                let chroma_weight_l1_flag: bool;
+                read_value!(input, chroma_weight_l1_flag, f);
+                if chroma_weight_l1_flag {
+                    for j in 0..2 {
+                        read_value!(input, factors.chroma_weights[j], se);
+                        read_value!(input, factors.chroma_offsets[j], se);
+                    }
+                }
+            }
+            table.list1.push(factors);
+        }
+    }
+
+    Ok(table)
+}
+
 // Section 7.3.3.3 Decoded reference picture marking syntax
 pub fn parse_dec_ref_pic_marking(
     input: &mut BitReader,
@@ -702,6 +783,13 @@ pub fn parse_slice_header(
     }
 
     header.ref_pic_list_modification = parse_ref_pic_list_modification(input, header.slice_type)?;
+
+    if (pps.weighted_pred_flag
+        && (header.slice_type == SliceType::P || header.slice_type == SliceType::SP))
+        || (pps.weighted_bipred_idc == 1 && header.slice_type == SliceType::B)
+    {
+        header.pred_weight_table = Some(parse_pred_weight_table(input, &header, sps, pps)?);
+    }
 
     if nal.nal_ref_idc != 0 {
         header.dec_ref_pic_marking = Some(parse_dec_ref_pic_marking(input, idr_pic_flag)?);

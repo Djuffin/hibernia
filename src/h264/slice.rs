@@ -80,6 +80,43 @@ pub struct RefPicListModifications {
     pub list1: Vec<RefPicListModification>,
 }
 
+/// Holds the weighting factors for a single reference picture.
+/// These values are used to apply a weighted prediction, modifying
+/// the sample values from the reference picture before they are used
+/// for inter-prediction.
+/// Corresponds to the set of luma_weight_lX, luma_offset_lX,
+/// chroma_weight_lX, and chroma_offset_lX syntax elements.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeightingFactors {
+    /// The weight to be applied to the luma component of the reference picture.
+    pub luma_weight: i32,
+    /// The offset to be applied to the luma component after weighting.
+    pub luma_offset: i32,
+    /// An array holding the weights for Cb and Cr components, respectively.
+    pub chroma_weights: [i32; 2],
+    /// An array holding the offsets for Cb and Cr components after weighting.
+    pub chroma_offsets: [i32; 2],
+}
+
+/// Represents the `pred_weight_table()` syntax structure.
+/// It contains all information required for weighted prediction for a P, SP, or B slice.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct PredWeightTable {
+    /// The base-2 logarithm of the denominator for luma weighting.
+    /// The final weight is `luma_weight / (1 << luma_log2_weight_denom)`.
+    pub luma_log2_weight_denom: u32,
+    /// The base-2 logarithm of the denominator for chroma weighting.
+    pub chroma_log2_weight_denom: u32,
+
+    /// A list of weighting factors for each reference in reference picture list 0.
+    /// The vector is indexed by `ref_idx_l0`.
+    pub list0: Vec<WeightingFactors>,
+
+    /// A list of weighting factors for each reference in reference picture list 1.
+    /// This is only present for B-slices. The vector is indexed by `ref_idx_l1`.
+    pub list1: Vec<WeightingFactors>,
+}
+
 // Section 7.4.3 Slice header semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SliceHeader {
@@ -105,7 +142,7 @@ pub struct SliceHeader {
 
     // may become an enum rather than Option in future (for ref_pic_list_mvc_modification)
     pub ref_pic_list_modification: RefPicListModifications,
-    //pub pred_weight_table: Option<PredWeightTable>,
+    pub pred_weight_table: Option<PredWeightTable>,
     pub dec_ref_pic_marking: Option<DecRefPicMarking>,
     //pub cabac_init_idc: Option<u32>,
     pub slice_qp_delta: i32,

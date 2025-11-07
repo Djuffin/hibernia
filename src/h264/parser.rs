@@ -22,8 +22,8 @@ use macroblock::{
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{
-    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, Slice, SliceHeader,
-    SliceType,
+    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation,
+    RefPicListModification, RefPicListModifications, Slice, SliceHeader, SliceType,
 };
 use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 
@@ -462,6 +462,88 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
     Ok(header)
 }
 
+// Section 7.3.3.1 Reference picture list modification syntax
+pub fn parse_ref_pic_list_modification(
+    input: &mut BitReader,
+    slice_type: SliceType,
+) -> ParseResult<RefPicListModifications> {
+    let mut modifications = RefPicListModifications::default();
+
+    if slice_type != SliceType::I && slice_type != SliceType::SI {
+        let ref_pic_list_modification_flag_l0: bool;
+        read_value!(input, ref_pic_list_modification_flag_l0, f);
+        if ref_pic_list_modification_flag_l0 {
+            loop {
+                let modification_of_pic_nums_idc: u32;
+                read_value!(input, modification_of_pic_nums_idc, ue);
+                match modification_of_pic_nums_idc {
+                    0 => {
+                        let abs_diff_pic_num_minus1: u32;
+                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        modifications.list0.push(RefPicListModification::RemapShortTermNegative(
+                            abs_diff_pic_num_minus1,
+                        ));
+                    }
+                    1 => {
+                        let abs_diff_pic_num_minus1: u32;
+                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        modifications.list0.push(RefPicListModification::RemapShortTermPositive(
+                            abs_diff_pic_num_minus1,
+                        ));
+                    }
+                    2 => {
+                        let long_term_pic_num: u32;
+                        read_value!(input, long_term_pic_num, ue);
+                        modifications
+                            .list0
+                            .push(RefPicListModification::RemapLongTerm(long_term_pic_num));
+                    }
+                    3 => break,
+                    _ => return Err("Invalid modification_of_pic_nums_idc".to_string()),
+                }
+            }
+        }
+    }
+
+    if slice_type == SliceType::B {
+        let ref_pic_list_modification_flag_l1: bool;
+        read_value!(input, ref_pic_list_modification_flag_l1, f);
+        if ref_pic_list_modification_flag_l1 {
+            loop {
+                let modification_of_pic_nums_idc: u32;
+                read_value!(input, modification_of_pic_nums_idc, ue);
+                match modification_of_pic_nums_idc {
+                    0 => {
+                        let abs_diff_pic_num_minus1: u32;
+                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        modifications.list1.push(RefPicListModification::RemapShortTermNegative(
+                            abs_diff_pic_num_minus1,
+                        ));
+                    }
+                    1 => {
+                        let abs_diff_pic_num_minus1: u32;
+                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        modifications.list1.push(RefPicListModification::RemapShortTermPositive(
+                            abs_diff_pic_num_minus1,
+                        ));
+                    }
+                    2 => {
+                        let long_term_pic_num: u32;
+                        read_value!(input, long_term_pic_num, ue);
+                        modifications
+                            .list1
+                            .push(RefPicListModification::RemapLongTerm(long_term_pic_num));
+                    }
+                    3 => break,
+                    _ => return Err("Invalid modification_of_pic_nums_idc".to_string()),
+                }
+            }
+        }
+    }
+
+    Ok(modifications)
+}
+
 // Section 7.3.3.3 Decoded reference picture marking syntax
 pub fn parse_dec_ref_pic_marking(
     input: &mut BitReader,
@@ -618,6 +700,8 @@ pub fn parse_slice_header(
             header.num_ref_idx_l1_active_minus1 = pps.num_ref_idx_l1_default_active_minus1;
         }
     }
+
+    header.ref_pic_list_modification = parse_ref_pic_list_modification(input, header.slice_type)?;
 
     if nal.nal_ref_idc != 0 {
         header.dec_ref_pic_marking = Some(parse_dec_ref_pic_marking(input, idr_pic_flag)?);
@@ -788,8 +872,7 @@ pub fn parse_p_macroblock(
         assert!(num_mb_part <= partitions.len());
 
         if mb_part_pred_mode != MbPredictionMode::Pred_L1 {
-            if slice.header.num_ref_idx_l0_active_minus1 > 0
-            {
+            if slice.header.num_ref_idx_l0_active_minus1 > 0 {
                 for i in 0..num_mb_part {
                     read_value!(input, partitions[i].ref_idx_l0, ue, 8);
                 }

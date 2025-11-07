@@ -65,6 +65,20 @@ pub struct DecRefPicMarking {
     pub memory_management_operations: Vec<MemoryManagementControlOperation>,
 }
 
+// Table 7-7 – modification_of_pic_nums_idc operations for modification of reference picture lists
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RefPicListModification {
+    RemapShortTermNegative(u32), // abs_diff_pic_num_minus1
+    RemapShortTermPositive(u32), // abs_diff_pic_num_minus1
+    RemapLongTerm(u32),          // long_term_pic_num
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct RefPicListModifications {
+    pub list0: Vec<RefPicListModification>,
+    pub list1: Vec<RefPicListModification>,
+}
+
 // Section 7.4.3 Slice header semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SliceHeader {
@@ -89,7 +103,7 @@ pub struct SliceHeader {
     pub num_ref_idx_l1_active_minus1: u32,
 
     // may become an enum rather than Option in future (for ref_pic_list_mvc_modification)
-    //pub ref_pic_list_modification: Option<RefPicListModifications>,
+    pub ref_pic_list_modification: RefPicListModifications,
     //pub pred_weight_table: Option<PredWeightTable>,
     pub dec_ref_pic_marking: Option<DecRefPicMarking>,
     //pub cabac_init_idc: Option<u32>,

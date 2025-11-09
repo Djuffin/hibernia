@@ -391,6 +391,13 @@ pub struct PartitionInfo {
     pub mv_l0: MotionVector,
 }
 
+// Holds the final motion information for a single decoded macroblock,
+// resolved to a 4x4 grid.
+#[derive(Clone, Debug, Default)]
+pub struct MbMotion {
+    pub partitions: [[PartitionInfo; 4]; 4],
+}
+
 // Table 7-17 - Sub-macroblock types in P macroblock
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
@@ -429,20 +436,11 @@ pub struct SubMacroblock {
     pub partitions: [PartitionInfo; 4],
 }
 
-// Enum to hold the two different kinds of motion info
-#[derive(Clone, Debug)]
-pub enum PMbMotion {
-    // For 16x16, 16x8, 8x16 partitions
-    Partitions([PartitionInfo; 4]),
-    // For P_8x8 and P_8x8ref0
-    SubMacroblocks([SubMacroblock; 4]),
-}
-
 // Macroblock of type P
 #[derive(Clone, Debug, Default)]
 pub struct PMb {
     pub mb_type: PMbType,
-    pub motion: Option<PMbMotion>,
+    pub motion: MbMotion,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
     pub residual: Option<Box<Residual>>,
@@ -539,6 +537,16 @@ impl Macroblock {
                 mb.residual = r;
             }
             Macroblock::PCM(_) => {}
+        }
+    }
+
+    /// Returns the final, calculated motion information for this macroblock.
+    /// For Intra-coded macroblocks, this will return a default (zeroed)
+    /// motion info struct, as per H.264 spec requirements for MVP derivation.
+    pub fn get_motion_info(&self) -> MbMotion {
+        match self {
+            Macroblock::P(mb) => mb.motion.clone(),
+            Macroblock::I(_) | Macroblock::PCM(_) => MbMotion::default(),
         }
     }
 }

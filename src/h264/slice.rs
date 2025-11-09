@@ -227,6 +227,12 @@ impl Slice {
         let y = addr / (width_in_mbs as u32) * (tables::MB_HEIGHT as u32);
         Point { x, y }
     }
+
+    pub fn get_mb_addr_from_coords(&self, x: i32, y: i32) -> MbAddr {
+        let mb_x = x / tables::MB_WIDTH as i32;
+        let mb_y = y / tables::MB_HEIGHT as i32;
+        (mb_y * self.sps.pic_width_in_mbs() as i32 + mb_x) as MbAddr
+    }
 }
 
 #[cfg(test)]

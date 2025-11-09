@@ -946,21 +946,14 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
 
 // Gets the motion information for the 4x4 block covering the given absolute pixel coordinates.
 pub fn get_motion_at_coord(slice: &Slice, x: i32, y: i32) -> Option<PartitionInfo> {
-    let pic_width_pixels = (slice.sps.pic_width_in_mbs() * 16) as i32;
-    let pic_height_pixels = (slice.sps.pic_hight_in_mbs() * 16) as i32;
+    let pic_width_pixels = slice.sps.pic_width() as i32;
+    let pic_height_pixels = slice.sps.pic_hight() as i32;
 
     if x < 0 || y < 0 || x >= pic_width_pixels || y >= pic_height_pixels {
         return None;
     }
 
-    let mb_x = x / 16;
-    let mb_y = y / 16;
-    let mb_addr = (mb_y * slice.sps.pic_width_in_mbs() as i32 + mb_x) as MbAddr;
-
-    // We can only look at MBs that are already decoded within this slice.
-    if mb_addr < slice.header.first_mb_in_slice || mb_addr >= slice.get_next_mb_addr() {
-        return None;
-    }
+    let mb_addr = slice.get_mb_addr_from_coords(x, y);
 
     let neighbor_mb = slice.get_mb(mb_addr)?;
     let motion_info = neighbor_mb.get_motion_info();
@@ -985,42 +978,41 @@ pub fn predict_mv_l0(
     let abs_part_x = mb_loc.x as i32 + part_x as i32;
     let abs_part_y = mb_loc.y as i32 + part_y as i32;
 
+    let process_neighbor = |info: Option<PartitionInfo>| {
+        info.and_then(|i| {
+            if i.ref_idx_l0 == ref_idx_l0 {
+                Some(i.mv_l0)
+            } else {
+                None
+            }
+        })
+    };
+
     // Get motion vectors from neighbors A, B, C
-    let info_a = get_motion_at_coord(slice, abs_part_x - 1, abs_part_y);
-    let info_b = get_motion_at_coord(slice, abs_part_x, abs_part_y - 1);
-    let mut info_c = get_motion_at_coord(slice, abs_part_x + part_w as i32, abs_part_y - 1);
-    if info_c.is_none() {
-        // Fallback to D (top-left)
-        info_c = get_motion_at_coord(slice, abs_part_x - 1, abs_part_y - 1);
-    }
+    let mv_a_opt = process_neighbor(get_motion_at_coord(slice, abs_part_x - 1, abs_part_y));
+    let mv_b_opt = process_neighbor(get_motion_at_coord(slice, abs_part_x, abs_part_y - 1));
+    let mv_c_opt = process_neighbor(
+        get_motion_at_coord(slice, abs_part_x + part_w as i32, abs_part_y - 1)
+            .or_else(|| get_motion_at_coord(slice, abs_part_x - 1, abs_part_y - 1)),
+    );
 
-    let ref_a = info_a.map(|i| i.ref_idx_l0);
-    let ref_b = info_b.map(|i| i.ref_idx_l0);
-    let ref_c = info_c.map(|i| i.ref_idx_l0);
+    let count_some = mv_a_opt.is_some() as i32 + mv_b_opt.is_some() as i32 + mv_c_opt.is_some() as i32;
 
-    let mv_a = info_a.map_or(MotionVector::default(), |i| i.mv_l0);
-    let mv_b = info_b.map_or(MotionVector::default(), |i| i.mv_l0);
-    let mv_c = info_c.map_or(MotionVector::default(), |i| i.mv_l0);
-
-    let match_a = ref_a == Some(ref_idx_l0);
-    let match_b = ref_b == Some(ref_idx_l0);
-    let match_c = ref_c == Some(ref_idx_l0);
-
-    if (match_a as i32 + match_b as i32 + match_c as i32) == 1 {
-        if match_a {
-            return mv_a;
+    if count_some == 1 {
+        if let Some(mv) = mv_a_opt {
+            return mv;
         }
-        if match_b {
-            return mv_b;
+        if let Some(mv) = mv_b_opt {
+            return mv;
         }
-        if match_c {
-            return mv_c;
+        if let Some(mv) = mv_c_opt {
+            return mv;
         }
     }
 
-    let final_mv_a = if match_a { mv_a } else { MotionVector::default() };
-    let final_mv_b = if match_b { mv_b } else { MotionVector::default() };
-    let final_mv_c = if match_c { mv_c } else { MotionVector::default() };
+    let final_mv_a = mv_a_opt.unwrap_or_default();
+    let final_mv_b = mv_b_opt.unwrap_or_default();
+    let final_mv_c = mv_c_opt.unwrap_or_default();
 
     // Median prediction.
     fn median(a: i16, b: i16, c: i16) -> i16 {

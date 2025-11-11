@@ -5,6 +5,7 @@ use crate::h264::slice::SliceType;
 use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
 
+use super::dpb::{DecodedPictureBuffer, DpbPicture};
 use super::macroblock::{
     self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
     get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
@@ -19,8 +20,15 @@ use slice::Slice;
 use v_frame::frame;
 use v_frame::plane::{self, PlaneOffset, PlaneSlice};
 
-type VideoFrame = frame::Frame<u8>;
+pub type VideoFrame = frame::Frame<u8>;
 type Plane = v_frame::plane::Plane<u8>;
+
+#[derive(Clone, Debug)]
+pub struct Picture {
+    pub frame: VideoFrame,
+    pub frame_num: u16,
+    pub pic_order_cnt: u32,
+}
 
 #[derive(Debug, Clone)]
 pub enum DecodingError {
@@ -235,7 +243,7 @@ impl Decoder {
                         }
                     }
                     Macroblock::P(block) => {
-                        todo!("implement P blocks!");
+                        todo!();
                     }
                 }
             }

@@ -1,5 +1,6 @@
 pub mod cavlc;
 pub mod decoder;
+pub mod dpb;
 pub mod macroblock;
 pub mod nal;
 pub mod parser;

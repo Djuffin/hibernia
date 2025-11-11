@@ -158,6 +158,8 @@ pub struct Slice {
     pub header: SliceHeader,
 
     macroblocks: Vec<Macroblock>,
+    pub ref_pic_list0: Vec<usize>,
+    pub ref_pic_list1: Vec<usize>,
 }
 
 impl fmt::Debug for Slice {
@@ -171,7 +173,19 @@ impl Slice {
     pub fn new(sps: SequenceParameterSet, pps: PicParameterSet, header: SliceHeader) -> Slice {
         let mb_count = sps.pic_size_in_mbs();
         let macroblocks = Vec::with_capacity(mb_count);
-        Slice { sps, pps, header, macroblocks }
+        Slice {
+            sps,
+            pps,
+            header,
+            macroblocks,
+            ref_pic_list0: Vec::new(),
+            ref_pic_list1: Vec::new(),
+        }
+    }
+
+    pub fn set_ref_pic_lists(&mut self, list0: Vec<usize>, list1: Vec<usize>) {
+        self.ref_pic_list0 = list0;
+        self.ref_pic_list1 = list1;
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {

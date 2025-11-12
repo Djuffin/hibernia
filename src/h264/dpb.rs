@@ -47,10 +47,10 @@ impl DecodedPictureBuffer {
 
     /// Stores a picture in the DPB.
     /// Manages the "bumping" process if the DPB is full.
-    pub fn store_picture(&mut self, dpb_picture: DpbPicture) -> Option<Vec<Picture>> {
-        let mut output_pictures = None;
+    pub fn store_picture(&mut self, dpb_picture: DpbPicture) -> Vec<Picture> {
+        let mut output_pictures = Vec::new();
         if self.is_full() {
-            output_pictures = Some(self.get_pictures_for_output());
+            output_pictures = self.get_pictures_for_output();
         }
         self.pictures.push_back(dpb_picture);
         output_pictures
@@ -158,7 +158,7 @@ mod tests {
         // Storing a new picture should trigger the bumping process.
         // pic1 should be output because it's marked as UnusedForReference.
         let pic3 = create_dummy_dpb_picture(3, 6, DpbMarking::UsedForShortTermReference);
-        let output_pics = dpb.store_picture(pic3).unwrap();
+        let output_pics = dpb.store_picture(pic3);
 
         assert_eq!(output_pics.len(), 1);
         assert_eq!(output_pics[0].frame_num, 1);

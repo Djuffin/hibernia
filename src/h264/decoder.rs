@@ -65,15 +65,26 @@ impl DecoderContext {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Decoder {
     context: DecoderContext,
-    frame_buffer: Vec<VideoFrame>,
+    dpb: DecodedPictureBuffer,
+    output_frames: Vec<VideoFrame>,
+}
+
+impl Default for Decoder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Decoder {
     pub fn new() -> Decoder {
-        Decoder::default()
+        Decoder {
+            context: DecoderContext::default(),
+            dpb: DecodedPictureBuffer::new(1),
+            output_frames: Vec::new(),
+        }
     }
 
     pub fn decode(&mut self, data: &[u8]) -> Result<(), DecodingError> {
@@ -122,7 +133,21 @@ impl Decoder {
                         v_frame::pixel::ChromaSampling::Cs420,
                         16,
                     );
-                    self.frame_buffer.push(frame);
+                    let pic = Picture {
+                        frame,
+                        frame_num: slice.header.frame_num,
+                        pic_order_cnt: 0, // TODO: calculate this
+                    };
+                    let dpb_pic = DpbPicture {
+                        picture: pic,
+                        marking: super::dpb::DpbMarking::UnusedForReference,
+                        is_idr: nal.nal_unit_type == NalUnitType::IDRSlice,
+                        structure: super::dpb::DpbPictureStructure::Frame,
+                        needed_for_output: true,
+                    };
+                    let pictures = self.dpb.store_picture(dpb_pic);
+                    self.output_frames
+                        .extend(pictures.into_iter().map(|p| p.frame));
 
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
@@ -159,15 +184,19 @@ impl Decoder {
     }
 
     pub fn get_frame_buffer(&self) -> &[VideoFrame] {
-        self.frame_buffer.as_slice()
+        self.output_frames.as_slice()
+    }
+
+    pub fn clear_frame_buffer(&mut self) {
+        self.output_frames.clear();
     }
 
     fn process_slice(&mut self, slice: &mut Slice) -> Result<(), DecodingError> {
-        if self.frame_buffer.is_empty() {
+        if self.dpb.pictures.is_empty() {
             return Err(DecodingError::Wtf);
         }
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
-        let frame = self.frame_buffer.last_mut().unwrap();
+        let frame = &mut self.dpb.pictures.back_mut().unwrap().picture.frame;
         for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
             let mb_loc = slice.get_mb_location(mb_addr);
             if let Some(mb) = slice.get_mb(mb_addr) {

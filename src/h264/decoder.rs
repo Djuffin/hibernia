@@ -141,7 +141,11 @@ impl Decoder {
                     };
                     let dpb_pic = DpbPicture {
                         picture: pic,
-                        marking: super::dpb::DpbMarking::UnusedForReference,
+                        marking: if nal.nal_ref_idc != 0 {
+                            super::dpb::DpbMarking::UsedForShortTermReference
+                        } else {
+                            super::dpb::DpbMarking::UnusedForReference
+                        },
                         is_idr: nal.nal_unit_type == NalUnitType::IDRSlice,
                         structure: super::dpb::DpbPictureStructure::Frame,
                         needed_for_output: true,
@@ -154,6 +158,8 @@ impl Decoder {
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
                     self.process_slice(&mut slice)?;
+                    self.dpb
+                        .mark_references(&slice.header, &nal, &slice.sps);
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {
@@ -285,9 +291,9 @@ impl Decoder {
     }
 
     fn construct_ref_pic_list0(&self, slice: &mut Slice) -> Result<(), DecodingError> {
-        // 8.2.4.1 Decoding process for picture numbers
-        // 8.2.4.2 Initialization process for reference picture lists
-        // 8.2.4.3 Reordering process for reference picture lists
+        // Section 8.2.4.1 Decoding process for picture numbers
+        // Section 8.2.4.2 Initialization process for reference picture lists
+        // Section 8.2.4.3 Reordering process for reference picture lists
 
         // We only support P slices for now (and I/B later).
         // If I slice, list is empty? Spec says "invoked when decoding P, SP or B slice".

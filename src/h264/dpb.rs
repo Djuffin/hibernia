@@ -317,7 +317,7 @@ mod tests {
     use super::*;
     use v_frame::pixel::ChromaSampling;
 
-    fn create_dummy_picture(frame_num: u16, pic_order_cnt: u32) -> Picture {
+    fn create_dummy_picture(frame_num: u16, pic_order_cnt: i32) -> Picture {
         Picture {
             frame: VideoFrame::new_with_padding(16, 16, ChromaSampling::Cs420, 0),
             frame_num,
@@ -327,7 +327,7 @@ mod tests {
 
     fn create_dummy_dpb_picture(
         frame_num: u16,
-        pic_order_cnt: u32,
+        pic_order_cnt: i32,
         marking: DpbMarking,
     ) -> DpbPicture {
         DpbPicture {

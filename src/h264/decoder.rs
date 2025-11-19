@@ -1,12 +1,12 @@
 use std::cmp::{max, min, Ordering};
 use std::io::Read;
 
-use crate::h264::dpb::DpbMarking;
+use crate::h264::dpb::{DpbMarking, ReferenceDisposition};
 use crate::h264::slice::{RefPicListModification, SliceType};
 use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
 
-use super::dpb::{DecodedPictureBuffer, DpbPicture, ReferenceDisposition};
+use super::dpb::{DecodedPictureBuffer, DpbPicture};
 use super::macroblock::{
     self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
     get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
@@ -28,7 +28,7 @@ type Plane = v_frame::plane::Plane<u8>;
 pub struct Picture {
     pub frame: VideoFrame,
     pub frame_num: u16,
-    pub pic_order_cnt: u32,
+    pub pic_order_cnt: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +71,10 @@ pub struct Decoder {
     context: DecoderContext,
     dpb: DecodedPictureBuffer,
     output_frames: Vec<VideoFrame>,
+
+    // POC Type 0 state
+    prev_pic_order_cnt_msb: i32,
+    prev_pic_order_cnt_lsb: i32,
 }
 
 impl Default for Decoder {
@@ -85,6 +89,8 @@ impl Decoder {
             context: DecoderContext::default(),
             dpb: DecodedPictureBuffer::new(1),
             output_frames: Vec::new(),
+            prev_pic_order_cnt_msb: 0,
+            prev_pic_order_cnt_lsb: 0,
         }
     }
 
@@ -134,10 +140,21 @@ impl Decoder {
                         v_frame::pixel::ChromaSampling::Cs420,
                         16,
                     );
+
+                    let disposition = if nal.nal_unit_type == NalUnitType::IDRSlice {
+                        ReferenceDisposition::Idr
+                    } else if nal.nal_ref_idc != 0 {
+                        ReferenceDisposition::NonIdrReference
+                    } else {
+                        ReferenceDisposition::NonReference
+                    };
+
+                    let pic_order_cnt = self.calculate_poc(&slice, disposition);
+
                     let pic = Picture {
                         frame,
                         frame_num: slice.header.frame_num,
-                        pic_order_cnt: 0, // TODO: calculate this
+                        pic_order_cnt,
                     };
                     let dpb_pic = DpbPicture {
                         picture: pic,
@@ -155,18 +172,11 @@ impl Decoder {
 
                     parser::parse_slice_data(&mut unit_input, &mut slice)
                         .map_err(parse_error_handler)?;
-                                        info!("Blocks: {:#?}", slice.get_macroblock_count());
-                                        self.process_slice(&mut slice)?;
-                                        let disposition = if nal.nal_unit_type == NalUnitType::IDRSlice {
-                                            ReferenceDisposition::Idr
-                                        } else if nal.nal_ref_idc != 0 {
-                                            ReferenceDisposition::NonIdrReference
-                                        } else {
-                                            ReferenceDisposition::NonReference
-                                        };
-                                        self.dpb.mark_references(&slice.header, disposition, &slice.sps);
-                                    }
-                                    NalUnitType::SupplementalEnhancementInfo => {}
+                    info!("Blocks: {:#?}", slice.get_macroblock_count());
+                    self.process_slice(&mut slice)?;
+                    self.dpb.mark_references(&slice.header, disposition, &slice.sps);
+                }
+                NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {
                     let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
                     info!("SPS: {:#?}", sps);
@@ -193,6 +203,50 @@ impl Decoder {
             }
         }
         Ok(())
+    }
+
+    fn calculate_poc(&mut self, slice: &Slice, disposition: ReferenceDisposition) -> i32 {
+        match slice.sps.pic_order_cnt_type {
+            0 => self.calculate_poc_type0(slice, disposition),
+            1 => 0, // TODO: Implement Type 1
+            2 => 0, // TODO: Implement Type 2
+            _ => 0,
+        }
+    }
+
+    fn calculate_poc_type0(&mut self, slice: &Slice, disposition: ReferenceDisposition) -> i32 {
+        // Section 8.2.1.1 Decoding process for picture order count type 0
+        let (prev_msb, prev_lsb) = if disposition == ReferenceDisposition::Idr {
+            (0, 0)
+        } else {
+            (self.prev_pic_order_cnt_msb, self.prev_pic_order_cnt_lsb)
+        };
+
+        let max_lsb = 1 << (slice.sps.log2_max_pic_order_cnt_lsb_minus4 + 4);
+        let lsb = slice.header.pic_order_cnt_lsb.unwrap_or(0) as i32;
+
+        // Check for MSB overflow/underflow (wrapping)
+        let msb = if lsb < prev_lsb && (prev_lsb - lsb) >= (max_lsb / 2) {
+            prev_msb + max_lsb
+        } else if lsb > prev_lsb && (lsb - prev_lsb) > (max_lsb / 2) {
+            prev_msb - max_lsb
+        } else {
+            prev_msb
+        };
+
+        if disposition != ReferenceDisposition::NonReference {
+            self.prev_pic_order_cnt_lsb = lsb;
+            self.prev_pic_order_cnt_msb = msb;
+        }
+
+        // TopFieldOrderCnt = PicOrderCntMsb + pic_order_cnt_lsb
+        let top_field_order_cnt = msb + lsb;
+
+        // TODO: Handle BottomFieldOrderCnt if bottom_field_flag is present (interlaced)
+        // For progressive frames, POC is min(TopFieldOrderCnt, BottomFieldOrderCnt),
+        // but effectively just TopFieldOrderCnt for now.
+
+        top_field_order_cnt
     }
 
     pub fn get_frame_buffer(&self) -> &[VideoFrame] {

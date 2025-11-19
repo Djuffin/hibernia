@@ -1,7 +1,8 @@
 use std::cmp::{max, min, Ordering};
 use std::io::Read;
 
-use crate::h264::slice::SliceType;
+use crate::h264::dpb::DpbMarking;
+use crate::h264::slice::{RefPicListModification, SliceType};
 use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
 
@@ -195,6 +196,9 @@ impl Decoder {
         if self.dpb.pictures.is_empty() {
             return Err(DecodingError::Wtf);
         }
+
+        self.construct_ref_pic_list0(slice)?;
+
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
         let frame = &mut self.dpb.pictures.back_mut().unwrap().picture.frame;
         for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
@@ -278,6 +282,177 @@ impl Decoder {
             }
         }
         Ok(())
+    }
+
+    fn construct_ref_pic_list0(&self, slice: &mut Slice) -> Result<(), DecodingError> {
+        // 8.2.4.1 Decoding process for picture numbers
+        // 8.2.4.2 Initialization process for reference picture lists
+        // 8.2.4.3 Reordering process for reference picture lists
+
+        // We only support P slices for now (and I/B later).
+        // If I slice, list is empty? Spec says "invoked when decoding P, SP or B slice".
+        if slice.header.slice_type == SliceType::I || slice.header.slice_type == SliceType::SI {
+            slice.ref_pic_list0.clear();
+            return Ok(());
+        }
+
+        let max_frame_num = 1 << (slice.sps.log2_max_frame_num_minus4 + 4);
+        let curr_frame_num = slice.header.frame_num as i32;
+
+        // Collect valid reference pictures
+        let mut short_term_refs = Vec::new();
+        let mut long_term_refs = Vec::new();
+
+        // We use indices into the DPB
+        for (i, pic) in self.dpb.pictures.iter().enumerate() {
+            match pic.marking {
+                DpbMarking::UsedForShortTermReference => {
+                    let frame_num = pic.picture.frame_num as i32;
+                    let pic_num = if frame_num > curr_frame_num {
+                        frame_num - max_frame_num
+                    } else {
+                        frame_num
+                    };
+                    short_term_refs.push((i, pic_num));
+                }
+                DpbMarking::UsedForLongTermReference(lt_idx) => {
+                    long_term_refs.push((i, lt_idx));
+                }
+                _ => {}
+            }
+        }
+
+        // Sort
+        short_term_refs.sort_by_key(|k| std::cmp::Reverse(k.1)); // Descending PicNum
+        long_term_refs.sort_by_key(|k| k.1); // Ascending LongTermPicNum
+
+        // Initial List 0
+        let mut ref_list0: Vec<usize> = short_term_refs
+            .iter()
+            .map(|x| x.0)
+            .chain(long_term_refs.iter().map(|x| x.0))
+            .collect();
+
+        // Apply modifications
+        if !slice.header.ref_pic_list_modification.list0.is_empty() {
+            let mut pic_num_lx_pred = curr_frame_num;
+            let mut ref_idx_l0 = 0;
+
+            for modification in &slice.header.ref_pic_list_modification.list0 {
+                match modification {
+                    RefPicListModification::RemapShortTermNegative(abs_diff_minus1) => {
+                        let abs_diff = (abs_diff_minus1 + 1) as i32;
+                        let pic_num_lx_no_wrap = pic_num_lx_pred - abs_diff;
+                        let pic_num_lx = if pic_num_lx_no_wrap < 0 {
+                            pic_num_lx_no_wrap + max_frame_num
+                        } else {
+                            pic_num_lx_no_wrap
+                        };
+                        pic_num_lx_pred = pic_num_lx;
+
+                        let found_idx = self.find_short_term_in_dpb(
+                            pic_num_lx,
+                            curr_frame_num,
+                            max_frame_num,
+                        );
+                        if let Some(idx) = found_idx {
+                            self.place_picture_in_list(&mut ref_list0, idx, ref_idx_l0);
+                            ref_idx_l0 += 1;
+                        }
+                    }
+                    RefPicListModification::RemapShortTermPositive(abs_diff_minus1) => {
+                        let abs_diff = (abs_diff_minus1 + 1) as i32;
+                        let pic_num_lx_no_wrap = pic_num_lx_pred + abs_diff;
+                        let pic_num_lx = if pic_num_lx_no_wrap >= max_frame_num {
+                            pic_num_lx_no_wrap - max_frame_num
+                        } else {
+                            pic_num_lx_no_wrap
+                        };
+                        pic_num_lx_pred = pic_num_lx;
+
+                        let found_idx = self.find_short_term_in_dpb(
+                            pic_num_lx,
+                            curr_frame_num,
+                            max_frame_num,
+                        );
+                        if let Some(idx) = found_idx {
+                            self.place_picture_in_list(&mut ref_list0, idx, ref_idx_l0);
+                            ref_idx_l0 += 1;
+                        }
+                    }
+                    RefPicListModification::RemapLongTerm(long_term_pic_num) => {
+                        let found_idx = self.find_long_term_in_dpb(*long_term_pic_num);
+                        if let Some(idx) = found_idx {
+                            self.place_picture_in_list(&mut ref_list0, idx, ref_idx_l0);
+                            ref_idx_l0 += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Truncate to num_ref_idx_l0_active_minus1 + 1
+        let len = (slice.header.num_ref_idx_l0_active_minus1 + 1) as usize;
+        if ref_list0.len() > len {
+            ref_list0.truncate(len);
+        }
+
+        slice.ref_pic_list0 = ref_list0;
+        Ok(())
+    }
+
+    fn place_picture_in_list(&self, list: &mut Vec<usize>, pic_idx: usize, ref_idx: usize) {
+        if ref_idx < list.len() {
+            list.insert(ref_idx, pic_idx);
+
+            let mut i = ref_idx + 1;
+            while i < list.len() {
+                if list[i] == pic_idx {
+                    list.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+        } else {
+            // If ref_idx is out of bounds, we just push it? Spec implies refIdxL0 starts at 0 and increments.
+            // So it should usually be valid for insertion (possibly at end).
+            list.push(pic_idx);
+        }
+    }
+
+    // Helper to find short term in DPB
+    fn find_short_term_in_dpb(
+        &self,
+        pic_num: i32,
+        curr_frame_num: i32,
+        max_frame_num: i32,
+    ) -> Option<usize> {
+        for (i, pic) in self.dpb.pictures.iter().enumerate() {
+            if let DpbMarking::UsedForShortTermReference = pic.marking {
+                let frame_num = pic.picture.frame_num as i32;
+                let pn = if frame_num > curr_frame_num {
+                    frame_num - max_frame_num
+                } else {
+                    frame_num
+                };
+                if pn == pic_num {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    // Helper to find long term in DPB
+    fn find_long_term_in_dpb(&self, long_term_pic_num: u32) -> Option<usize> {
+        for (i, pic) in self.dpb.pictures.iter().enumerate() {
+            if let DpbMarking::UsedForLongTermReference(idx) = pic.marking {
+                if idx == long_term_pic_num {
+                    return Some(i);
+                }
+            }
+        }
+        None
     }
 }
 

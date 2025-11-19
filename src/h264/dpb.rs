@@ -1,7 +1,4 @@
-use std::collections::VecDeque;
-
 use super::decoder::{Picture, VideoFrame};
-use super::nal::{NalHeader, NalUnitType};
 use super::slice::{MemoryManagementControlOperation, SliceHeader};
 use super::sps::SequenceParameterSet;
 
@@ -11,6 +8,27 @@ pub enum DpbMarking {
     UnusedForReference,
     UsedForShortTermReference,
     UsedForLongTermReference(u32), // long_term_frame_idx
+}
+
+impl DpbMarking {
+    pub fn is_unused(&self) -> bool {
+        matches!(self, DpbMarking::UnusedForReference)
+    }
+
+    pub fn is_short_term(&self) -> bool {
+        matches!(self, DpbMarking::UsedForShortTermReference)
+    }
+
+    pub fn is_long_term(&self) -> bool {
+        matches!(self, DpbMarking::UsedForLongTermReference(_))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceDisposition {
+    Idr,
+    NonIdrReference,
+    NonReference,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,16 +50,13 @@ pub struct DpbPicture {
 // Annex C: Decoded Picture Buffer (DPB)
 #[derive(Debug)]
 pub struct DecodedPictureBuffer {
-    pub pictures: VecDeque<DpbPicture>,
+    pub pictures: Vec<DpbPicture>,
     pub max_size: usize, // max_dec_frame_buffering
 }
 
 impl DecodedPictureBuffer {
     pub fn new(max_size: usize) -> Self {
-        DecodedPictureBuffer {
-            pictures: VecDeque::with_capacity(max_size),
-            max_size,
-        }
+        DecodedPictureBuffer { pictures: Vec::with_capacity(max_size), max_size }
     }
 
     pub fn is_full(&self) -> bool {
@@ -55,7 +70,7 @@ impl DecodedPictureBuffer {
         if self.is_full() {
             output_pictures = self.get_pictures_for_output();
         }
-        self.pictures.push_back(dpb_picture);
+        self.pictures.push(dpb_picture);
         output_pictures
     }
 
@@ -64,12 +79,9 @@ impl DecodedPictureBuffer {
         let mut output = Vec::new();
         let mut i = 0;
         while i < self.pictures.len() {
-            if self.pictures[i].marking == DpbMarking::UnusedForReference
-                && self.pictures[i].needed_for_output
-            {
-                if let Some(dpb_pic) = self.pictures.remove(i) {
-                    output.push(dpb_pic.picture);
-                }
+            if self.pictures[i].marking.is_unused() && self.pictures[i].needed_for_output {
+                let dpb_pic = self.pictures.remove(i);
+                output.push(dpb_pic.picture);
             } else {
                 i += 1;
             }
@@ -91,9 +103,7 @@ impl DecodedPictureBuffer {
     }
 
     pub fn find_short_term_ref(&self, pic_num: u16) -> Option<&DpbPicture> {
-        self.pictures.iter().find(|p| {
-            p.marking == DpbMarking::UsedForShortTermReference && p.picture.frame_num == pic_num
-        })
+        self.pictures.iter().find(|p| p.marking.is_short_term() && p.picture.frame_num == pic_num)
     }
 
     pub fn find_long_term_ref(&self, long_term_pic_num: u32) -> Option<&DpbPicture> {
@@ -107,175 +117,172 @@ impl DecodedPictureBuffer {
     pub fn mark_references(
         &mut self,
         header: &SliceHeader,
-        nal_header: &NalHeader,
+        disposition: ReferenceDisposition,
         sps: &SequenceParameterSet,
     ) {
-        let curr_frame_num = header.frame_num as i32;
-        let is_idr = nal_header.nal_unit_type == NalUnitType::IDRSlice;
+        match disposition {
+            ReferenceDisposition::Idr => self.mark_idr_references(header),
+            ReferenceDisposition::NonIdrReference => {
+                let adaptive_ref_pic_marking_mode_flag = header
+                    .dec_ref_pic_marking
+                    .as_ref()
+                    .and_then(|m| m.adaptive_ref_pic_marking_mode_flag)
+                    .unwrap_or(false);
 
-        if is_idr {
-            // Section 8.2.5.1
-            for pic in self.pictures.iter_mut() {
-                pic.marking = DpbMarking::UnusedForReference;
-            }
-            if let Some(dec_ref_pic_marking) = &header.dec_ref_pic_marking {
-                if dec_ref_pic_marking.no_output_of_prior_pics_flag.unwrap_or(false) {
-                    self.pictures.clear();
+                if adaptive_ref_pic_marking_mode_flag {
+                    self.mark_adaptive_references(header, sps);
+                } else {
+                    self.mark_sliding_window_references(sps);
                 }
+            }
+            ReferenceDisposition::NonReference => {}
+        }
+    }
+
+    fn mark_idr_references(&mut self, header: &SliceHeader) {
+        // Section 8.2.5.1
+        for pic in self.pictures.iter_mut() {
+            pic.marking = DpbMarking::UnusedForReference;
+        }
+
+        if let Some(dec_ref_pic_marking) = &header.dec_ref_pic_marking {
+            if dec_ref_pic_marking.no_output_of_prior_pics_flag.unwrap_or(false) {
+                self.pictures.clear();
+            }
+
+            if let Some(last) = self.pictures.last_mut() {
                 if dec_ref_pic_marking.long_term_reference_flag.unwrap_or(false) {
-                    if let Some(last) = self.pictures.back_mut() {
-                        last.marking = DpbMarking::UsedForLongTermReference(0);
-                    }
+                    last.marking = DpbMarking::UsedForLongTermReference(0);
                     // max_long_term_frame_idx = 0; (implicit)
                 } else {
-                    if let Some(last) = self.pictures.back_mut() {
-                        last.marking = DpbMarking::UsedForShortTermReference;
-                    }
+                    last.marking = DpbMarking::UsedForShortTermReference;
                     // max_long_term_frame_idx = -1; (implicit)
                 }
             }
-        } else {
-            if nal_header.nal_ref_idc == 0 {
-                return;
-            }
+        }
+    }
 
-            let adaptive_ref_pic_marking_mode_flag = header
-                .dec_ref_pic_marking
-                .as_ref()
-                .and_then(|m| m.adaptive_ref_pic_marking_mode_flag)
-                .unwrap_or(false);
+    fn mark_adaptive_references(&mut self, header: &SliceHeader, sps: &SequenceParameterSet) {
+        // Section 8.2.5.4 Adaptive memory control decoded reference picture marking process
+        let ops = match &header.dec_ref_pic_marking {
+            Some(m) => &m.memory_management_operations,
+            None => return,
+        };
 
-            if adaptive_ref_pic_marking_mode_flag {
-                // Section 8.2.5.4 Adaptive memory control decoded reference picture marking process
-                let ops = &header
-                    .dec_ref_pic_marking
-                    .as_ref()
-                    .unwrap()
-                    .memory_management_operations;
-                for op in ops {
-                    match op {
-                        MemoryManagementControlOperation::MarkShortTermUnused {
-                            difference_of_pic_nums_minus1,
-                        } => {
-                            let pic_num_x = curr_frame_num - (*difference_of_pic_nums_minus1 as i32 + 1);
-                            let pic_num_x = if pic_num_x < 0 {
-                                pic_num_x + (1 << (sps.log2_max_frame_num_minus4 + 4))
-                            } else {
-                                pic_num_x
-                            };
-                            self.mark_short_term_unused(pic_num_x, curr_frame_num, sps);
-                        }
-                        MemoryManagementControlOperation::MarkLongTermUnused {
-                            long_term_pic_num,
-                        } => {
-                            self.mark_long_term_unused(*long_term_pic_num);
-                        }
-                        MemoryManagementControlOperation::MarkShortTermAsLongTerm {
-                            difference_of_pic_nums_minus1,
-                            long_term_frame_idx,
-                        } => {
-                            let pic_num_x = curr_frame_num - (*difference_of_pic_nums_minus1 as i32 + 1);
-                            let pic_num_x = if pic_num_x < 0 {
-                                pic_num_x + (1 << (sps.log2_max_frame_num_minus4 + 4))
-                            } else {
-                                pic_num_x
-                            };
+        let curr_frame_num = header.frame_num as i32;
 
-                            // First, free up the long term index if used
-                            self.mark_long_term_unused(*long_term_frame_idx);
+        for op in ops {
+            match op {
+                MemoryManagementControlOperation::MarkShortTermUnused {
+                    difference_of_pic_nums_minus1,
+                } => {
+                    let pic_num_x = calculate_pic_num_x(
+                        curr_frame_num,
+                        *difference_of_pic_nums_minus1,
+                        sps.log2_max_frame_num_minus4,
+                    );
+                    self.mark_short_term_unused(pic_num_x, curr_frame_num, sps);
+                }
+                MemoryManagementControlOperation::MarkLongTermUnused { long_term_pic_num } => {
+                    self.mark_long_term_unused(*long_term_pic_num);
+                }
+                MemoryManagementControlOperation::MarkShortTermAsLongTerm {
+                    difference_of_pic_nums_minus1,
+                    long_term_frame_idx,
+                } => {
+                    let pic_num_x = calculate_pic_num_x(
+                        curr_frame_num,
+                        *difference_of_pic_nums_minus1,
+                        sps.log2_max_frame_num_minus4,
+                    );
 
-                            // Then assign
-                            if let Some(idx) = self.find_short_term_index(pic_num_x, curr_frame_num, sps) {
-                                self.pictures[idx].marking =
-                                    DpbMarking::UsedForLongTermReference(*long_term_frame_idx);
-                            }
-                        }
-                        MemoryManagementControlOperation::SetMaxLongTermFrameIdx {
-                            max_long_term_frame_idx_plus1,
-                        } => {
-                            let max_long_term_frame_idx = *max_long_term_frame_idx_plus1 as i32 - 1;
-                             for pic in self.pictures.iter_mut() {
-                                if let DpbMarking::UsedForLongTermReference(idx) = pic.marking {
-                                    if idx as i32 > max_long_term_frame_idx {
-                                        pic.marking = DpbMarking::UnusedForReference;
-                                    }
-                                }
-                            }
-                        }
-                        MemoryManagementControlOperation::MarkAllUnused => {
-                             for pic in self.pictures.iter_mut() {
+                    self.mark_long_term_unused(*long_term_frame_idx);
+
+                    if let Some(idx) = self.find_short_term_index(pic_num_x, curr_frame_num, sps) {
+                        self.pictures[idx].marking =
+                            DpbMarking::UsedForLongTermReference(*long_term_frame_idx);
+                    }
+                }
+                MemoryManagementControlOperation::SetMaxLongTermFrameIdx {
+                    max_long_term_frame_idx_plus1,
+                } => {
+                    let max_long_term_frame_idx = *max_long_term_frame_idx_plus1 as i32 - 1;
+                    for pic in self.pictures.iter_mut() {
+                        if let DpbMarking::UsedForLongTermReference(idx) = pic.marking {
+                            if idx as i32 > max_long_term_frame_idx {
                                 pic.marking = DpbMarking::UnusedForReference;
                             }
-                            // The current picture is also affected (last one added)
-                            if let Some(last) = self.pictures.back_mut() {
-                                 last.marking = DpbMarking::UnusedForReference; // Will be potentially set by MMCO 6
-                                 last.picture.frame_num = 0;
-                                 last.picture.pic_order_cnt = 0; // Reset POC as well? Spec says FrameNum to 0.
-                            }
-                        }
-                        MemoryManagementControlOperation::MarkCurrentAsLongTerm {
-                            long_term_frame_idx,
-                        } => {
-                             self.mark_long_term_unused(*long_term_frame_idx);
-                             if let Some(last) = self.pictures.back_mut() {
-                                 last.marking = DpbMarking::UsedForLongTermReference(*long_term_frame_idx);
-                             }
                         }
                     }
                 }
-            } else {
-                // Section 8.2.5.3 Sliding window decoded reference picture marking process
-                let num_ref = self.pictures.iter().filter(|p| p.marking != DpbMarking::UnusedForReference).count();
-                if num_ref > sps.max_num_ref_frames as usize {
-                    // Find the short-term reference picture with the smallest FrameNumWrap
-                    // Since we store in decoding order, and FrameNum wraps, we need to be careful.
-                    // But essentially, we are looking for the "oldest" short term reference.
-                    // For simplicity in this implementation (and common cases), we can iterate
-                    // and find one with UsedForShortTermReference that is not the current picture.
-                    // A more robust implementation requires correct FrameNumWrap calculation.
-                    
-                    // We remove the first found short-term reference that is NOT the current picture (which is at the back)
-                    let mut index_to_remove = None;
-                    // Search from oldest (front) to newest (back)
-                    for (i, pic) in self.pictures.iter().enumerate() {
-                        if i == self.pictures.len() - 1 {
-                            break; // Don't remove current
-                        }
-                        if pic.marking == DpbMarking::UsedForShortTermReference {
-                             // Just pick the first one (FIFO behavior for sliding window roughly)
-                             // Correct FrameNumWrap logic would be needed for technically correct behavior with gaps etc.
-                             index_to_remove = Some(i);
-                             break;
-                        }
+                MemoryManagementControlOperation::MarkAllUnused => {
+                    for pic in self.pictures.iter_mut() {
+                        pic.marking = DpbMarking::UnusedForReference;
                     }
-                    
-                    if let Some(i) = index_to_remove {
-                        self.pictures[i].marking = DpbMarking::UnusedForReference;
+                    if let Some(last) = self.pictures.last_mut() {
+                        last.marking = DpbMarking::UnusedForReference;
+                        last.picture.frame_num = 0;
+                        last.picture.pic_order_cnt = 0;
+                    }
+                }
+                MemoryManagementControlOperation::MarkCurrentAsLongTerm { long_term_frame_idx } => {
+                    self.mark_long_term_unused(*long_term_frame_idx);
+                    if let Some(last) = self.pictures.last_mut() {
+                        last.marking = DpbMarking::UsedForLongTermReference(*long_term_frame_idx);
                     }
                 }
             }
         }
     }
 
-    fn find_short_term_index(&self, pic_num: i32, curr_frame_num: i32, sps: &SequenceParameterSet) -> Option<usize> {
+    fn mark_sliding_window_references(&mut self, sps: &SequenceParameterSet) {
+        // Section 8.2.5.3 Sliding window decoded reference picture marking process
+        let num_ref = self.pictures.iter().filter(|p| !p.marking.is_unused()).count();
+
+        if num_ref > sps.max_num_ref_frames as usize {
+            // We remove the first found short-term reference that is NOT the current picture.
+            // The current picture is always the last one in our Vec.
+            // Since we want the "oldest", and we push to the back, searching from the front is correct.
+
+            let index_to_remove = self.pictures.iter().enumerate().position(|(i, pic)| {
+                // Don't remove the current picture (last one)
+                i != self.pictures.len() - 1 && pic.marking.is_short_term()
+            });
+
+            if let Some(i) = index_to_remove {
+                self.pictures[i].marking = DpbMarking::UnusedForReference;
+            }
+        }
+    }
+
+    fn find_short_term_index(
+        &self,
+        pic_num: i32,
+        curr_frame_num: i32,
+        sps: &SequenceParameterSet,
+    ) -> Option<usize> {
         let max_frame_num = 1 << (sps.log2_max_frame_num_minus4 + 4);
-        for (i, pic) in self.pictures.iter().enumerate() {
-            if pic.marking == DpbMarking::UsedForShortTermReference {
+        self.pictures.iter().position(|pic| {
+            if pic.marking.is_short_term() {
                 let pic_frame_num = pic.picture.frame_num as i32;
                 let pn = if pic_frame_num > curr_frame_num {
                     pic_frame_num - max_frame_num
                 } else {
                     pic_frame_num
                 };
-                if pn == pic_num {
-                    return Some(i);
-                }
+                pn == pic_num
+            } else {
+                false
             }
-        }
-        None
+        })
     }
 
-    fn mark_short_term_unused(&mut self, pic_num: i32, curr_frame_num: i32, sps: &SequenceParameterSet) {
+    fn mark_short_term_unused(
+        &mut self,
+        pic_num: i32,
+        curr_frame_num: i32,
+        sps: &SequenceParameterSet,
+    ) {
         if let Some(idx) = self.find_short_term_index(pic_num, curr_frame_num, sps) {
             self.pictures[idx].marking = DpbMarking::UnusedForReference;
         }
@@ -289,6 +296,19 @@ impl DecodedPictureBuffer {
                 }
             }
         }
+    }
+}
+
+fn calculate_pic_num_x(
+    curr_frame_num: i32,
+    difference_of_pic_nums_minus1: u32,
+    log2_max_frame_num_minus4: u8,
+) -> i32 {
+    let pic_num_x = curr_frame_num - (difference_of_pic_nums_minus1 as i32 + 1);
+    if pic_num_x < 0 {
+        pic_num_x + (1 << (log2_max_frame_num_minus4 + 4))
+    } else {
+        pic_num_x
     }
 }
 

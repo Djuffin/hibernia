@@ -15,9 +15,8 @@ use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, IMb, IMbType,
-    Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbMotion,
-    MbNeighborName, MbPredictionMode, MotionVector, PMb, PMbType, PartitionInfo, PcmMb,
-    SubMacroblock, SubMbType,
+    Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbMotion, MbNeighborName,
+    MbPredictionMode, MotionVector, PMb, PMbType, PartitionInfo, PcmMb, SubMacroblock, SubMbType,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -943,7 +942,6 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
     }
 }
 
-
 // Gets the motion information for the 4x4 block covering the given absolute pixel coordinates.
 pub fn get_motion_at_coord(slice: &Slice, x: i32, y: i32) -> Option<PartitionInfo> {
     let pic_width_pixels = slice.sps.pic_width() as i32;
@@ -979,13 +977,7 @@ pub fn predict_mv_l0(
     let abs_part_y = mb_loc.y as i32 + part_y as i32;
 
     let process_neighbor = |info: Option<PartitionInfo>| {
-        info.and_then(|i| {
-            if i.ref_idx_l0 == ref_idx_l0 {
-                Some(i.mv_l0)
-            } else {
-                None
-            }
-        })
+        info.and_then(|i| if i.ref_idx_l0 == ref_idx_l0 { Some(i.mv_l0) } else { None })
     };
 
     // Get motion vectors from neighbors A, B, C
@@ -996,7 +988,8 @@ pub fn predict_mv_l0(
             .or_else(|| get_motion_at_coord(slice, abs_part_x - 1, abs_part_y - 1)),
     );
 
-    let count_some = mv_a_opt.is_some() as i32 + mv_b_opt.is_some() as i32 + mv_c_opt.is_some() as i32;
+    let count_some =
+        mv_a_opt.is_some() as i32 + mv_b_opt.is_some() as i32 + mv_c_opt.is_some() as i32;
 
     if count_some == 1 {
         if let Some(mv) = mv_a_opt {
@@ -1222,8 +1215,7 @@ pub fn parse_p_macroblock(
         }
     }
 
-    block.motion =
-        calculate_motion(slice, this_mb_addr, mb_type, &partitions, &sub_macroblocks);
+    block.motion = calculate_motion(slice, this_mb_addr, mb_type, &partitions, &sub_macroblocks);
 
     let coded_block_pattern_num: u8;
     read_value!(input, coded_block_pattern_num, ue, 8);

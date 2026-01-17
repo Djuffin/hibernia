@@ -1029,6 +1029,34 @@ fn calculate_motion(
 ) -> MbMotion {
     let mut motion = MbMotion::default();
 
+    if mb_type == PMbType::P_Skip {
+        let mb_loc = slice.get_mb_location(this_mb_addr);
+
+        let is_zero_motion = |x, y| {
+            if let Some(info) = get_motion_at_coord(slice, x, y) {
+                info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
+            } else {
+                true // Unavailable
+            }
+        };
+
+        let zero_a = is_zero_motion(mb_loc.x as i32 - 1, mb_loc.y as i32);
+        let zero_b = is_zero_motion(mb_loc.x as i32, mb_loc.y as i32 - 1);
+
+        let mv = if zero_a && zero_b {
+            MotionVector::default()
+        } else {
+            predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0)
+        };
+
+        for y in 0..4 {
+            for x in 0..4 {
+                motion.partitions[y][x] = PartitionInfo { ref_idx_l0: 0, mv_l0: mv };
+            }
+        }
+        return motion;
+    }
+
     if mb_type == PMbType::P_8x8 || mb_type == PMbType::P_8x8ref0 {
         // P_8x8 or P_8x8ref0
         for (i, sub_mb) in sub_macroblocks.iter().enumerate() {
@@ -1356,8 +1384,23 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
                     "Trying to skip {mb_skip_run} blocks, only {blocks_left} blocks left"
                 ));
             }
+            let default_partitions = [PartitionInfo::default(); 4];
+            let default_sub_mbs = [SubMacroblock::default(); 4];
             for i in 0..mb_skip_run {
-                let block = Macroblock::P(PMb { mb_type: PMbType::P_Skip, ..Default::default() });
+                let curr_mb_addr = slice.get_next_mb_addr();
+                let motion = calculate_motion(
+                    slice,
+                    curr_mb_addr,
+                    PMbType::P_Skip,
+                    &default_partitions,
+                    &default_sub_mbs,
+                );
+
+                let block = Macroblock::P(PMb {
+                    mb_type: PMbType::P_Skip,
+                    motion,
+                    ..Default::default()
+                });
                 slice.append_mb(block);
             }
             if mb_skip_run > 0 {

@@ -96,6 +96,74 @@ pub fn interpolate_luma(
     }
 }
 
+/// Section 8.4.2.2.2 Chroma sample interpolation process.
+/// Assumes 4:2:0 chroma sampling (ChromaArrayType == 1).
+///
+/// # Arguments
+/// * `ref_plane` - The reference chroma plane (Cb or Cr).
+/// * `mb_x` - The x-coordinate of the macroblock in chroma samples.
+/// * `mb_y` - The y-coordinate of the macroblock in chroma samples.
+/// * `blk_x` - The x-offset of the block within the macroblock in chroma samples.
+/// * `blk_y` - The y-offset of the block within the macroblock in chroma samples.
+/// * `width` - The width of the block in chroma samples.
+/// * `height` - The height of the block in chroma samples.
+/// * `mv` - The luma motion vector (in 1/4-luma-sample units).
+/// * `dst` - The destination buffer.
+/// * `dst_stride` - The stride of the destination buffer.
+pub fn interpolate_chroma(
+    ref_plane: &Plane<u8>,
+    mb_x: u32,
+    mb_y: u32,
+    blk_x: u8,
+    blk_y: u8,
+    width: u8,
+    height: u8,
+    mv: MotionVector,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
+    // 1. Derive Chroma Motion Vector
+    // For 4:2:0, the chroma motion vector is derived by scaling the luma motion vector.
+    // Luma MV is in 1/4 pixel units.
+    // 1 chroma pixel = 2 luma pixels.
+    // So 1 unit of Luma MV = 1/4 luma pixel = 1/8 chroma pixel.
+
+    // Integer part of the position (in chroma samples)
+    let x_int = (mb_x as i32) + (blk_x as i32) + (mv.x >> 3) as i32;
+    let y_int = (mb_y as i32) + (blk_y as i32) + (mv.y >> 3) as i32;
+
+    // Fractional part (0..7), representing 1/8th chroma sample intervals
+    let x_frac = (mv.x & 7) as i32;
+    let y_frac = (mv.y & 7) as i32;
+
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let cx = x_int + x as i32;
+            let cy = y_int + y as i32;
+
+            // 2. Fetch Neighbors
+            // Section 8.4.2.2.2: A, B, C, D samples
+            let val_a = get_clamped_pixel(ref_plane, cx, cy) as i32;
+            let val_b = get_clamped_pixel(ref_plane, cx + 1, cy) as i32;
+            let val_c = get_clamped_pixel(ref_plane, cx, cy + 1) as i32;
+            let val_d = get_clamped_pixel(ref_plane, cx + 1, cy + 1) as i32;
+
+            // 3. Bilinear Interpolation
+            // Equation 8-266
+            // pred = ( (8 - xFrac) * (8 - yFrac) * A + xFrac * (8 - yFrac) * B +
+            //          (8 - xFrac) * yFrac * C + xFrac * yFrac * D + 32 ) >> 6
+            let w00 = (8 - x_frac) * (8 - y_frac);
+            let w10 = x_frac * (8 - y_frac);
+            let w01 = (8 - x_frac) * y_frac;
+            let w11 = x_frac * y_frac;
+
+            let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
+
+            dst[y * dst_stride + x] = prediction.clamp(0, 255) as u8;
+        }
+    }
+}
+
 /// Section 8.4.2.1: Clamping for "Unrestricted Motion Vector"
 #[inline]
 fn get_clamped_pixel(plane: &Plane<u8>, x: i32, y: i32) -> u8 {
@@ -309,5 +377,111 @@ mod tests {
         // a = (100 + 150 + 1) >> 1 = 125
         interpolate_luma(&plane, 2, 2, 0, 0, 4, 1, MotionVector { x: 1, y: 0 }, &mut dst, 4);
         assert_eq!(dst[0], 125);
+    }
+
+    #[test]
+    fn test_interpolate_chroma_integer() {
+        let plane = create_test_plane(16, 16, 50);
+        let mut dst = [0u8; 4];
+        // mv = (0, 0) -> x_frac=0, y_frac=0. Result should be A (50)
+        interpolate_chroma(
+            &plane,
+            0,
+            0,
+            0,
+            0,
+            2,
+            2,
+            MotionVector { x: 0, y: 0 },
+            &mut dst,
+            2,
+        );
+        assert_eq!(dst, [50; 4]);
+    }
+
+    #[test]
+    fn test_interpolate_chroma_half() {
+        // Create a plane with alternating 100 and 200
+        let mut plane = Plane::new(16, 16, 0, 0, 16, 16);
+        plane.data.fill(0);
+        for y in 0..16 + 32 {
+            let stride = plane.cfg.stride;
+            if y * stride >= plane.data.len() { break; }
+            for x in 0..stride {
+                plane.data[y * stride + x] = if x % 2 == 0 { 100 } else { 200 };
+            }
+        }
+        
+        let mut dst = [0u8; 4];
+        // We want half-pixel interpolation between 100 and 200.
+        // In chroma logic:
+        // x_int = 0
+        // We need x_frac = 4 (which is 4/8 = 1/2 chroma pixel)
+        // mv.x should be: (0 << 3) + 4 = 4.
+        // Wait, mv is in 1/4 luma units.
+        // mv.x = 4 means 1 luma pixel shift.
+        // 1 luma pixel = 0.5 chroma pixel.
+        // So mv.x = 4 should indeed give x_frac = 4.
+        
+        interpolate_chroma(
+            &plane,
+            0,
+            0,
+            0,
+            0,
+            2,
+            2,
+            MotionVector { x: 4, y: 0 },
+            &mut dst,
+            2,
+        );
+        
+        // A=100, B=200. frac=4/8=0.5.
+        // Res = 0.5*100 + 0.5*200 = 150.
+        assert_eq!(dst[0], 150);
+        assert_eq!(dst[1], 150); // Next pixel is B=200, C=100 -> avg 150
+    }
+
+    #[test]
+    fn test_interpolate_chroma_eighth() {
+        let mut plane = Plane::new(16, 16, 0, 0, 16, 16);
+        plane.data.fill(100);
+
+        {
+            let mut slice = plane.mut_slice(v_frame::plane::PlaneOffset { x: 0, y: 0 });
+            // Set (1,0) to 164 using the slice API which handles offsets correctly
+            let row0 = &mut slice.rows_iter_mut().next().unwrap();
+            row0[1] = 164;
+        }
+        
+        // Verify our setup (p uses the same logic as slice usually)
+        assert_eq!(plane.p(1, 0), 164, "Setup failed");
+        
+        let mut dst = [0u8; 1];
+        
+        // We want x_frac = 1 (1/8 chroma pixel).
+        // mv.x = 1 (1/4 luma pixel = 1/8 chroma pixel).
+        // x_int = 0.
+        // Needs A=(0,0) [col xpad] -> 100
+        // Needs B=(1,0) [col xpad+1] -> 164
+        interpolate_chroma(
+            &plane,
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            MotionVector { x: 1, y: 0 },
+            &mut dst,
+            1,
+        );
+        
+        // A=100, B=164. x_frac=1. y_frac=0.
+        // Eq: ( (7*8*A + 1*8*B) + 32 ) >> 6
+        // = ( 56*100 + 8*164 + 32 ) / 64
+        // = 108
+        
+        assert_eq!(dst[0], 108);
     }
 }

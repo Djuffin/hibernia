@@ -151,11 +151,7 @@ impl Decoder {
 
                     let pic_order_cnt = self.calculate_poc(&slice, disposition);
 
-                    let pic = Picture {
-                        frame,
-                        frame_num: slice.header.frame_num,
-                        pic_order_cnt,
-                    };
+                    let pic = Picture { frame, frame_num: slice.header.frame_num, pic_order_cnt };
                     let dpb_pic = DpbPicture {
                         picture: pic,
                         marking: if nal.nal_ref_idc != 0 {
@@ -384,16 +380,16 @@ impl Decoder {
         for (i, pic) in self.dpb.pictures.iter().enumerate() {
             match pic.marking {
                 DpbMarking::UsedForShortTermReference => {
-                let frame_num = pic.picture.frame_num as i32;
-                let pic_num = if frame_num > curr_frame_num {
-                    frame_num - max_frame_num
-                } else {
-                    frame_num
-                };
-                short_term_refs.push((i, pic_num));
+                    let frame_num = pic.picture.frame_num as i32;
+                    let pic_num = if frame_num > curr_frame_num {
+                        frame_num - max_frame_num
+                    } else {
+                        frame_num
+                    };
+                    short_term_refs.push((i, pic_num));
                 }
                 DpbMarking::UsedForLongTermReference(lt_idx) => {
-                long_term_refs.push((i, lt_idx));
+                    long_term_refs.push((i, lt_idx));
                 }
                 _ => {}
             }
@@ -404,11 +400,7 @@ impl Decoder {
         long_term_refs.sort_by_key(|k| k.1); // Ascending LongTermPicNum
 
         // Initial List 0
-        short_term_refs
-            .iter()
-            .map(|x| x.0)
-            .chain(long_term_refs.iter().map(|x| x.0))
-            .collect()
+        short_term_refs.iter().map(|x| x.0).chain(long_term_refs.iter().map(|x| x.0)).collect()
     }
 
     // Section 8.2.4.3 Reordering process for reference picture lists

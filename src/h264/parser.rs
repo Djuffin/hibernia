@@ -1068,10 +1068,8 @@ fn calculate_motion(
     let mut fill_motion_grid =
         |part_x: u8, part_y: u8, part_w: u8, part_h: u8, ref_idx: u8, mvd: MotionVector| {
             let mvp = predict_mv_l0(slice, this_mb_addr, part_x, part_y, part_w, part_h, ref_idx);
-            let final_mv = MotionVector {
-                x: mvp.x.wrapping_add(mvd.x),
-                y: mvp.y.wrapping_add(mvd.y),
-            };
+            let final_mv =
+                MotionVector { x: mvp.x.wrapping_add(mvd.x), y: mvp.y.wrapping_add(mvd.y) };
             let info = PartitionInfo { ref_idx_l0: ref_idx, mv_l0: final_mv };
 
             let grid_x_start = (part_x / 4) as usize;
@@ -1102,8 +1100,7 @@ fn calculate_motion(
 
             let mv = if zero_a && zero_b {
                 MotionVector::default()
-            }
-            else {
+            } else {
                 predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0)
             };
 
@@ -1406,11 +1403,8 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
                     &default_sub_mbs,
                 );
 
-                let block = Macroblock::P(PMb {
-                    mb_type: PMbType::P_Skip,
-                    motion,
-                    ..Default::default()
-                });
+                let block =
+                    Macroblock::P(PMb { mb_type: PMbType::P_Skip, motion, ..Default::default() });
                 slice.append_mb(block);
             }
             if mb_skip_run > 0 {

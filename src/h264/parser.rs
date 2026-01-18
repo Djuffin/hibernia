@@ -954,6 +954,9 @@ pub fn get_motion_at_coord(slice: &Slice, x: i32, y: i32) -> Option<PartitionInf
     let mb_addr = slice.get_mb_addr_from_coords(x, y);
 
     let neighbor_mb = slice.get_mb(mb_addr)?;
+    if neighbor_mb.is_intra() {
+        return None;
+    }
     let motion_info = neighbor_mb.get_motion_info();
 
     let block_grid_x = ((x % 16) / 4) as usize;
@@ -976,16 +979,48 @@ pub fn predict_mv_l0(
     let abs_part_x = mb_loc.x as i32 + part_x as i32;
     let abs_part_y = mb_loc.y as i32 + part_y as i32;
 
+    let get_neighbor_raw = |x, y| get_motion_at_coord(slice, x, y);
+
+    // Directional segmentation prediction for 16x8 and 8x16
+    if part_w == 16 && part_h == 8 {
+        if part_y == 0 {
+            // 16x8 Top partition -> Predict from B
+            return get_neighbor_raw(abs_part_x, abs_part_y - 1)
+                .map(|i| i.mv_l0)
+                .unwrap_or_default();
+        } else {
+            // 16x8 Bottom partition -> Predict from A
+            return get_neighbor_raw(abs_part_x - 1, abs_part_y)
+                .map(|i| i.mv_l0)
+                .unwrap_or_default();
+        }
+    }
+
+    if part_w == 8 && part_h == 16 {
+        if part_x == 0 {
+            // 8x16 Left partition -> Predict from A
+            return get_neighbor_raw(abs_part_x - 1, abs_part_y)
+                .map(|i| i.mv_l0)
+                .unwrap_or_default();
+        } else {
+            // 8x16 Right partition -> Predict from C
+            return get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
+                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)) // D fallback
+                .map(|i| i.mv_l0)
+                .unwrap_or_default();
+        }
+    }
+
     let process_neighbor = |info: Option<PartitionInfo>| {
         info.and_then(|i| if i.ref_idx_l0 == ref_idx_l0 { Some(i.mv_l0) } else { None })
     };
 
     // Get motion vectors from neighbors A, B, C
-    let mv_a_opt = process_neighbor(get_motion_at_coord(slice, abs_part_x - 1, abs_part_y));
-    let mv_b_opt = process_neighbor(get_motion_at_coord(slice, abs_part_x, abs_part_y - 1));
+    let mv_a_opt = process_neighbor(get_neighbor_raw(abs_part_x - 1, abs_part_y));
+    let mv_b_opt = process_neighbor(get_neighbor_raw(abs_part_x, abs_part_y - 1));
     let mv_c_opt = process_neighbor(
-        get_motion_at_coord(slice, abs_part_x + part_w as i32, abs_part_y - 1)
-            .or_else(|| get_motion_at_coord(slice, abs_part_x - 1, abs_part_y - 1)),
+        get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
+            .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)),
     );
 
     let count_some =
@@ -1029,138 +1064,107 @@ fn calculate_motion(
 ) -> MbMotion {
     let mut motion = MbMotion::default();
 
-    if mb_type == PMbType::P_Skip {
-        let mb_loc = slice.get_mb_location(this_mb_addr);
+    // Helper to calculate motion vector and fill the grid
+    let mut fill_motion_grid =
+        |part_x: u8, part_y: u8, part_w: u8, part_h: u8, ref_idx: u8, mvd: MotionVector| {
+            let mvp = predict_mv_l0(slice, this_mb_addr, part_x, part_y, part_w, part_h, ref_idx);
+            let final_mv = MotionVector {
+                x: mvp.x.wrapping_add(mvd.x),
+                y: mvp.y.wrapping_add(mvd.y),
+            };
+            let info = PartitionInfo { ref_idx_l0: ref_idx, mv_l0: final_mv };
 
-        let is_zero_motion = |x, y| {
-            if let Some(info) = get_motion_at_coord(slice, x, y) {
-                info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
-            } else {
-                true // Unavailable
+            let grid_x_start = (part_x / 4) as usize;
+            let grid_y_start = (part_y / 4) as usize;
+            let grid_w = (part_w / 4) as usize;
+            let grid_h = (part_h / 4) as usize;
+
+            for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
+                row[grid_x_start..grid_x_start + grid_w].fill(info);
             }
         };
 
-        let zero_a = is_zero_motion(mb_loc.x as i32 - 1, mb_loc.y as i32);
-        let zero_b = is_zero_motion(mb_loc.x as i32, mb_loc.y as i32 - 1);
+    match mb_type {
+        PMbType::P_Skip => {
+            let mb_loc = slice.get_mb_location(this_mb_addr);
 
-        let mv = if zero_a && zero_b {
-            MotionVector::default()
-        } else {
-            predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0)
-        };
-
-        for y in 0..4 {
-            for x in 0..4 {
-                motion.partitions[y][x] = PartitionInfo { ref_idx_l0: 0, mv_l0: mv };
-            }
-        }
-        return motion;
-    }
-
-    if mb_type == PMbType::P_8x8 || mb_type == PMbType::P_8x8ref0 {
-        // P_8x8 or P_8x8ref0
-        for (i, sub_mb) in sub_macroblocks.iter().enumerate() {
-            // 4 sub-macroblocks
-            let sub_mb_x = ((i % 2) * 8) as u8;
-            let sub_mb_y = ((i / 2) * 8) as u8;
-
-            let (part_w, part_h) = match sub_mb.sub_mb_type {
-                SubMbType::P_L0_8x8 => (8, 8),
-                SubMbType::P_L0_8x4 => (8, 4),
-                SubMbType::P_L0_4x8 => (4, 8),
-                SubMbType::P_L0_4x4 => (4, 4),
+            let is_zero_motion = |x, y| {
+                if let Some(info) = get_motion_at_coord(slice, x, y) {
+                    info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
+                } else {
+                    true // Unavailable or Intra
+                }
             };
 
-            for j in 0..sub_mb.sub_mb_type.NumSubMbPart() {
-                let mvd_info = sub_mb.partitions[j];
-                let part_x = sub_mb_x
-                    + match (sub_mb.sub_mb_type, j) {
-                        (SubMbType::P_L0_4x8, 1) => 4,
-                        (SubMbType::P_L0_4x4, 1 | 3) => 4,
-                        _ => 0,
-                    };
-                let part_y = sub_mb_y
-                    + match (sub_mb.sub_mb_type, j) {
-                        (SubMbType::P_L0_8x4, 1) => 4,
-                        (SubMbType::P_L0_4x4, 2 | 3) => 4,
-                        _ => 0,
-                    };
+            let zero_a = is_zero_motion(mb_loc.x as i32 - 1, mb_loc.y as i32);
+            let zero_b = is_zero_motion(mb_loc.x as i32, mb_loc.y as i32 - 1);
 
-                let mvp = predict_mv_l0(
-                    slice,
-                    this_mb_addr,
+            let mv = if zero_a && zero_b {
+                MotionVector::default()
+            } else {
+                predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0)
+            };
+
+            let info = PartitionInfo { ref_idx_l0: 0, mv_l0: mv };
+            for row in motion.partitions.iter_mut() {
+                row.fill(info);
+            }
+        }
+        PMbType::P_8x8 | PMbType::P_8x8ref0 => {
+            for (i, sub_mb) in sub_macroblocks.iter().enumerate() {
+                let sub_mb_x = (i as u8 % 2) * 8;
+                let sub_mb_y = (i as u8 / 2) * 8;
+
+                for j in 0..sub_mb.sub_mb_type.NumSubMbPart() {
+                    let mvd_info = sub_mb.partitions[j];
+                    let (part_w, part_h, dx, dy) = match (sub_mb.sub_mb_type, j) {
+                        (SubMbType::P_L0_8x8, _) => (8, 8, 0, 0),
+                        (SubMbType::P_L0_8x4, 0) => (8, 4, 0, 0),
+                        (SubMbType::P_L0_8x4, 1) => (8, 4, 0, 4),
+                        (SubMbType::P_L0_4x8, 0) => (4, 8, 0, 0),
+                        (SubMbType::P_L0_4x8, 1) => (4, 8, 4, 0),
+                        (SubMbType::P_L0_4x4, 0) => (4, 4, 0, 0),
+                        (SubMbType::P_L0_4x4, 1) => (4, 4, 4, 0),
+                        (SubMbType::P_L0_4x4, 2) => (4, 4, 0, 4),
+                        (SubMbType::P_L0_4x4, 3) => (4, 4, 4, 4),
+                        _ => unreachable!(),
+                    };
+                    fill_motion_grid(
+                        sub_mb_x + dx,
+                        sub_mb_y + dy,
+                        part_w,
+                        part_h,
+                        mvd_info.ref_idx_l0,
+                        mvd_info.mv_l0,
+                    );
+                }
+            }
+        }
+        PMbType::P_L0_16x16 | PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => {
+            let num_mb_part = match mb_type {
+                PMbType::P_L0_16x16 => 1,
+                PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => 2,
+                _ => 0,
+            };
+
+            for i in 0..num_mb_part {
+                let mvd_info = partitions[i];
+                let (part_w, part_h, part_x, part_y) = match (mb_type, i) {
+                    (PMbType::P_L0_16x16, _) => (16, 16, 0, 0),
+                    (PMbType::P_L0_L0_16x8, 0) => (16, 8, 0, 0),
+                    (PMbType::P_L0_L0_16x8, 1) => (16, 8, 0, 8),
+                    (PMbType::P_L0_L0_8x16, 0) => (8, 16, 0, 0),
+                    (PMbType::P_L0_L0_8x16, 1) => (8, 16, 8, 0),
+                    _ => unreachable!(),
+                };
+                fill_motion_grid(
                     part_x,
                     part_y,
                     part_w,
                     part_h,
                     mvd_info.ref_idx_l0,
+                    mvd_info.mv_l0,
                 );
-                let final_mv = MotionVector {
-                    x: mvp.x.wrapping_add(mvd_info.mv_l0.x),
-                    y: mvp.y.wrapping_add(mvd_info.mv_l0.y),
-                };
-
-                let final_part_info =
-                    PartitionInfo { ref_idx_l0: mvd_info.ref_idx_l0, mv_l0: final_mv };
-
-                // Fill the 4x4 grid
-                let grid_x_start = part_x as usize / 4;
-                let grid_y_start = part_y as usize / 4;
-                let grid_w = part_w as usize / 4;
-                let grid_h = part_h as usize / 4;
-                for y in grid_y_start..(grid_y_start + grid_h) {
-                    for x in grid_x_start..(grid_x_start + grid_w) {
-                        motion.partitions[y][x] = final_part_info;
-                    }
-                }
-            }
-        }
-    } else {
-        // P_L0_16x16, P_L0_L0_16x8, P_L0_L0_8x16
-        let num_mb_part = match mb_type {
-            PMbType::P_L0_16x16 => 1,
-            PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => 2,
-            _ => 0, // Should not happen
-        };
-
-        let (part_w, part_h) = match mb_type {
-            PMbType::P_L0_16x16 => (16, 16),
-            PMbType::P_L0_L0_16x8 => (16, 8),
-            PMbType::P_L0_L0_8x16 => (8, 16),
-            _ => (0, 0), // Should not happen
-        };
-
-        for i in 0..num_mb_part {
-            let mvd_info = partitions[i];
-            let part_x = if i == 1 && mb_type == PMbType::P_L0_L0_8x16 { 8 } else { 0 };
-            let part_y = if i == 1 && mb_type == PMbType::P_L0_L0_16x8 { 8 } else { 0 };
-
-            let mvp = predict_mv_l0(
-                slice,
-                this_mb_addr,
-                part_x,
-                part_y,
-                part_w,
-                part_h,
-                mvd_info.ref_idx_l0,
-            );
-            let final_mv = MotionVector {
-                x: mvp.x.wrapping_add(mvd_info.mv_l0.x),
-                y: mvp.y.wrapping_add(mvd_info.mv_l0.y),
-            };
-
-            let final_part_info =
-                PartitionInfo { ref_idx_l0: mvd_info.ref_idx_l0, mv_l0: final_mv };
-
-            // Fill the 4x4 grid
-            let grid_x_start = part_x as usize / 4;
-            let grid_y_start = part_y as usize / 4;
-            let grid_w = part_w as usize / 4;
-            let grid_h = part_h as usize / 4;
-            for y in grid_y_start..(grid_y_start + grid_h) {
-                for x in grid_x_start..(grid_x_start + grid_w) {
-                    motion.partitions[y][x] = final_part_info;
-                }
             }
         }
     }

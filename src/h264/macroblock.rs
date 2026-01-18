@@ -500,8 +500,13 @@ impl Macroblock {
     pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self {
             Macroblock::I(mb) => mb.MbPartPredMode(partition),
-            _ => MbPredictionMode::None,
+            Macroblock::P(mb) => mb.MbPartPredMode(partition),
+            Macroblock::PCM(_) => MbPredictionMode::None,
         }
+    }
+
+    pub fn is_intra(&self) -> bool {
+        matches!(self, Macroblock::I(_) | Macroblock::PCM(_))
     }
 
     // Calculates nC for the block withing the macroblock

@@ -1086,6 +1086,7 @@ fn calculate_motion(
 
     match mb_type {
         PMbType::P_Skip => {
+            // Section 8.4.1.1 Derivation process for luma motion vectors for skipped macroblocks in P and SP slices
             let mb_loc = slice.get_mb_location(this_mb_addr);
 
             let is_zero_motion = |x, y| {
@@ -1101,7 +1102,8 @@ fn calculate_motion(
 
             let mv = if zero_a && zero_b {
                 MotionVector::default()
-            } else {
+            }
+            else {
                 predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0)
             };
 
@@ -1111,12 +1113,14 @@ fn calculate_motion(
             }
         }
         PMbType::P_8x8 | PMbType::P_8x8ref0 => {
+            // Section 8.4.1 Derivation process for motion vector components and reference indices
             for (i, sub_mb) in sub_macroblocks.iter().enumerate() {
                 let sub_mb_x = (i as u8 % 2) * 8;
                 let sub_mb_y = (i as u8 / 2) * 8;
 
                 for j in 0..sub_mb.sub_mb_type.NumSubMbPart() {
                     let mvd_info = sub_mb.partitions[j];
+                    // Table 7-18 – Sub-macroblock types in P macroblocks
                     let (part_w, part_h, dx, dy) = match (sub_mb.sub_mb_type, j) {
                         (SubMbType::P_L0_8x8, _) => (8, 8, 0, 0),
                         (SubMbType::P_L0_8x4, 0) => (8, 4, 0, 0),
@@ -1141,6 +1145,7 @@ fn calculate_motion(
             }
         }
         PMbType::P_L0_16x16 | PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => {
+            // Section 8.4.1 Derivation process for motion vector components and reference indices
             let num_mb_part = match mb_type {
                 PMbType::P_L0_16x16 => 1,
                 PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => 2,
@@ -1149,6 +1154,7 @@ fn calculate_motion(
 
             for i in 0..num_mb_part {
                 let mvd_info = partitions[i];
+                // Table 7-13 – Macroblock type values 0 to 4 for P and SP slices
                 let (part_w, part_h, part_x, part_y) = match (mb_type, i) {
                     (PMbType::P_L0_16x16, _) => (16, 16, 0, 0),
                     (PMbType::P_L0_L0_16x8, 0) => (16, 8, 0, 0),

@@ -349,7 +349,7 @@ impl Decoder {
                         };
 
                         render_luma_inter_prediction(
-                            slice, mb_addr, block, mb_loc, frame, &residuals, references,
+                            slice, block, mb_loc, frame, &residuals, references,
                         );
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
@@ -363,7 +363,7 @@ impl Decoder {
                                 Vec::new()
                             };
                             render_chroma_inter_prediction(
-                                slice, mb_addr, block, mb_loc, plane_name, frame, &residuals,
+                                slice, block, mb_loc, plane_name, frame, &residuals,
                                 references,
                             );
                         }
@@ -603,7 +603,6 @@ impl Surroundings4x4 {
 
 pub fn render_luma_inter_prediction(
     slice: &Slice,
-    _mb_addr: MbAddr,
     mb: &PMb,
     mb_loc: Point,
     frame: &mut VideoFrame,
@@ -669,7 +668,6 @@ pub fn render_luma_inter_prediction(
 
 pub fn render_chroma_inter_prediction(
     slice: &Slice,
-    _mb_addr: MbAddr,
     mb: &PMb,
     mb_loc: Point,
     plane: ColorPlane,

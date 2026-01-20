@@ -12,7 +12,7 @@ use super::macroblock::{
     self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
     get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
     Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName, MbPredictionMode, MotionVector,
-    PartitionInfo, PMb,
+    PMb, PartitionInfo,
 };
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
@@ -363,13 +363,7 @@ impl Decoder {
                                 Vec::new()
                             };
                             render_chroma_inter_prediction(
-                                slice,
-                                mb_addr,
-                                block,
-                                mb_loc,
-                                plane_name,
-                                frame,
-                                &residuals,
+                                slice, mb_addr, block, mb_loc, plane_name, frame, &residuals,
                                 references,
                             );
                         }

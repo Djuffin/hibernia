@@ -1057,10 +1057,7 @@ pub fn predict_mv_l0(
         a + b + c - min_val - max_val
     }
 
-    MotionVector {
-        x: median(mv_a.x, mv_b.x, mv_c.x),
-        y: median(mv_a.y, mv_b.y, mv_c.y),
-    }
+    MotionVector { x: median(mv_a.x, mv_b.x, mv_c.x), y: median(mv_a.y, mv_b.y, mv_c.y) }
 }
 
 fn calculate_motion(

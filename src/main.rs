@@ -124,13 +124,15 @@ mod tests {
 
     #[test]
     pub fn test_NL1_Sony_D() -> Result<(), String> {
-        // Decoding of I slices
+        // All slices are coded as I slices. Each picture contains only one slice.
+        // disable_deblocking_filter_idc is equal to 1, specifying disabling of the deblocking filter process.
         test_decoding_against_gold("data/NL1_Sony_D.jsv", "data/NL1_Sony_D.y4m")
     }
 
     #[test]
     pub fn test_SVA_NL1_B() -> Result<(), String> {
-        // Decoding of I slices
+        // All slices are coded as I slices. Each picture contains only one slice.
+        // disable_deblocking_filter_idc is equal to 1, specifying disabling of the deblocking filter process.
         test_decoding_against_gold("data/SVA_NL1_B.264", "data/SVA_NL1_B.y4m")
     }
 
@@ -138,13 +140,17 @@ mod tests {
     #[ignore = "not yet implemented"]
     pub fn test_BA1_Sony_D() -> Result<(), String> {
         // Decoding of I slices with the deblocking filter process enabled.
+        // All slices are coded as I slices. Each picture contains only one slice.
         test_decoding_against_gold("data/BA1_Sony_D.jsv", "data/BA1_Sony_D.y4m")
     }
 
     #[test]
-    #[ignore = "not yet implemented"]
+    #[ignore = "P-slice decoding is broken"]
     pub fn test_NL2_Sony_H() -> Result<(), String> {
         // Decoding of P slices.
+        // All slices are coded as I or P slices. Each picture contains only one slice.
+        // disable_deblocking_filter_idc is equal to 1, specifying disabling of the deblocking filter process.
+        // pic_order_cnt_type is equal to 0.
         test_decoding_against_gold("data/NL2_Sony_H.jsv", "data/NL2_Sony_H.y4m")
     }
 }

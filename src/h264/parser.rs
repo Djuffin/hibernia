@@ -1017,36 +1017,38 @@ pub fn predict_mv_l0(
         }
     }
 
-    let process_neighbor = |info: Option<PartitionInfo>| {
-        info.and_then(|i| if i.ref_idx_l0 == ref_idx_l0 { Some(i.mv_l0) } else { None })
-    };
+    // Get raw neighbor info (None if Intra or Unavailable)
+    let raw_a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
+    let raw_b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
+    let raw_c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
+        .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1));
 
-    // Get motion vectors from neighbors A, B, C
-    let mv_a_opt = process_neighbor(get_neighbor_raw(abs_part_x - 1, abs_part_y));
-    let mv_b_opt = process_neighbor(get_neighbor_raw(abs_part_x, abs_part_y - 1));
-    let mv_c_opt = process_neighbor(
-        get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
-            .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)),
-    );
+    // Check if neighbors match the current ref_idx
+    let match_a = raw_a.map_or(false, |p| p.ref_idx_l0 == ref_idx_l0);
+    let match_b = raw_b.map_or(false, |p| p.ref_idx_l0 == ref_idx_l0);
+    let match_c = raw_c.map_or(false, |p| p.ref_idx_l0 == ref_idx_l0);
 
-    let count_some =
-        mv_a_opt.is_some() as i32 + mv_b_opt.is_some() as i32 + mv_c_opt.is_some() as i32;
+    let count_matches = match_a as i32 + match_b as i32 + match_c as i32;
 
-    if count_some == 1 {
-        if let Some(mv) = mv_a_opt {
-            return mv;
+    // If exactly one neighbor has the same reference index, use its MV.
+    if count_matches == 1 {
+        if match_a {
+            return raw_a.unwrap().mv_l0;
         }
-        if let Some(mv) = mv_b_opt {
-            return mv;
+        if match_b {
+            return raw_b.unwrap().mv_l0;
         }
-        if let Some(mv) = mv_c_opt {
-            return mv;
+        if match_c {
+            return raw_c.unwrap().mv_l0;
         }
     }
 
-    let final_mv_a = mv_a_opt.unwrap_or_default();
-    let final_mv_b = mv_b_opt.unwrap_or_default();
-    let final_mv_c = mv_c_opt.unwrap_or_default();
+    // Otherwise, use Median of MVs.
+    // For Median calculation, unavailable/Intra neighbors are treated as (0,0).
+    // Neighbors with different ref_idx are used AS IS (they are not zeroed).
+    let mv_a = raw_a.map(|p| p.mv_l0).unwrap_or_default();
+    let mv_b = raw_b.map(|p| p.mv_l0).unwrap_or_default();
+    let mv_c = raw_c.map(|p| p.mv_l0).unwrap_or_default();
 
     // Median prediction.
     fn median(a: i16, b: i16, c: i16) -> i16 {
@@ -1056,8 +1058,8 @@ pub fn predict_mv_l0(
     }
 
     MotionVector {
-        x: median(final_mv_a.x, final_mv_b.x, final_mv_c.x),
-        y: median(final_mv_a.y, final_mv_b.y, final_mv_c.y),
+        x: median(mv_a.x, mv_b.x, mv_c.x),
+        y: median(mv_a.y, mv_b.y, mv_c.y),
     }
 }
 

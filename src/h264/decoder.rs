@@ -412,7 +412,10 @@ impl Decoder {
         let mut long_term_refs = Vec::new();
 
         // We use indices into the DPB
-        for (i, pic) in self.dpb.pictures.iter().enumerate() {
+        // The last picture in the DPB is the current picture being decoded,
+        // so we exclude it from the reference list.
+        let candidates_count = self.dpb.pictures.len().saturating_sub(1);
+        for (i, pic) in self.dpb.pictures.iter().enumerate().take(candidates_count) {
             match pic.marking {
                 DpbMarking::UsedForShortTermReference => {
                     let frame_num = pic.picture.frame_num as i32;

@@ -969,7 +969,13 @@ pub fn get_motion_at_coord(
         return if let Some(motion) = current_mb_motion {
             let block_grid_x = ((x % 16) / 4) as usize;
             let block_grid_y = ((y % 16) / 4) as usize;
-            Some(motion.partitions[block_grid_y][block_grid_x])
+            let info = motion.partitions[block_grid_y][block_grid_x];
+            // 255 is used as a sentinel for "not yet decoded" in calculate_motion
+            if info.ref_idx_l0 == 255 {
+                None
+            } else {
+                Some(info)
+            }
         } else {
             None
         };
@@ -1008,31 +1014,63 @@ pub fn predict_mv_l0(
     // Directional segmentation prediction for 16x8 and 8x16
     if part_w == 16 && part_h == 8 {
         if part_y == 0 {
-            // 16x8 Top partition -> Predict from B
-            return get_neighbor_raw(abs_part_x, abs_part_y - 1)
-                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y))
-                .map(|i| i.mv_l0)
-                .unwrap_or_default();
+            // 16x8 Top partition (0) -> Predict from B, fallback to A
+            let b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
+            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
+
+            let ref_b = b.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+
+            if ref_b != ref_idx_l0 && ref_a == ref_idx_l0 {
+                return a.unwrap().mv_l0;
+            } else {
+                return b.map(|i| i.mv_l0).unwrap_or_default();
+            }
         } else {
-            // 16x8 Bottom partition -> Predict from A
-            return get_neighbor_raw(abs_part_x - 1, abs_part_y)
-                .map(|i| i.mv_l0)
-                .unwrap_or_default();
+            // 16x8 Bottom partition (1) -> Predict from A, fallback to C
+            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
+            let c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
+                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)); // D fallback
+
+            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+            let ref_c = c.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+
+            if ref_a != ref_idx_l0 && ref_c == ref_idx_l0 {
+                return c.unwrap().mv_l0;
+            } else {
+                return a.map(|i| i.mv_l0).unwrap_or_default();
+            }
         }
     }
 
     if part_w == 8 && part_h == 16 {
         if part_x == 0 {
-            // 8x16 Left partition -> Predict from A
-            return get_neighbor_raw(abs_part_x - 1, abs_part_y)
-                .map(|i| i.mv_l0)
-                .unwrap_or_default();
+            // 8x16 Left partition (0) -> Predict from A, fallback to B
+            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
+            let b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
+
+            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+            let ref_b = b.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+
+            if ref_a != ref_idx_l0 && ref_b == ref_idx_l0 {
+                return b.unwrap().mv_l0;
+            } else {
+                return a.map(|i| i.mv_l0).unwrap_or_default();
+            }
         } else {
-            // 8x16 Right partition -> Predict from C
-            return get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
-                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)) // D fallback
-                .map(|i| i.mv_l0)
-                .unwrap_or_default();
+            // 8x16 Right partition (1) -> Predict from C, fallback to A
+            let c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
+                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)); // D fallback
+            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
+
+            let ref_c = c.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
+
+            if ref_c != ref_idx_l0 && ref_a == ref_idx_l0 {
+                return a.unwrap().mv_l0;
+            } else {
+                return c.map(|i| i.mv_l0).unwrap_or_default();
+            }
         }
     }
 
@@ -1087,6 +1125,14 @@ fn calculate_motion(
     sub_macroblocks: &[SubMacroblock; 4],
 ) -> MbMotion {
     let mut motion = MbMotion::default();
+
+    // Mark all partitions as "Not yet decoded" (Unavailable) using sentinel ref_idx 255.
+    // This allows predict_mv_l0 to correctly identify unavailable neighbors within the same MB.
+    for row in motion.partitions.iter_mut() {
+        for part in row.iter_mut() {
+            part.ref_idx_l0 = 255;
+        }
+    }
 
     // Helper to calculate motion vector and fill the grid
     let mut fill_motion_grid =

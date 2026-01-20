@@ -936,6 +936,12 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
     if matches!(slice.header.slice_type, SliceType::I | SliceType::SI) {
         let mb_type = IMbType::try_from(mb_type_val)?;
         parse_i_macroblock(input, slice, mb_type)
+    } else if mb_type_val >= 5 {
+        // The macroblock types for P and SP slices are specified in Tables 7-13 and 7-11.
+        // mb_type values 0 to 4 are specified in Table 7-13 and mb_type values 5 to 30 are
+        // specified in Table 7-11, indexed by subtracting 5 from the value of mb_type.
+        let mb_type = IMbType::try_from(mb_type_val - 5)?;
+        parse_i_macroblock(input, slice, mb_type)
     } else {
         let mb_type = PMbType::try_from(mb_type_val)?;
         parse_p_macroblock(input, slice, mb_type)

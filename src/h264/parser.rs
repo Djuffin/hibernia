@@ -949,7 +949,13 @@ pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Mac
 }
 
 // Gets the motion information for the 4x4 block covering the given absolute pixel coordinates.
-pub fn get_motion_at_coord(slice: &Slice, x: i32, y: i32) -> Option<PartitionInfo> {
+pub fn get_motion_at_coord(
+    slice: &Slice,
+    x: i32,
+    y: i32,
+    current_mb_addr: MbAddr,
+    current_mb_motion: Option<&MbMotion>,
+) -> Option<PartitionInfo> {
     let pic_width_pixels = slice.sps.pic_width() as i32;
     let pic_height_pixels = slice.sps.pic_hight() as i32;
 
@@ -958,6 +964,16 @@ pub fn get_motion_at_coord(slice: &Slice, x: i32, y: i32) -> Option<PartitionInf
     }
 
     let mb_addr = slice.get_mb_addr_from_coords(x, y);
+
+    if mb_addr == current_mb_addr {
+        return if let Some(motion) = current_mb_motion {
+            let block_grid_x = ((x % 16) / 4) as usize;
+            let block_grid_y = ((y % 16) / 4) as usize;
+            Some(motion.partitions[block_grid_y][block_grid_x])
+        } else {
+            None
+        };
+    }
 
     let neighbor_mb = slice.get_mb(mb_addr)?;
     if neighbor_mb.is_intra() {
@@ -980,18 +996,21 @@ pub fn predict_mv_l0(
     part_w: u8,
     part_h: u8,
     ref_idx_l0: u8,
+    current_mb_motion: Option<&MbMotion>,
 ) -> MotionVector {
     let mb_loc = slice.get_mb_location(mb_addr);
     let abs_part_x = mb_loc.x as i32 + part_x as i32;
     let abs_part_y = mb_loc.y as i32 + part_y as i32;
 
-    let get_neighbor_raw = |x, y| get_motion_at_coord(slice, x, y);
+    let get_neighbor_raw =
+        |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
 
     // Directional segmentation prediction for 16x8 and 8x16
     if part_w == 16 && part_h == 8 {
         if part_y == 0 {
             // 16x8 Top partition -> Predict from B
             return get_neighbor_raw(abs_part_x, abs_part_y - 1)
+                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y))
                 .map(|i| i.mv_l0)
                 .unwrap_or_default();
         } else {
@@ -1072,7 +1091,16 @@ fn calculate_motion(
     // Helper to calculate motion vector and fill the grid
     let mut fill_motion_grid =
         |part_x: u8, part_y: u8, part_w: u8, part_h: u8, ref_idx: u8, mvd: MotionVector| {
-            let mvp = predict_mv_l0(slice, this_mb_addr, part_x, part_y, part_w, part_h, ref_idx);
+            let mvp = predict_mv_l0(
+                slice,
+                this_mb_addr,
+                part_x,
+                part_y,
+                part_w,
+                part_h,
+                ref_idx,
+                Some(&motion),
+            );
             let final_mv =
                 MotionVector { x: mvp.x.wrapping_add(mvd.x), y: mvp.y.wrapping_add(mvd.y) };
             let info = PartitionInfo { ref_idx_l0: ref_idx, mv_l0: final_mv };
@@ -1093,7 +1121,7 @@ fn calculate_motion(
             let mb_loc = slice.get_mb_location(this_mb_addr);
 
             let is_zero_motion = |x, y| {
-                if let Some(info) = get_motion_at_coord(slice, x, y) {
+                if let Some(info) = get_motion_at_coord(slice, x, y, this_mb_addr, None) {
                     info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
                 } else {
                     true // Unavailable or Intra
@@ -1106,7 +1134,7 @@ fn calculate_motion(
             let mv = if zero_a && zero_b {
                 MotionVector::default()
             } else {
-                predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0)
+                predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0, None)
             };
 
             let info = PartitionInfo { ref_idx_l0: 0, mv_l0: mv };

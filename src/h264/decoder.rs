@@ -100,6 +100,9 @@ impl Decoder {
         let mut input = parser::BitReader::new(data);
         let parse_error_handler = DecodingError::MisformedData;
         loop {
+            if self.output_frames.len() >= 2 {
+                break;
+            }
             if input.remaining() < 4 * 8 {
                 info!("End of data");
                 break;
@@ -340,6 +343,10 @@ impl Decoder {
                         }
                     }
                     Macroblock::P(block) => {
+                        info!(
+                            "MB {mb_addr} {qp} P-Block type: {:?} MV[0]: {:?}",
+                            block.mb_type, block.motion.partitions[0][0].mv_l0
+                        );
                         qp = (qp + block.mb_qp_delta).clamp(0, 51);
                         let qp = qp.try_into().unwrap();
                         let residuals = if let Some(residual) = block.residual.as_ref() {

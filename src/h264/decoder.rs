@@ -7,11 +7,12 @@ use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
 
 use super::dpb::{DecodedPictureBuffer, DpbPicture};
+use super::inter_pred::{interpolate_chroma, interpolate_luma};
 use super::macroblock::{
     self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
     get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
     Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName, MbPredictionMode, MotionVector,
-    PartitionInfo,
+    PartitionInfo, PMb,
 };
 use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
@@ -261,7 +262,9 @@ impl Decoder {
         self.construct_ref_pic_list0(slice)?;
 
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
-        let frame = &mut self.dpb.pictures.last_mut().unwrap().picture.frame;
+        let split_idx = self.dpb.pictures.len() - 1;
+        let (references, current) = self.dpb.pictures.split_at_mut(split_idx);
+        let frame = &mut current[0].picture.frame;
         for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
             let mb_loc = slice.get_mb_location(mb_addr);
             if let Some(mb) = slice.get_mb(mb_addr) {
@@ -337,7 +340,39 @@ impl Decoder {
                         }
                     }
                     Macroblock::P(block) => {
-                        todo!();
+                        qp = (qp + block.mb_qp_delta).clamp(0, 51);
+                        let qp = qp.try_into().unwrap();
+                        let residuals = if let Some(residual) = block.residual.as_ref() {
+                            residual.restore(ColorPlane::Y, qp)
+                        } else {
+                            Vec::new()
+                        };
+
+                        render_luma_inter_prediction(
+                            slice, mb_addr, block, mb_loc, frame, &residuals, references,
+                        );
+
+                        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
+                            let chroma_qp =
+                                get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0)
+                                    .try_into()
+                                    .unwrap();
+                            let residuals = if let Some(residual) = block.residual.as_ref() {
+                                residual.restore(plane_name, chroma_qp)
+                            } else {
+                                Vec::new()
+                            };
+                            render_chroma_inter_prediction(
+                                slice,
+                                mb_addr,
+                                block,
+                                mb_loc,
+                                plane_name,
+                                frame,
+                                &residuals,
+                                references,
+                            );
+                        }
                     }
                 }
             }
@@ -566,6 +601,149 @@ impl Surroundings4x4 {
     #[inline]
     pub fn left4(&self) -> &[u8] {
         &self.left_column[1..5]
+    }
+}
+
+pub fn render_luma_inter_prediction(
+    slice: &Slice,
+    _mb_addr: MbAddr,
+    mb: &PMb,
+    mb_loc: Point,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    references: &[DpbPicture],
+) {
+    let y_plane = &mut frame.planes[0];
+
+    for blk_idx in 0..16 {
+        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+
+        let ref_idx = partition.ref_idx_l0;
+        let mv = partition.mv_l0;
+
+        if let Some(&dpb_idx) = slice.ref_pic_list0.get(ref_idx as usize) {
+            if let Some(ref_pic) = references.get(dpb_idx) {
+                let ref_plane = &ref_pic.picture.frame.planes[0];
+
+                let blk_x = grid_x * 4;
+                let blk_y = grid_y * 4;
+
+                let mut dst = [0u8; 16]; // 4x4 block
+
+                interpolate_luma(
+                    ref_plane,
+                    mb_loc.x,
+                    mb_loc.y,
+                    blk_x as u8,
+                    blk_y as u8,
+                    4,
+                    4,
+                    mv,
+                    &mut dst,
+                    4, // stride for 4x4 block buffer
+                );
+
+                // Add residual
+                if let Some(residual_blk) = residuals.get(blk_idx as usize) {
+                    for y in 0..4 {
+                        for x in 0..4 {
+                            let res = residual_blk.samples[y][x];
+                            let pred = dst[y * 4 + x] as i32;
+                            dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
+                        }
+                    }
+                }
+
+                // Copy to frame
+                let mut plane_slice = y_plane.mut_slice(PlaneOffset {
+                    x: (mb_loc.x + blk_x as u32) as isize,
+                    y: (mb_loc.y + blk_y as u32) as isize,
+                });
+
+                for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+                    let row_data = &dst[y * 4..(y + 1) * 4];
+                    row[..4].copy_from_slice(row_data);
+                }
+            }
+        }
+    }
+}
+
+pub fn render_chroma_inter_prediction(
+    slice: &Slice,
+    _mb_addr: MbAddr,
+    mb: &PMb,
+    mb_loc: Point,
+    plane: ColorPlane,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    references: &[DpbPicture],
+) {
+    let chroma_plane = &mut frame.planes[plane as usize];
+    let mb_x_chroma = mb_loc.x >> 1;
+    let mb_y_chroma = mb_loc.y >> 1;
+
+    // 1. Prediction (Block by block 2x2)
+    for blk_idx in 0..16 {
+        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let ref_idx = partition.ref_idx_l0;
+        let mv = partition.mv_l0;
+
+        if let Some(&dpb_idx) = slice.ref_pic_list0.get(ref_idx as usize) {
+            if let Some(ref_pic) = references.get(dpb_idx) {
+                let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+
+                let blk_x = (grid_x * 4) >> 1; // 2
+                let blk_y = (grid_y * 4) >> 1; // 2
+
+                let mut dst = [0u8; 4]; // 2x2 = 4 pixels
+
+                interpolate_chroma(
+                    ref_plane,
+                    mb_x_chroma,
+                    mb_y_chroma,
+                    blk_x as u8,
+                    blk_y as u8,
+                    2,
+                    2,
+                    mv,
+                    &mut dst,
+                    2, // stride
+                );
+
+                // Write to frame
+                let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+                    x: (mb_x_chroma + blk_x as u32) as isize,
+                    y: (mb_y_chroma + blk_y as u32) as isize,
+                });
+
+                for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
+                    row[0] = dst[y * 2];
+                    row[1] = dst[y * 2 + 1];
+                }
+            }
+        }
+    }
+
+    // 2. Residuals (Block by block 4x4)
+    for (blk_idx, residual_blk) in residuals.iter().enumerate() {
+        let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
+        // blk_loc is relative to MB top-left in chroma samples
+
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_loc.x) as isize,
+            y: (mb_y_chroma + blk_loc.y) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            for x in 0..4 {
+                let res = residual_blk.samples[y][x];
+                let pred = row[x] as i32;
+                row[x] = (pred + res).clamp(0, 255) as u8;
+            }
+        }
     }
 }
 

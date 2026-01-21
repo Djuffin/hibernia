@@ -152,6 +152,7 @@ mod tests {
         // All slices are coded as I or P slices. Each picture contains only one slice.
         // disable_deblocking_filter_idc is equal to 1, specifying disabling of the deblocking filter process.
         // pic_order_cnt_type is equal to 0.
+        // h264 (Constrained Baseline), yuv420p(progressive), 176x144
         info!("GEMINI, use logs like this to debug this test");
         test_decoding_against_gold("data/NL2_Sony_H.jsv", "data/NL2_Sony_H.y4m")
     }

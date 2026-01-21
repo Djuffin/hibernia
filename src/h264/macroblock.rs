@@ -112,7 +112,7 @@ pub fn get_4x4chroma_block_location(idx: u8) -> Point {
 }
 
 // Section 6.4.13.1 Derivation process for 4x4 luma block indices
-fn get_4x4luma_block_index(p: Point) -> u8 {
+pub fn get_4x4luma_block_index(p: Point) -> u8 {
     let idx = 8 * (p.y / 8) + 4 * (p.x / 8) + 2 * ((p.y % 8) / 4) + ((p.x % 8) / 4);
     idx as u8
 }

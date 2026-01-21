@@ -611,8 +611,8 @@ pub fn render_luma_inter_prediction(
 ) {
     let y_plane = &mut frame.planes[0];
 
-    for blk_idx in 0..16 {
-        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
+    for raster_idx in 0..16 {
+        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
         let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
 
         let ref_idx = partition.ref_idx_l0;
@@ -641,6 +641,10 @@ pub fn render_luma_inter_prediction(
                 );
 
                 // Add residual
+                let blk_idx = macroblock::get_4x4luma_block_index(Point {
+                    x: blk_x as u32,
+                    y: blk_y as u32,
+                });
                 if let Some(residual_blk) = residuals.get(blk_idx as usize) {
                     for y in 0..4 {
                         for x in 0..4 {

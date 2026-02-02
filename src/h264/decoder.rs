@@ -100,7 +100,7 @@ impl Decoder {
         let mut input = parser::BitReader::new(data);
         let parse_error_handler = DecodingError::MisformedData;
         loop {
-            if self.output_frames.len() >= 2 {
+            if self.output_frames.len() >= 4 {
                 break;
             }
             if input.remaining() < 4 * 8 {

@@ -1014,62 +1014,49 @@ pub fn predict_mv_l0(
     // Directional segmentation prediction for 16x8 and 8x16
     if part_w == 16 && part_h == 8 {
         if part_y == 0 {
-            // 16x8 Top partition (0) -> Predict from B, fallback to A
+            // 16x8 Top partition (0)
+            // If refIdxL0B == refIdxL0, mvpL0 = mvL0B.
+            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
             let b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
-            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-
             let ref_b = b.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
 
-            if ref_b != ref_idx_l0 && ref_a == ref_idx_l0 {
-                return a.unwrap().mv_l0;
-            } else {
-                return b.map(|i| i.mv_l0).unwrap_or_default();
+            if ref_b == ref_idx_l0 {
+                return b.unwrap().mv_l0;
             }
         } else {
-            // 16x8 Bottom partition (1) -> Predict from A, fallback to C
+            // 16x8 Bottom partition (1)
+            // If refIdxL0A == refIdxL0, mvpL0 = mvL0A
+            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
             let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-            let c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
-                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)); // D fallback
-
             let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-            let ref_c = c.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
 
-            if ref_a != ref_idx_l0 && ref_c == ref_idx_l0 {
-                return c.unwrap().mv_l0;
-            } else {
-                return a.map(|i| i.mv_l0).unwrap_or_default();
+            if ref_a == ref_idx_l0 {
+                return a.unwrap().mv_l0;
             }
         }
     }
 
     if part_w == 8 && part_h == 16 {
         if part_x == 0 {
-            // 8x16 Left partition (0) -> Predict from A, fallback to B
+            // 8x16 Left partition (0)
+            // If refIdxL0A == refIdxL0, mvpL0 = mvL0A
+            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
             let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-            let b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
-
             let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-            let ref_b = b.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
 
-            if ref_a != ref_idx_l0 && ref_b == ref_idx_l0 {
-                return b.unwrap().mv_l0;
-            } else {
-                return a.map(|i| i.mv_l0).unwrap_or_default();
+            if ref_a == ref_idx_l0 {
+                return a.unwrap().mv_l0;
             }
         } else {
-            // 8x16 Right partition (1) -> Predict from C, fallback to A
+            // 8x16 Right partition (1)
+            // If refIdxL0C == refIdxL0, mvpL0 = mvL0C
+            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
             let c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
                 .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)); // D fallback
-            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-
             let ref_c = c.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
 
-            if ref_c != ref_idx_l0 && ref_a == ref_idx_l0 {
-                return a.unwrap().mv_l0;
-            } else {
-                return c.map(|i| i.mv_l0).unwrap_or_default();
+            if ref_c == ref_idx_l0 {
+                return c.unwrap().mv_l0;
             }
         }
     }

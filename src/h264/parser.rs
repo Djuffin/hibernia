@@ -1161,10 +1161,13 @@ fn calculate_motion(
                 }
             };
 
+            let available_a = slice.has_mb_neighbor(this_mb_addr, MbNeighborName::A);
+            let available_b = slice.has_mb_neighbor(this_mb_addr, MbNeighborName::B);
+
             let zero_a = is_zero_motion(mb_loc.x as i32 - 1, mb_loc.y as i32);
             let zero_b = is_zero_motion(mb_loc.x as i32, mb_loc.y as i32 - 1);
 
-            let mv = if zero_a && zero_b {
+            let mv = if !available_a || !available_b || (zero_a && zero_b) {
                 MotionVector::default()
             } else {
                 predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0, None)

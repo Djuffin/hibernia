@@ -1154,20 +1154,27 @@ fn calculate_motion(
             let mb_loc = slice.get_mb_location(this_mb_addr);
 
             let is_zero_motion = |x, y| {
-                if let Some(info) = get_motion_at_coord(slice, x, y, this_mb_addr, None) {
-                    info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
+                let mb_addr = slice.get_mb_addr_from_coords(x, y);
+                if let Some(mb) = slice.get_mb(mb_addr) {
+                    // If the macroblock is Intra, zero motion is 0 false.
+                    if mb.is_intra() {
+                        false
+                    } else if let Some(info) = get_motion_at_coord(slice, x, y, this_mb_addr, None)
+                    {
+                        info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
+                    } else {
+                        false
+                    }
                 } else {
-                    true // Unavailable or Intra
+                    // If the macroblock is not available, zero motion is true.
+                    true
                 }
             };
-
-            let available_a = slice.has_mb_neighbor(this_mb_addr, MbNeighborName::A);
-            let available_b = slice.has_mb_neighbor(this_mb_addr, MbNeighborName::B);
 
             let zero_a = is_zero_motion(mb_loc.x as i32 - 1, mb_loc.y as i32);
             let zero_b = is_zero_motion(mb_loc.x as i32, mb_loc.y as i32 - 1);
 
-            let mv = if !available_a || !available_b || zero_a || zero_b {
+            let mv = if zero_a || zero_b {
                 MotionVector::default()
             } else {
                 predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0, None)

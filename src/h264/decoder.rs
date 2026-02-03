@@ -76,8 +76,6 @@ pub struct Decoder {
     // POC Type 0 state
     prev_pic_order_cnt_msb: i32,
     prev_pic_order_cnt_lsb: i32,
-
-    frame_index: usize,
 }
 
 impl Default for Decoder {
@@ -94,7 +92,6 @@ impl Decoder {
             output_frames: Vec::new(),
             prev_pic_order_cnt_msb: 0,
             prev_pic_order_cnt_lsb: 0,
-            frame_index: 0,
         }
     }
 
@@ -261,7 +258,6 @@ impl Decoder {
     }
 
     fn process_slice(&mut self, slice: &mut Slice) -> Result<(), DecodingError> {
-        self.frame_index += 1;
         if self.dpb.pictures.is_empty() {
             return Err(DecodingError::Wtf);
         }
@@ -347,18 +343,6 @@ impl Decoder {
                         }
                     }
                     Macroblock::P(block) => {
-                        if self.frame_index == 4 && mb_addr == 17 {
-                            info!("*** GEMINI DEBUG MB 17 FRAME 3 ***");
-                            info!("Type: {:?}", block.mb_type);
-                            info!("Motion: {:?}", block.motion);
-                            info!("QP: {}", qp);
-                            info!("Ref List 0: {:?}", slice.ref_pic_list0);
-                            for (idx, &pic_idx) in slice.ref_pic_list0.iter().enumerate() {
-                                if let Some(pic) = references.get(pic_idx) {
-                                     info!("Ref[{}]: DPB Index {}, FrameNum {}, POC {}", idx, pic_idx, pic.picture.frame_num, pic.picture.pic_order_cnt);
-                                }
-                            }
-                        }
                         info!(
                             "MB {mb_addr} {qp} P-Block type: {:?} MV[0]: {:?}",
                             block.mb_type, block.motion.partitions[0][0].mv_l0

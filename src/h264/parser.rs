@@ -1157,7 +1157,8 @@ fn calculate_motion(
                 if let Some(info) = get_motion_at_coord(slice, x, y, this_mb_addr, None) {
                     info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
                 } else {
-                    true // Unavailable or Intra
+                    // Intra blocks have ref_idx = -1, so they don't match ref_idx == 0 condition
+                    false
                 }
             };
 

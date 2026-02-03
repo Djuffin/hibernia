@@ -1,0 +1,1099 @@
+   Compiling hibernia v0.1.0 (/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.96s
+     Running unittests src/main.rs (target/debug/deps/hibernia-0668ced706a8fcd4)
+
+running 1 test
+test tests::test_NL2_Sony_H ... FAILED
+
+failures:
+
+---- tests::test_NL2_Sony_H stdout ----
+INFO: GEMINI, use logs like this to debug this test
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: SeqParameterSet }
+INFO: SPS: SequenceParameterSet {
+    profile: Baseline,
+    constraint_set0_flag: true,
+    constraint_set1_flag: true,
+    constraint_set2_flag: true,
+    constraint_set3_flag: false,
+    constraint_set4_flag: false,
+    constraint_set5_flag: false,
+    level_idc: 31,
+    seq_parameter_set_id: 0,
+    chroma_format_idc: YUV420,
+    separate_color_plane_flag: false,
+    bit_depth_luma_minus8: 0,
+    bit_depth_chroma_minus8: 0,
+    qpprime_y_zero_transform_bypass_flag: false,
+    seq_scaling_matrix_present_flag: false,
+    log2_max_frame_num_minus4: 12,
+    pic_order_cnt_type: 0,
+    log2_max_pic_order_cnt_lsb_minus4: 12,
+    delta_pic_order_always_zero_flag: false,
+    offset_for_non_ref_pic: 0,
+    offset_for_top_to_bottom_field: 0,
+    offset_for_ref_frame: [],
+    max_num_ref_frames: 1,
+    gaps_in_frame_num_value_allowed_flag: false,
+    pic_width_in_mbs_minus1: 10,
+    pic_height_in_map_units_minus1: 8,
+    frame_mbs_only_flag: true,
+    mb_adaptive_frame_field_flag: false,
+    direct_8x8_inference_flag: true,
+    frame_cropping: None,
+    vui_parameters: None,
+}
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: PicParameterSet }
+INFO: PPS: PicParameterSet {
+    pic_parameter_set_id: 0,
+    seq_parameter_set_id: 0,
+    entropy_coding_mode_flag: false,
+    bottom_field_pic_order_in_frame_present_flag: false,
+    slice_group: None,
+    num_ref_idx_l0_default_active_minus1: 0,
+    num_ref_idx_l1_default_active_minus1: 0,
+    weighted_pred_flag: false,
+    weighted_bipred_idc: 0,
+    pic_init_qp_minus26: 2,
+    pic_init_qs_minus26: -10,
+    chroma_qp_index_offset: 0,
+    deblocking_filter_control_present_flag: true,
+    constrained_intra_pred_flag: false,
+    redundant_pic_cnt_present_flag: false,
+    transform_8x8_mode_flag: false,
+    second_chroma_qp_index_offset: 0,
+}
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: IDRSlice }
+INFO: IDRSlice Slice {
+    header: SliceHeader {
+        first_mb_in_slice: 0,
+        slice_type: I,
+        pic_parameter_set_id: 0,
+        color_plane: None,
+        frame_num: 0,
+        field_pic_flag: false,
+        bottom_field_flag: None,
+        idr_pic_id: Some(
+            1,
+        ),
+        pic_order_cnt_lsb: Some(
+            0,
+        ),
+        delta_pic_order_cnt_bottom: None,
+        redundant_pic_cnt: None,
+        num_ref_idx_l0_active_minus1: 0,
+        num_ref_idx_l1_active_minus1: 0,
+        ref_pic_list_modification: RefPicListModifications {
+            list0: [],
+            list1: [],
+        },
+        pred_weight_table: None,
+        dec_ref_pic_marking: Some(
+            DecRefPicMarking {
+                no_output_of_prior_pics_flag: Some(
+                    false,
+                ),
+                long_term_reference_flag: Some(
+                    false,
+                ),
+                adaptive_ref_pic_marking_mode_flag: None,
+                memory_management_operations: [],
+            },
+        ),
+        slice_qp_delta: 0,
+        sp_for_switch_flag: None,
+        slice_qs: None,
+        deblocking_filter_idc: Off,
+    },
+}
+INFO: Blocks: 99
+INFO: MB 0 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 1 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 2 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 3 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 4 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 5 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 6 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 7 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 8 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 9 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 10 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 11 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 12 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 13 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 14 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 15 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 16 28 Luma: Intra_16x16 Chroma: Horizontal
+INFO: luma 16x16 prediction: Intra_16x16_Vertical
+INFO: MB 17 28 Luma: Intra_16x16 Chroma: Horizontal
+INFO: luma 16x16 prediction: Intra_16x16_Horizontal
+INFO: MB 18 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 19 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 20 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 21 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 22 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 23 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 24 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 25 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 26 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 27 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 28 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 29 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 30 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 31 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 32 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 33 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 34 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 35 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 36 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 37 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 38 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 39 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 40 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 41 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 42 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 43 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 44 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 45 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 46 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 47 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 48 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 49 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 50 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 51 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 52 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 53 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 54 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 55 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 56 28 Luma: Intra_16x16 Chroma: DC
+INFO: luma 16x16 prediction: Intra_16x16_Plane
+INFO: MB 57 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 58 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 59 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 60 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 61 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 62 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 63 28 Luma: Intra_16x16 Chroma: Vertical
+INFO: luma 16x16 prediction: Intra_16x16_Plane
+INFO: MB 64 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 65 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 66 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 67 28 Luma: Intra_16x16 Chroma: Plane
+INFO: luma 16x16 prediction: Intra_16x16_DC
+INFO: MB 68 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 69 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 70 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 71 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 72 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 73 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 74 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 75 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 76 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 77 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 78 28 Luma: Intra_16x16 Chroma: Plane
+INFO: luma 16x16 prediction: Intra_16x16_DC
+INFO: MB 79 28 Luma: Intra_16x16 Chroma: DC
+INFO: luma 16x16 prediction: Intra_16x16_DC
+INFO: MB 80 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 81 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 82 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 83 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 84 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 85 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 86 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 87 28 Luma: Intra_4x4 Chroma: Vertical
+INFO: MB 88 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 89 28 Luma: Intra_16x16 Chroma: DC
+INFO: luma 16x16 prediction: Intra_16x16_DC
+INFO: MB 90 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 91 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 92 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 93 28 Luma: Intra_4x4 Chroma: Horizontal
+INFO: MB 94 28 Luma: Intra_4x4 Chroma: DC
+INFO: MB 95 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 96 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 97 28 Luma: Intra_4x4 Chroma: Plane
+INFO: MB 98 28 Luma: Intra_4x4 Chroma: Plane
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: PicParameterSet }
+INFO: PPS: PicParameterSet {
+    pic_parameter_set_id: 0,
+    seq_parameter_set_id: 0,
+    entropy_coding_mode_flag: false,
+    bottom_field_pic_order_in_frame_present_flag: false,
+    slice_group: None,
+    num_ref_idx_l0_default_active_minus1: 0,
+    num_ref_idx_l1_default_active_minus1: 0,
+    weighted_pred_flag: false,
+    weighted_bipred_idc: 0,
+    pic_init_qp_minus26: 2,
+    pic_init_qs_minus26: -10,
+    chroma_qp_index_offset: 0,
+    deblocking_filter_control_present_flag: true,
+    constrained_intra_pred_flag: false,
+    redundant_pic_cnt_present_flag: false,
+    transform_8x8_mode_flag: false,
+    second_chroma_qp_index_offset: 0,
+}
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: NonIDRSlice }
+INFO: NonIDRSlice Slice {
+    header: SliceHeader {
+        first_mb_in_slice: 0,
+        slice_type: P,
+        pic_parameter_set_id: 0,
+        color_plane: None,
+        frame_num: 1,
+        field_pic_flag: false,
+        bottom_field_flag: None,
+        idr_pic_id: None,
+        pic_order_cnt_lsb: Some(
+            1,
+        ),
+        delta_pic_order_cnt_bottom: None,
+        redundant_pic_cnt: None,
+        num_ref_idx_l0_active_minus1: 0,
+        num_ref_idx_l1_active_minus1: 0,
+        ref_pic_list_modification: RefPicListModifications {
+            list0: [],
+            list1: [],
+        },
+        pred_weight_table: None,
+        dec_ref_pic_marking: Some(
+            DecRefPicMarking {
+                no_output_of_prior_pics_flag: None,
+                long_term_reference_flag: None,
+                adaptive_ref_pic_marking_mode_flag: Some(
+                    false,
+                ),
+                memory_management_operations: [],
+            },
+        ),
+        slice_qp_delta: 0,
+        sp_for_switch_flag: None,
+        slice_qs: None,
+        deblocking_filter_idc: Off,
+    },
+}
+INFO: Blocks: 99
+INFO: MB 0 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 1 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 2 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 3 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 4 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 5 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 6 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 7 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 4, y: 1 }
+INFO: MB 8 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 9 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 10 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 11 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 9 }
+INFO: MB 12 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 13 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 14 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 15 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 16 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 17 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 3 }
+DEBUG LUMA: mb_x=96 mb_y=16 blk_x=12 blk_y=0 mv=MotionVector { x: 5, y: 3 }
+x_int=109 y_int=16 x_frac=1 y_frac=3
+Result[1,0]: 234
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 5, y: 3 }
+x_int=54 y_int=8 x_frac=5 y_frac=3
+A=128 B=128 C=128 D=128
+w00=15 w10=25 w01=9 w11=15
+pred=128 result=128
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 5, y: 3 }
+x_int=54 y_int=8 x_frac=5 y_frac=3
+A=128 B=128 C=128 D=128
+w00=15 w10=25 w01=9 w11=15
+pred=128 result=128
+INFO: MB 18 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 19 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 20 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 21 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 22 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 23 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 24 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 25 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 26 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 27 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 1, y: 4 }
+INFO: MB 28 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 29 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 30 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 31 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 32 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 1 }
+INFO: MB 33 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 34 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 35 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 36 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 8, y: 3 }
+INFO: MB 37 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 38 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 39 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 9, y: 3 }
+INFO: MB 40 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 3 }
+INFO: MB 41 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 42 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 43 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 3, y: -2 }
+INFO: MB 44 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 45 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 46 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 47 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 48 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 49 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 50 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 3 }
+INFO: MB 51 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 3 }
+INFO: MB 52 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 53 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 54 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 0, y: -4 }
+INFO: MB 55 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 11 }
+INFO: MB 56 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 57 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 58 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 59 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 60 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 3 }
+INFO: MB 61 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 3 }
+INFO: MB 62 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 6 }
+INFO: MB 63 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 64 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 65 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 12, y: 4 }
+INFO: MB 66 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 3 }
+INFO: MB 67 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 68 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 69 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 70 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 71 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 72 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 3 }
+INFO: MB 73 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 3 }
+INFO: MB 74 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 75 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 76 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 77 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 0, y: 33 }
+INFO: MB 78 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 79 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 80 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 81 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 82 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 83 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 84 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 9, y: 3 }
+INFO: MB 85 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 86 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 1 }
+INFO: MB 87 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 88 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 1 }
+INFO: MB 89 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 10, y: 5 }
+INFO: MB 90 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 6 }
+INFO: MB 91 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 5 }
+INFO: MB 92 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 93 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 94 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 95 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 96 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 3 }
+INFO: MB 97 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 98 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 8, y: 2 }
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: PicParameterSet }
+INFO: PPS: PicParameterSet {
+    pic_parameter_set_id: 0,
+    seq_parameter_set_id: 0,
+    entropy_coding_mode_flag: false,
+    bottom_field_pic_order_in_frame_present_flag: false,
+    slice_group: None,
+    num_ref_idx_l0_default_active_minus1: 0,
+    num_ref_idx_l1_default_active_minus1: 0,
+    weighted_pred_flag: false,
+    weighted_bipred_idc: 0,
+    pic_init_qp_minus26: 2,
+    pic_init_qs_minus26: -10,
+    chroma_qp_index_offset: 0,
+    deblocking_filter_control_present_flag: true,
+    constrained_intra_pred_flag: false,
+    redundant_pic_cnt_present_flag: false,
+    transform_8x8_mode_flag: false,
+    second_chroma_qp_index_offset: 0,
+}
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: NonIDRSlice }
+INFO: NonIDRSlice Slice {
+    header: SliceHeader {
+        first_mb_in_slice: 0,
+        slice_type: P,
+        pic_parameter_set_id: 0,
+        color_plane: None,
+        frame_num: 2,
+        field_pic_flag: false,
+        bottom_field_flag: None,
+        idr_pic_id: None,
+        pic_order_cnt_lsb: Some(
+            2,
+        ),
+        delta_pic_order_cnt_bottom: None,
+        redundant_pic_cnt: None,
+        num_ref_idx_l0_active_minus1: 0,
+        num_ref_idx_l1_active_minus1: 0,
+        ref_pic_list_modification: RefPicListModifications {
+            list0: [],
+            list1: [],
+        },
+        pred_weight_table: None,
+        dec_ref_pic_marking: Some(
+            DecRefPicMarking {
+                no_output_of_prior_pics_flag: None,
+                long_term_reference_flag: None,
+                adaptive_ref_pic_marking_mode_flag: Some(
+                    false,
+                ),
+                memory_management_operations: [],
+            },
+        ),
+        slice_qp_delta: 0,
+        sp_for_switch_flag: None,
+        slice_qs: None,
+        deblocking_filter_idc: Off,
+    },
+}
+INFO: Blocks: 99
+INFO: MB 0 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 11 }
+INFO: MB 1 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 2 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: -1, y: 8 }
+INFO: MB 3 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 4 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 5 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 6 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 7 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 3 }
+INFO: MB 8 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 9 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 10 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: -1 }
+INFO: MB 11 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 9 }
+INFO: MB 12 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 13 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 14 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 15 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 16 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 17 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+DEBUG LUMA: mb_x=96 mb_y=16 blk_x=12 blk_y=0 mv=MotionVector { x: 7, y: 4 }
+x_int=109 y_int=17 x_frac=3 y_frac=0
+Result[1,0]: 234
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 7, y: 4 }
+x_int=54 y_int=8 x_frac=7 y_frac=4
+A=128 B=127 C=128 D=127
+w00=4 w10=28 w01=4 w11=28
+pred=127 result=127
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 7, y: 4 }
+x_int=54 y_int=8 x_frac=7 y_frac=4
+A=128 B=129 C=128 D=129
+w00=4 w10=28 w01=4 w11=28
+pred=129 result=129
+INFO: MB 18 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 3 }
+INFO: MB 19 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 20 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 21 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 22 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 8 }
+INFO: MB 23 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 24 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 25 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: -3, y: 8 }
+INFO: MB 26 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 0 }
+INFO: MB 27 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 13, y: 4 }
+INFO: MB 28 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 29 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 30 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 31 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 32 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 0 }
+INFO: MB 33 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 18 }
+INFO: MB 34 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 35 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 36 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 37 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 6 }
+INFO: MB 38 28 P-Block type: P_Skip MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 39 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 40 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 41 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 8, y: 6 }
+INFO: MB 42 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 43 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 44 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 45 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 46 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 47 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 48 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 49 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 50 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 51 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 52 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: -4, y: -4 }
+INFO: MB 53 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 54 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: -1, y: -4 }
+INFO: MB 55 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 5 }
+INFO: MB 56 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 57 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 58 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 59 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 60 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 61 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 62 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 63 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 2 }
+INFO: MB 64 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 65 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 66 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 33 }
+INFO: MB 67 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 68 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 69 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 70 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 9, y: 5 }
+INFO: MB 71 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 72 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 73 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 74 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 2 }
+INFO: MB 75 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 76 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 77 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 0, y: 30 }
+INFO: MB 78 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 79 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 80 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 81 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 6 }
+INFO: MB 82 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 83 28 P-Block type: P_Skip MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 84 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 85 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 86 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 87 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 88 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 3 }
+INFO: MB 89 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 7 }
+INFO: MB 90 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 6 }
+INFO: MB 91 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 7 }
+INFO: MB 92 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 9, y: 6 }
+INFO: MB 93 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 94 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 95 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 96 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 97 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 98 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: PicParameterSet }
+INFO: PPS: PicParameterSet {
+    pic_parameter_set_id: 0,
+    seq_parameter_set_id: 0,
+    entropy_coding_mode_flag: false,
+    bottom_field_pic_order_in_frame_present_flag: false,
+    slice_group: None,
+    num_ref_idx_l0_default_active_minus1: 0,
+    num_ref_idx_l1_default_active_minus1: 0,
+    weighted_pred_flag: false,
+    weighted_bipred_idc: 0,
+    pic_init_qp_minus26: 2,
+    pic_init_qs_minus26: -10,
+    chroma_qp_index_offset: 0,
+    deblocking_filter_control_present_flag: true,
+    constrained_intra_pred_flag: false,
+    redundant_pic_cnt_present_flag: false,
+    transform_8x8_mode_flag: false,
+    second_chroma_qp_index_offset: 0,
+}
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: NonIDRSlice }
+INFO: NonIDRSlice Slice {
+    header: SliceHeader {
+        first_mb_in_slice: 0,
+        slice_type: P,
+        pic_parameter_set_id: 0,
+        color_plane: None,
+        frame_num: 3,
+        field_pic_flag: false,
+        bottom_field_flag: None,
+        idr_pic_id: None,
+        pic_order_cnt_lsb: Some(
+            3,
+        ),
+        delta_pic_order_cnt_bottom: None,
+        redundant_pic_cnt: None,
+        num_ref_idx_l0_active_minus1: 0,
+        num_ref_idx_l1_active_minus1: 0,
+        ref_pic_list_modification: RefPicListModifications {
+            list0: [],
+            list1: [],
+        },
+        pred_weight_table: None,
+        dec_ref_pic_marking: Some(
+            DecRefPicMarking {
+                no_output_of_prior_pics_flag: None,
+                long_term_reference_flag: None,
+                adaptive_ref_pic_marking_mode_flag: Some(
+                    false,
+                ),
+                memory_management_operations: [],
+            },
+        ),
+        slice_qp_delta: 0,
+        sp_for_switch_flag: None,
+        slice_qs: None,
+        deblocking_filter_idc: Off,
+    },
+}
+INFO: Blocks: 99
+INFO: MB 0 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 10 }
+INFO: MB 1 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 2 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 12, y: 0 }
+INFO: MB 3 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 4 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 5 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 6 28 P-Block type: P_Skip MV[0]: MotionVector { x: 0, y: 0 }
+INFO: MB 7 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 1 }
+INFO: MB 8 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 1 }
+INFO: MB 9 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 4, y: 1 }
+INFO: MB 10 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 4, y: 0 }
+INFO: MB 11 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 8 }
+INFO: MB 12 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 13 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 14 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 15 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 16 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 17 28 P-Block type: P_Skip MV[0]: MotionVector { x: 3, y: 1 }
+DEBUG LUMA: mb_x=96 mb_y=16 blk_x=12 blk_y=0 mv=MotionVector { x: 3, y: 1 }
+x_int=108 y_int=16 x_frac=3 y_frac=1
+Result[1,0]: 233
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 3, y: 1 }
+x_int=54 y_int=8 x_frac=3 y_frac=1
+A=127 B=125 C=127 D=125
+w00=35 w10=21 w01=5 w11=3
+pred=126 result=126
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 3, y: 1 }
+x_int=54 y_int=8 x_frac=3 y_frac=1
+A=129 B=130 C=129 D=130
+w00=35 w10=21 w01=5 w11=3
+pred=129 result=129
+INFO: MB 18 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 1 }
+INFO: MB 19 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 1 }
+INFO: MB 20 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 21 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 0 }
+INFO: MB 22 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 23 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 24 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 25 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 26 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 27 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 17, y: 4 }
+INFO: MB 28 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 29 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 30 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 2, y: 0 }
+INFO: MB 31 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 0 }
+INFO: MB 32 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 0 }
+INFO: MB 33 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 34 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 35 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 36 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 5 }
+INFO: MB 37 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 38 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 39 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 40 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 3 }
+INFO: MB 41 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 42 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 43 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 0 }
+INFO: MB 44 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 45 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 46 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 47 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 5 }
+INFO: MB 48 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 49 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 50 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 51 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 3 }
+INFO: MB 52 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 53 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 54 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 2, y: -2 }
+INFO: MB 55 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 31 }
+INFO: MB 56 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 57 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 58 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 59 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 60 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 5 }
+INFO: MB 61 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 62 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 63 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 64 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 65 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 1, y: -2 }
+INFO: MB 66 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 30 }
+INFO: MB 67 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 68 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 69 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 70 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 71 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 72 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 73 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 74 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 75 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 76 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 77 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 78 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 79 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 7 }
+INFO: MB 80 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 81 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 82 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 83 28 P-Block type: P_Skip MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 84 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 8, y: 3 }
+INFO: MB 85 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 86 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 87 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 1 }
+INFO: MB 88 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 2 }
+INFO: MB 89 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 5 }
+INFO: MB 90 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 91 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 92 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 93 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 94 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 95 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 96 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 9, y: 4 }
+INFO: MB 97 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: MB 98 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 2 }
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: PicParameterSet }
+INFO: PPS: PicParameterSet {
+    pic_parameter_set_id: 0,
+    seq_parameter_set_id: 0,
+    entropy_coding_mode_flag: false,
+    bottom_field_pic_order_in_frame_present_flag: false,
+    slice_group: None,
+    num_ref_idx_l0_default_active_minus1: 0,
+    num_ref_idx_l1_default_active_minus1: 0,
+    weighted_pred_flag: false,
+    weighted_bipred_idc: 0,
+    pic_init_qp_minus26: 2,
+    pic_init_qs_minus26: -10,
+    chroma_qp_index_offset: 0,
+    deblocking_filter_control_present_flag: true,
+    constrained_intra_pred_flag: false,
+    redundant_pic_cnt_present_flag: false,
+    transform_8x8_mode_flag: false,
+    second_chroma_qp_index_offset: 0,
+}
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: NonIDRSlice }
+INFO: NonIDRSlice Slice {
+    header: SliceHeader {
+        first_mb_in_slice: 0,
+        slice_type: P,
+        pic_parameter_set_id: 0,
+        color_plane: None,
+        frame_num: 4,
+        field_pic_flag: false,
+        bottom_field_flag: None,
+        idr_pic_id: None,
+        pic_order_cnt_lsb: Some(
+            4,
+        ),
+        delta_pic_order_cnt_bottom: None,
+        redundant_pic_cnt: None,
+        num_ref_idx_l0_active_minus1: 0,
+        num_ref_idx_l1_active_minus1: 0,
+        ref_pic_list_modification: RefPicListModifications {
+            list0: [],
+            list1: [],
+        },
+        pred_weight_table: None,
+        dec_ref_pic_marking: Some(
+            DecRefPicMarking {
+                no_output_of_prior_pics_flag: None,
+                long_term_reference_flag: None,
+                adaptive_ref_pic_marking_mode_flag: Some(
+                    false,
+                ),
+                memory_management_operations: [],
+            },
+        ),
+        slice_qp_delta: 0,
+        sp_for_switch_flag: None,
+        slice_qs: None,
+        deblocking_filter_idc: Off,
+    },
+}
+INFO: Blocks: 99
+INFO: MB 0 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 1 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 1, y: 6 }
+INFO: MB 2 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 3 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 4 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 3 }
+INFO: MB 5 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 6 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 7 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 2, y: 1 }
+INFO: MB 8 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 9 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 2, y: -1 }
+INFO: MB 10 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 4, y: 0 }
+INFO: MB 11 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 8 }
+INFO: MB 12 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 13 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 14 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 2, y: 4 }
+INFO: MB 15 28 Luma: Intra_16x16 Chroma: DC
+INFO: luma 16x16 prediction: Intra_16x16_DC
+INFO: MB 16 28 P-Block type: P_Skip MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 17 28 P-Block type: P_Skip MV[0]: MotionVector { x: 3, y: 4 }
+DEBUG LUMA: mb_x=96 mb_y=16 blk_x=12 blk_y=0 mv=MotionVector { x: 3, y: 4 }
+x_int=108 y_int=17 x_frac=3 y_frac=0
+Result[1,0]: 233
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 3, y: 4 }
+x_int=54 y_int=8 x_frac=3 y_frac=4
+A=126 B=124 C=126 D=124
+w00=20 w10=12 w01=20 w11=12
+pred=125 result=125
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 3, y: 4 }
+x_int=54 y_int=8 x_frac=3 y_frac=4
+A=129 B=130 C=129 D=130
+w00=20 w10=12 w01=20 w11=12
+pred=129 result=129
+INFO: MB 18 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 1 }
+INFO: MB 19 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 1 }
+INFO: MB 20 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 0 }
+INFO: MB 21 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 0 }
+INFO: MB 22 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 23 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 24 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 25 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 26 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 5 }
+INFO: MB 27 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 28 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 29 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 30 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 1 }
+INFO: MB 31 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 32 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 0 }
+INFO: MB 33 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 7 }
+INFO: MB 34 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 35 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 36 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 37 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 38 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 39 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 40 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 41 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 42 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 43 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 0, y: -4 }
+INFO: MB 44 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 45 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 46 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 47 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 48 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 49 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 4, y: 5 }
+INFO: MB 50 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 51 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 52 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: -4, y: -4 }
+INFO: MB 53 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 54 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 2, y: -2 }
+INFO: MB 55 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 19 }
+INFO: MB 56 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 57 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 58 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 59 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 60 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 61 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 62 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 63 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 64 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 65 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 12, y: 4 }
+INFO: MB 66 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 26 }
+INFO: MB 67 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 68 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 69 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 70 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 71 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 72 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 73 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 74 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 75 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 76 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: -1 }
+INFO: MB 77 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 0, y: 5 }
+INFO: MB 78 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 79 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 80 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 3 }
+INFO: MB 81 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 82 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 83 28 P-Block type: P_Skip MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 84 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 3 }
+INFO: MB 85 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 86 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 87 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 0 }
+INFO: MB 88 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 1 }
+INFO: MB 89 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 7 }
+INFO: MB 90 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 6 }
+INFO: MB 91 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 92 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 93 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 94 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 95 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 96 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 6, y: 2 }
+INFO: MB 97 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 6, y: 1 }
+INFO: MB 98 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 0 }
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: PicParameterSet }
+INFO: PPS: PicParameterSet {
+    pic_parameter_set_id: 0,
+    seq_parameter_set_id: 0,
+    entropy_coding_mode_flag: false,
+    bottom_field_pic_order_in_frame_present_flag: false,
+    slice_group: None,
+    num_ref_idx_l0_default_active_minus1: 0,
+    num_ref_idx_l1_default_active_minus1: 0,
+    weighted_pred_flag: false,
+    weighted_bipred_idc: 0,
+    pic_init_qp_minus26: 2,
+    pic_init_qs_minus26: -10,
+    chroma_qp_index_offset: 0,
+    deblocking_filter_control_present_flag: true,
+    constrained_intra_pred_flag: false,
+    redundant_pic_cnt_present_flag: false,
+    transform_8x8_mode_flag: false,
+    second_chroma_qp_index_offset: 0,
+}
+INFO: ---------------------------------------------------
+INFO: NAL NalHeader { nal_ref_idc: 1, nal_unit_type: NonIDRSlice }
+INFO: NonIDRSlice Slice {
+    header: SliceHeader {
+        first_mb_in_slice: 0,
+        slice_type: P,
+        pic_parameter_set_id: 0,
+        color_plane: None,
+        frame_num: 5,
+        field_pic_flag: false,
+        bottom_field_flag: None,
+        idr_pic_id: None,
+        pic_order_cnt_lsb: Some(
+            5,
+        ),
+        delta_pic_order_cnt_bottom: None,
+        redundant_pic_cnt: None,
+        num_ref_idx_l0_active_minus1: 0,
+        num_ref_idx_l1_active_minus1: 0,
+        ref_pic_list_modification: RefPicListModifications {
+            list0: [],
+            list1: [],
+        },
+        pred_weight_table: None,
+        dec_ref_pic_marking: Some(
+            DecRefPicMarking {
+                no_output_of_prior_pics_flag: None,
+                long_term_reference_flag: None,
+                adaptive_ref_pic_marking_mode_flag: Some(
+                    false,
+                ),
+                memory_management_operations: [],
+            },
+        ),
+        slice_qp_delta: 0,
+        sp_for_switch_flag: None,
+        slice_qs: None,
+        deblocking_filter_idc: Off,
+    },
+}
+INFO: Blocks: 99
+INFO: MB 0 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 1 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 2 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 3 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 3 }
+INFO: MB 4 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 3 }
+INFO: MB 5 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 6 }
+INFO: MB 6 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 7 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 8 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 2, y: 1 }
+INFO: MB 9 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 3, y: 1 }
+INFO: MB 10 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 11 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 12 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 2, y: 4 }
+INFO: MB 13 28 P-Block type: P_Skip MV[0]: MotionVector { x: 2, y: 4 }
+INFO: MB 14 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 2, y: 4 }
+INFO: MB 15 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 16 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 17 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 7 }
+DEBUG LUMA: mb_x=96 mb_y=16 blk_x=12 blk_y=0 mv=MotionVector { x: 3, y: 7 }
+x_int=108 y_int=17 x_frac=3 y_frac=3
+Result[1,0]: 233
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 3, y: 7 }
+x_int=54 y_int=8 x_frac=3 y_frac=7
+A=125 B=123 C=126 D=123
+w00=5 w10=3 w01=35 w11=21
+pred=125 result=125
+DEBUG CHROMA: mb_x=48 mb_y=8 blk_x=6 blk_y=0 mv=MotionVector { x: 3, y: 7 }
+x_int=54 y_int=8 x_frac=3 y_frac=7
+A=129 B=130 C=129 D=130
+w00=5 w10=3 w01=35 w11=21
+pred=129 result=129
+INFO: MB 18 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 2, y: 1 }
+INFO: MB 19 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: -3, y: -4 }
+INFO: MB 20 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 4, y: 1 }
+INFO: MB 21 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 0 }
+INFO: MB 22 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 23 28 P-Block type: P_Skip MV[0]: MotionVector { x: 2, y: 4 }
+INFO: MB 24 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 3 }
+INFO: MB 25 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 3, y: 3 }
+INFO: MB 26 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 27 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 28 28 P-Block type: P_L0_L0_16x8 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 29 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 30 28 P-Block type: P_Skip MV[0]: MotionVector { x: 2, y: 0 }
+INFO: MB 31 28 P-Block type: P_Skip MV[0]: MotionVector { x: 3, y: 0 }
+INFO: MB 32 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 0 }
+INFO: MB 33 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 34 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 35 28 P-Block type: P_Skip MV[0]: MotionVector { x: 3, y: 4 }
+INFO: MB 36 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 37 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 38 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 39 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 40 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 3 }
+INFO: MB 41 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 3, y: 1 }
+INFO: MB 42 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 43 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 8, y: 4 }
+INFO: MB 44 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 6 }
+INFO: MB 45 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 46 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 5 }
+INFO: MB 47 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 48 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 49 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 50 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 51 28 P-Block type: P_Skip MV[0]: MotionVector { x: 4, y: 3 }
+INFO: MB 52 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 53 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 7, y: 3 }
+INFO: MB 54 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 5 }
+INFO: MB 55 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 4 }
+INFO: MB 56 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 57 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 58 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 59 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 60 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 61 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 62 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 63 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 64 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 65 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: -3, y: -4 }
+INFO: MB 66 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 5 }
+INFO: MB 67 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 68 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 69 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 70 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 4, y: 4 }
+INFO: MB 71 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 6, y: 4 }
+INFO: MB 72 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 73 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 3 }
+INFO: MB 74 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 75 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 76 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 77 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 0, y: 4 }
+INFO: MB 78 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 79 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 80 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 81 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 82 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 83 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 4, y: 3 }
+INFO: MB 84 28 P-Block type: P_L0_L0_8x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 85 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 86 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 1 }
+INFO: MB 87 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 88 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 0, y: 4 }
+INFO: MB 89 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 90 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 91 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 92 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 93 28 P-Block type: P_Skip MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 94 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 95 28 P-Block type: P_L0_16x16 MV[0]: MotionVector { x: 5, y: 4 }
+INFO: MB 96 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 7, y: 4 }
+INFO: MB 97 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 2 }
+INFO: MB 98 28 P-Block type: P_8x8ref0 MV[0]: MotionVector { x: 5, y: 2 }
+Error: "Frame #3 mismatch: Y-plane mismatch at 109,16 (MB:17) : 233 != 234\nU-plane mismatch at 54,8 (MB:17) : 126 != 127\n"
+
+
+failures:
+    tests::test_NL2_Sony_H
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `--bin hibernia`

@@ -12,13 +12,15 @@ fn compare_plane(
     height: usize,
     actual: &[u8],
     expected: &[u8],
+    tolerance: u8,
 ) -> Option<(usize, usize, u8, u8)> {
     let mut idx = 0;
     assert!(actual.len() == width * height);
     assert!(expected.len() == width * height);
     for y in 0..height {
         for x in 0..width {
-            if actual[idx] != expected[idx] {
+            let diff = (actual[idx] as i16 - expected[idx] as i16).abs();
+            if diff > tolerance as i16 {
                 return Some((x, y, actual[idx], expected[idx]));
             }
             idx += 1;
@@ -32,11 +34,12 @@ fn compare_frames(
     height: usize,
     actual: &y4m::Frame,
     expected: &y4m::Frame,
+    tolerance: u8,
 ) -> String {
     let mut result = String::new();
     let actual_y = actual.get_y_plane();
     let expected_y = expected.get_y_plane();
-    if let Some((x, y, a, e)) = compare_plane(width, height, actual_y, expected_y) {
+    if let Some((x, y, a, e)) = compare_plane(width, height, actual_y, expected_y, tolerance) {
         let width_in_mb = width / MB_WIDTH;
         let mb_idx = x / MB_WIDTH + y / MB_WIDTH * width_in_mb;
         result.push_str(&format!("Y-plane mismatch at {x},{y} (MB:{mb_idx}) : {a} != {e}\n"));
@@ -44,14 +47,18 @@ fn compare_frames(
     let chroma_mb_width = MB_WIDTH / 2;
     let actual_u = actual.get_u_plane();
     let expected_u = expected.get_u_plane();
-    if let Some((x, y, a, e)) = compare_plane(width / 2, height / 2, actual_u, expected_u) {
+    if let Some((x, y, a, e)) =
+        compare_plane(width / 2, height / 2, actual_u, expected_u, tolerance)
+    {
         let width_in_mb = width / 2 / chroma_mb_width;
         let mb_idx = x / chroma_mb_width + (y / chroma_mb_width) * width_in_mb;
         result.push_str(&format!("U-plane mismatch at {x},{y} (MB:{mb_idx}) : {a} != {e}\n"));
     }
     let actual_v = actual.get_v_plane();
     let expected_v = expected.get_v_plane();
-    if let Some((x, y, a, e)) = compare_plane(width / 2, height / 2, actual_v, expected_v) {
+    if let Some((x, y, a, e)) =
+        compare_plane(width / 2, height / 2, actual_v, expected_v, tolerance)
+    {
         let width_in_mb = width / 2 / chroma_mb_width;
         let mb_idx = x / chroma_mb_width + (y / chroma_mb_width) * width_in_mb;
         result.push_str(&format!(
@@ -62,7 +69,11 @@ fn compare_frames(
     result
 }
 
-pub fn compare_y4m_buffers(actual_y4m_data: &[u8], expected_y4m_data: &[u8]) -> Result<(), String> {
+pub fn compare_y4m_buffers(
+    actual_y4m_data: &[u8],
+    expected_y4m_data: &[u8],
+    tolerance: u8,
+) -> Result<(), String> {
     fn y4m_stringify(x: y4m::Error) -> String {
         format!("y4m decoding error: {x:?}")
     }
@@ -85,7 +96,8 @@ pub fn compare_y4m_buffers(actual_y4m_data: &[u8], expected_y4m_data: &[u8]) -> 
     while let (Ok(actual_frame), Ok(expected_frame)) =
         (actual_decoder.read_frame(), expected_decoder.read_frame())
     {
-        let compare_result = compare_frames(expected_w, expected_h, &actual_frame, &expected_frame);
+        let compare_result =
+            compare_frames(expected_w, expected_h, &actual_frame, &expected_frame, tolerance);
         if !compare_result.is_empty() {
             return Err(format!("Frame #{frame_idx} mismatch: {compare_result}"));
         }

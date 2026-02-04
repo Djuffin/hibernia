@@ -911,9 +911,13 @@ fn calc_prev_intra4x4_pred_mode(
     for neighbor in [MbNeighborName::A, MbNeighborName::B] {
         let (block_neighbor_idx, mb_neighbor) = get_4x4luma_block_neighbor(blk_idx as u8, neighbor);
         let mode = if let Some(mb_neighbor) = mb_neighbor {
-            if let Some(Macroblock::I(mb)) = slice.get_mb_neighbor(mb_addr, mb_neighbor) {
-                if mb.MbPartPredMode(0) == MbPredictionMode::Intra_4x4 {
-                    mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
+            if let Some(mb) = slice.get_mb_neighbor(mb_addr, mb_neighbor) {
+                if let Macroblock::I(mb) = mb {
+                    if mb.MbPartPredMode(0) == MbPredictionMode::Intra_4x4 {
+                        mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
+                    } else {
+                        default_mode
+                    }
                 } else {
                     default_mode
                 }

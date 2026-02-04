@@ -185,85 +185,64 @@ impl Residual {
 // Figure 8-6 – Assignment of the indices of dcY to luma4x4BlkIdx
 #[inline]
 pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
-    match idx {
-        0 => (0, 0),
-        1 => (0, 1),
-        2 => (1, 0),
-        3 => (1, 1),
-        4 => (0, 2),
-        5 => (0, 3),
-        6 => (1, 2),
-        7 => (1, 3),
-        8 => (2, 0),
-        9 => (2, 1),
-        10 => (3, 0),
-        11 => (3, 1),
-        12 => (2, 2),
-        13 => (2, 3),
-        14 => (3, 2),
-        15 => (3, 3),
-        _ => panic!("Out of bounds unscan_4x4 index"),
-    }
+    const TABLE: [(usize, usize); 16] = [
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (1, 1),
+        (0, 2),
+        (0, 3),
+        (1, 2),
+        (1, 3),
+        (2, 0),
+        (2, 1),
+        (3, 0),
+        (3, 1),
+        (2, 2),
+        (2, 3),
+        (3, 2),
+        (3, 3),
+    ];
+    TABLE[idx]
 }
 
 // Figure 8-7 – Assignment of the indices of dcC to chroma4x4BlkIdx
 #[inline]
 pub const fn unscan_2x2(idx: usize) -> (/* row */ usize, /* column */ usize) {
-    match idx {
-        0 => (0, 0),
-        1 => (0, 1),
-        2 => (1, 0),
-        3 => (1, 1),
-        _ => panic!("Out of bounds unscan_2x2 index"),
-    }
+    const TABLE: [(usize, usize); 4] = [(0, 0), (0, 1), (1, 0), (1, 1)];
+    TABLE[idx]
 }
 
 // Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
 #[inline]
 pub const fn un_zig_zag_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
-    match idx {
-        0 => (0, 0),
-        1 => (0, 1),
-        2 => (1, 0),
-        3 => (2, 0),
-        4 => (1, 1),
-        5 => (0, 2),
-        6 => (0, 3),
-        7 => (1, 2),
-        8 => (2, 1),
-        9 => (3, 0),
-        10 => (3, 1),
-        11 => (2, 2),
-        12 => (1, 3),
-        13 => (2, 3),
-        14 => (3, 2),
-        15 => (3, 3),
-        _ => panic!("Out of bounds zig-zag index"),
-    }
+    const TABLE: [(usize, usize); 16] = [
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (2, 0),
+        (1, 1),
+        (0, 2),
+        (0, 3),
+        (1, 2),
+        (2, 1),
+        (3, 0),
+        (3, 1),
+        (2, 2),
+        (1, 3),
+        (2, 3),
+        (3, 2),
+        (3, 3),
+    ];
+    TABLE[idx]
 }
 
 // Get index of zig-zag walk for a given coordinates in 4x4 block
 #[inline]
 pub const fn zig_zag_4x4(row: usize, column: usize) -> usize {
-    match (row, column) {
-        (0, 0) => 0,
-        (0, 1) => 1,
-        (1, 0) => 2,
-        (2, 0) => 3,
-        (1, 1) => 4,
-        (0, 2) => 5,
-        (0, 3) => 6,
-        (1, 2) => 7,
-        (2, 1) => 8,
-        (3, 0) => 9,
-        (3, 1) => 10,
-        (2, 2) => 11,
-        (1, 3) => 12,
-        (2, 3) => 13,
-        (3, 2) => 14,
-        (3, 3) => 15,
-        _ => panic!("Out of bounds zig-zag coordinates"),
-    }
+    const TABLE: [usize; 16] =
+        [0, 1, 5, 6, 2, 4, 7, 12, 3, 8, 11, 13, 9, 10, 14, 15];
+    TABLE[row * 4 + column]
 }
 
 #[inline]

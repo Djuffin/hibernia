@@ -1,6 +1,5 @@
-use super::parser::{BitReader, ParseResult};
+use super::parser::{self, BitReader, ParseResult};
 use super::tables;
-use crate::{cast_or_error, read_value};
 use log::trace;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -160,8 +159,7 @@ pub fn parse_residual_block(
     let (lower_levels, higher_levels) =
         levels[..total_coeffs].split_at_mut(coeff_token.trailing_ones as usize);
     for level in lower_levels {
-        let trailing_ones_sign_flag: i32;
-        read_value!(input, trailing_ones_sign_flag, u, 1);
+        let trailing_ones_sign_flag: i32 = parser::read_u(input, 1, "trailing_ones_sign_flag")?;
         *level = 1 - 2 * trailing_ones_sign_flag;
     }
 
@@ -178,7 +176,7 @@ pub fn parse_residual_block(
 
         let mut level_suffix = 0u32;
         if level_suffix_size > 0 {
-            read_value!(input, level_suffix, u, level_suffix_size as u8);
+            level_suffix = parser::read_u(input, level_suffix_size as u8, "level_suffix")?;
         }
         let mut level_code = (std::cmp::min(15, level_prefix) << suffix_len) + level_suffix;
         if level_prefix >= 15 && suffix_len == 0 {

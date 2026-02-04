@@ -67,15 +67,6 @@ pub fn get_neighbor_mbs(
     }
 }
 
-#[inline(always)]
-const fn inverse_raster_scan(a: u32, b: u32, c: u32, d: u32, e: bool) -> u32 {
-    if e {
-        (a / (d / b)) * c
-    } else {
-        (a % (d / b)) * b
-    }
-}
-
 /*
     4x4 luma block indexes:
 
@@ -92,23 +83,36 @@ const fn inverse_raster_scan(a: u32, b: u32, c: u32, d: u32, e: bool) -> u32 {
 
 // Section 6.4.3 Inverse 4x4 luma block scanning process
 pub const fn get_4x4luma_block_location(idx: u8) -> Point {
-    let idx = idx as u32;
-    let x = inverse_raster_scan(idx / 4, 8, 8, 16, false)
-        + inverse_raster_scan(idx % 4, 4, 4, 8, false);
-    let y =
-        inverse_raster_scan(idx / 4, 8, 8, 16, true) + inverse_raster_scan(idx % 4, 4, 4, 8, true);
-    Point { x, y }
+    const LOCATIONS: [Point; 16] = [
+        Point { x: 0, y: 0 },
+        Point { x: 4, y: 0 },
+        Point { x: 0, y: 4 },
+        Point { x: 4, y: 4 },
+        Point { x: 8, y: 0 },
+        Point { x: 12, y: 0 },
+        Point { x: 8, y: 4 },
+        Point { x: 12, y: 4 },
+        Point { x: 0, y: 8 },
+        Point { x: 4, y: 8 },
+        Point { x: 0, y: 12 },
+        Point { x: 4, y: 12 },
+        Point { x: 8, y: 8 },
+        Point { x: 12, y: 8 },
+        Point { x: 8, y: 12 },
+        Point { x: 12, y: 12 },
+    ];
+    LOCATIONS[idx as usize]
 }
 
 // Section 6.4.7 Inverse 4x4 chroma block scanning process
-pub fn get_4x4chroma_block_location(idx: u8) -> Point {
-    match idx {
-        0 => Point { x: 0, y: 0 },
-        1 => Point { x: 4, y: 0 },
-        2 => Point { x: 0, y: 4 },
-        3 => Point { x: 4, y: 4 },
-        _ => unreachable!(),
-    }
+pub const fn get_4x4chroma_block_location(idx: u8) -> Point {
+    const LOCATIONS: [Point; 4] = [
+        Point { x: 0, y: 0 },
+        Point { x: 4, y: 0 },
+        Point { x: 0, y: 4 },
+        Point { x: 4, y: 4 },
+    ];
+    LOCATIONS[idx as usize]
 }
 
 // Section 6.4.13.1 Derivation process for 4x4 luma block indices

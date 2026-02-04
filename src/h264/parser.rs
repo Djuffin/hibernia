@@ -30,62 +30,62 @@ use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 pub type BitReader<'a> = rbsp::RbspReader<'a>;
 pub type ParseResult<T> = rbsp::ParseResult<T>;
 
-#[macro_export]
-macro_rules! cast_or_error {
-    ($dest:expr, $value:expr) => {
-        trace!("parse {} = {}", stringify!($dest), $value);
-        $dest = match $value.try_into() {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(format!("Error casting '{}': {}", stringify!($dest), e));
-            }
-        };
-        let _ = $dest; // to let compiler know that $dest is used
-    };
+pub fn read_u<T>(input: &mut BitReader, bits: u8, name: &str) -> ParseResult<T>
+where
+    T: TryFrom<u32>,
+    T::Error: std::fmt::Display,
+{
+    let val = input.u(bits).map_err(|e| format!("Error parsing {}: {}", name, e))?;
+    trace!("parse {} = {}", name, val);
+    val.try_into().map_err(|e| format!("Error casting {}: {}", name, e))
 }
 
-#[macro_export]
-macro_rules! expect_value {
-    ($input:ident, $msg:expr, $expected:expr, $bits:expr) => {
-        let error_handler = |e| format!("Error while parsing '{}': {}", $msg, e);
-        let value = $input.u($bits).map_err(error_handler)?;
-        if value != $expected {
-            return Err(format!("Unexpected value of {}: {} vs {}", $msg, value, $expected));
-        }
-    };
+pub fn read_ue<T>(input: &mut BitReader, name: &str) -> ParseResult<T>
+where
+    T: TryFrom<u32>,
+    T::Error: std::fmt::Display,
+{
+    read_ue_limited(input, 32, name)
 }
 
-#[macro_export]
-macro_rules! read_value {
-    ($input:ident, $dest:expr, u, $bits:expr) => {
-        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $input.u($bits).map_err(error_handler)?;
-        cast_or_error!($dest, value);
-    };
-    ($input:ident, $dest:expr, ue) => {
-        read_value!($input, $dest, ue, 32);
-    };
-    ($input:ident, $dest:expr, ue, $bits:expr) => {
-        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $input.ue($bits).map_err(error_handler)?;
-        cast_or_error!($dest, value);
-    };
-    ($input:ident, $dest:expr, se) => {
-        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $input.se().map_err(error_handler)?;
-        cast_or_error!($dest, value);
-    };
-    ($input:ident, $dest:expr, f) => {
-        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
-        let value = $input.f().map_err(error_handler)?;
-        cast_or_error!($dest, value);
-    };
+pub fn read_ue_limited<T>(input: &mut BitReader, bits: u8, name: &str) -> ParseResult<T>
+where
+    T: TryFrom<u32>,
+    T::Error: std::fmt::Display,
+{
+    let val = input.ue(bits).map_err(|e| format!("Error parsing {}: {}", name, e))?;
+    trace!("parse {} = {}", name, val);
+    val.try_into().map_err(|e| format!("Error casting {}: {}", name, e))
+}
+
+pub fn read_se<T>(input: &mut BitReader, name: &str) -> ParseResult<T>
+where
+    T: TryFrom<i32>,
+    T::Error: std::fmt::Display,
+{
+    let val = input.se().map_err(|e| format!("Error parsing {}: {}", name, e))?;
+    trace!("parse {} = {}", name, val);
+    val.try_into().map_err(|e| format!("Error casting {}: {}", name, e))
+}
+
+pub fn read_f(input: &mut BitReader, name: &str) -> ParseResult<bool> {
+    let val = input.f().map_err(|e| format!("Error parsing {}: {}", name, e))?;
+    trace!("parse {} = {}", name, val);
+    Ok(val)
+}
+
+pub fn expect_value(input: &mut BitReader, msg: &str, expected: u32, bits: u8) -> ParseResult<()> {
+    let value = input.u(bits).map_err(|e| format!("Error while parsing '{}': {}", msg, e))?;
+    if value != expected {
+        return Err(format!("Unexpected value of {}: {} vs {}", msg, value, expected));
+    }
+    Ok(())
 }
 
 // Section 7.4.1
 fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
     // 1-bit at the end
-    expect_value!(input, "rbsp_trailing_bits", 1, 1);
+    expect_value(input, "rbsp_trailing_bits", 1, 1)?;
     input.align();
     Ok(())
 }
@@ -113,68 +113,71 @@ fn more_rbsp_data(input: &mut BitReader) -> bool {
 fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     let mut vui = VuiParameters::default();
 
-    read_value!(input, vui.aspect_ratio_info_present_flag, f);
+    vui.aspect_ratio_info_present_flag = read_f(input, "vui.aspect_ratio_info_present_flag")?;
     if vui.aspect_ratio_info_present_flag {
         const EXTENDED_SAR: u8 = 255;
-        read_value!(input, vui.aspect_ratio_idc, u, 8);
+        vui.aspect_ratio_idc = read_u(input, 8, "vui.aspect_ratio_idc")?;
         if vui.aspect_ratio_idc == EXTENDED_SAR {
-            read_value!(input, vui.sar_width, u, 16);
-            read_value!(input, vui.sar_height, u, 16);
+            vui.sar_width = read_u(input, 16, "vui.sar_width")?;
+            vui.sar_height = read_u(input, 16, "vui.sar_height")?;
         }
     }
 
-    read_value!(input, vui.overscan_info_present_flag, f);
+    vui.overscan_info_present_flag = read_f(input, "vui.overscan_info_present_flag")?;
     if vui.overscan_info_present_flag {
-        read_value!(input, vui.overscan_appropriate_flag, f);
+        vui.overscan_appropriate_flag = read_f(input, "vui.overscan_appropriate_flag")?;
     }
 
-    read_value!(input, vui.video_signal_type_present_flag, f);
+    vui.video_signal_type_present_flag = read_f(input, "vui.video_signal_type_present_flag")?;
     if vui.video_signal_type_present_flag {
-        read_value!(input, vui.video_format, u, 3);
-        read_value!(input, vui.video_full_range_flag, f);
-        read_value!(input, vui.color_description_present_flag, f);
+        vui.video_format = read_u(input, 3, "vui.video_format")?;
+        vui.video_full_range_flag = read_f(input, "vui.video_full_range_flag")?;
+        vui.color_description_present_flag = read_f(input, "vui.color_description_present_flag")?;
         if vui.color_description_present_flag {
-            read_value!(input, vui.color_primaries, u, 8);
-            read_value!(input, vui.transfer_characteristics, u, 8);
-            read_value!(input, vui.matrix_coefficients, u, 8);
+            vui.color_primaries = read_u(input, 8, "vui.color_primaries")?;
+            vui.transfer_characteristics = read_u(input, 8, "vui.transfer_characteristics")?;
+            vui.matrix_coefficients = read_u(input, 8, "vui.matrix_coefficients")?;
         }
     }
 
-    read_value!(input, vui.chroma_loc_info_present_flag, f);
+    vui.chroma_loc_info_present_flag = read_f(input, "vui.chroma_loc_info_present_flag")?;
     if vui.chroma_loc_info_present_flag {
-        read_value!(input, vui.chroma_sample_loc_type_top_field, ue, 8);
-        read_value!(input, vui.chroma_sample_loc_type_bottom_field, ue, 8);
+        vui.chroma_sample_loc_type_top_field =
+            read_ue_limited(input, 8, "vui.chroma_sample_loc_type_top_field")?;
+        vui.chroma_sample_loc_type_bottom_field =
+            read_ue_limited(input, 8, "vui.chroma_sample_loc_type_bottom_field")?;
     }
 
-    read_value!(input, vui.timing_info_present_flag, f);
+    vui.timing_info_present_flag = read_f(input, "vui.timing_info_present_flag")?;
     if vui.timing_info_present_flag {
-        read_value!(input, vui.num_units_in_tick, u, 32);
-        read_value!(input, vui.time_scale, u, 32);
-        read_value!(input, vui.fixed_frame_rate_flag, f);
+        vui.num_units_in_tick = read_u(input, 32, "vui.num_units_in_tick")?;
+        vui.time_scale = read_u(input, 32, "vui.time_scale")?;
+        vui.fixed_frame_rate_flag = read_f(input, "vui.fixed_frame_rate_flag")?;
     }
 
-    let nal_hrd_parameters_present: bool;
-    read_value!(input, nal_hrd_parameters_present, f);
+    let nal_hrd_parameters_present: bool = read_f(input, "nal_hrd_parameters_present")?;
     if nal_hrd_parameters_present {
-        todo!("NAL HDR");
+        return Err("NAL HRD parameters not supported".to_string());
     }
 
-    let vcl_hrd_parameters_present: bool;
-    read_value!(input, vcl_hrd_parameters_present, f);
+    let vcl_hrd_parameters_present: bool = read_f(input, "vcl_hrd_parameters_present")?;
     if vcl_hrd_parameters_present {
-        todo!("VCL HDR");
+        return Err("VCL HRD parameters not supported".to_string());
     }
 
-    read_value!(input, vui.pic_struct_present_flag, f);
-    read_value!(input, vui.bitstream_restriction_flag, f);
+    vui.pic_struct_present_flag = read_f(input, "vui.pic_struct_present_flag")?;
+    vui.bitstream_restriction_flag = read_f(input, "vui.bitstream_restriction_flag")?;
     if vui.bitstream_restriction_flag {
-        read_value!(input, vui.motion_vectors_over_pic_boundaries_flag, f);
-        read_value!(input, vui.max_bytes_per_pic_denom, ue, 8);
-        read_value!(input, vui.max_bits_per_mb_denom, ue, 8);
-        read_value!(input, vui.log2_max_mv_length_horizontal, ue, 8);
-        read_value!(input, vui.log2_max_mv_length_vertical, ue, 8);
-        read_value!(input, vui.max_num_reorder_frames, ue, 8);
-        read_value!(input, vui.max_dec_frame_buffering, ue, 8);
+        vui.motion_vectors_over_pic_boundaries_flag =
+            read_f(input, "vui.motion_vectors_over_pic_boundaries_flag")?;
+        vui.max_bytes_per_pic_denom = read_ue_limited(input, 8, "vui.max_bytes_per_pic_denom")?;
+        vui.max_bits_per_mb_denom = read_ue_limited(input, 8, "vui.max_bits_per_mb_denom")?;
+        vui.log2_max_mv_length_horizontal =
+            read_ue_limited(input, 8, "vui.log2_max_mv_length_horizontal")?;
+        vui.log2_max_mv_length_vertical =
+            read_ue_limited(input, 8, "vui.log2_max_mv_length_vertical")?;
+        vui.max_num_reorder_frames = read_ue_limited(input, 8, "vui.max_num_reorder_frames")?;
+        vui.max_dec_frame_buffering = read_ue_limited(input, 8, "vui.max_dec_frame_buffering")?;
     }
 
     Ok(vui)
@@ -184,81 +187,81 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
 pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
 
-    read_value!(input, sps.profile, u, 8);
-    read_value!(input, sps.constraint_set0_flag, f);
-    read_value!(input, sps.constraint_set1_flag, f);
-    read_value!(input, sps.constraint_set2_flag, f);
-    read_value!(input, sps.constraint_set3_flag, f);
-    read_value!(input, sps.constraint_set4_flag, f);
-    read_value!(input, sps.constraint_set5_flag, f);
+    sps.profile = read_u(input, 8, "sps.profile")?;
+    sps.constraint_set0_flag = read_f(input, "sps.constraint_set0_flag")?;
+    sps.constraint_set1_flag = read_f(input, "sps.constraint_set1_flag")?;
+    sps.constraint_set2_flag = read_f(input, "sps.constraint_set2_flag")?;
+    sps.constraint_set3_flag = read_f(input, "sps.constraint_set3_flag")?;
+    sps.constraint_set4_flag = read_f(input, "sps.constraint_set4_flag")?;
+    sps.constraint_set5_flag = read_f(input, "sps.constraint_set5_flag")?;
 
-    expect_value!(input, "reserved_zero_2bits", 0, 2);
+    expect_value(input, "reserved_zero_2bits", 0, 2)?;
 
-    read_value!(input, sps.level_idc, u, 8);
-    read_value!(input, sps.seq_parameter_set_id, ue, 8);
+    sps.level_idc = read_u(input, 8, "sps.level_idc")?;
+    sps.seq_parameter_set_id = read_ue_limited(input, 8, "sps.seq_parameter_set_id")?;
 
     if sps.profile.has_chroma_info() {
-        read_value!(input, sps.chroma_format_idc, ue, 8);
+        sps.chroma_format_idc = read_ue_limited(input, 8, "sps.chroma_format_idc")?;
         if sps.chroma_format_idc == ChromaFormat::YUV444 {
-            read_value!(input, sps.separate_color_plane_flag, f);
+            sps.separate_color_plane_flag = read_f(input, "sps.separate_color_plane_flag")?;
         }
 
-        read_value!(input, sps.bit_depth_luma_minus8, ue, 8);
-        read_value!(input, sps.bit_depth_chroma_minus8, ue, 8);
-        read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, f);
-        read_value!(input, sps.seq_scaling_matrix_present_flag, f);
+        sps.bit_depth_luma_minus8 = read_ue_limited(input, 8, "sps.bit_depth_luma_minus8")?;
+        sps.bit_depth_chroma_minus8 = read_ue_limited(input, 8, "sps.bit_depth_chroma_minus8")?;
+        sps.qpprime_y_zero_transform_bypass_flag =
+            read_f(input, "sps.qpprime_y_zero_transform_bypass_flag")?;
+        sps.seq_scaling_matrix_present_flag =
+            read_f(input, "sps.seq_scaling_matrix_present_flag")?;
         if sps.seq_scaling_matrix_present_flag {
-            todo!("scaling matrix");
+            return Err("scaling matrix not supported".to_string());
         }
     }
 
-    read_value!(input, sps.log2_max_frame_num_minus4, ue, 8);
-    read_value!(input, sps.pic_order_cnt_type, ue, 8);
+    sps.log2_max_frame_num_minus4 = read_ue_limited(input, 8, "sps.log2_max_frame_num_minus4")?;
+    sps.pic_order_cnt_type = read_ue_limited(input, 8, "sps.pic_order_cnt_type")?;
     match sps.pic_order_cnt_type {
         0 => {
-            read_value!(input, sps.log2_max_pic_order_cnt_lsb_minus4, ue, 8);
+            sps.log2_max_pic_order_cnt_lsb_minus4 =
+                read_ue_limited(input, 8, "sps.log2_max_pic_order_cnt_lsb_minus4")?;
         }
         1 => {
-            read_value!(input, sps.offset_for_non_ref_pic, se);
-            read_value!(input, sps.offset_for_top_to_bottom_field, se);
+            sps.offset_for_non_ref_pic = read_se(input, "sps.offset_for_non_ref_pic")?;
+            sps.offset_for_top_to_bottom_field =
+                read_se(input, "sps.offset_for_top_to_bottom_field")?;
 
-            let cnt_cycle: u8;
-            read_value!(input, cnt_cycle, ue, 8);
-            for _ in 0..cnt_cycle {
-                let offset: i32 = input.se()?;
+            let cnt_cycle: u8 = read_ue_limited(input, 8, "cnt_cycle")?;
+            for i in 0..cnt_cycle {
+                let offset: i32 = read_se(input, &format!("sps.offset_for_ref_frame[{}]", i))?;
                 sps.offset_for_ref_frame.push(offset);
             }
         }
         _ => {}
     };
 
-    read_value!(input, sps.max_num_ref_frames, ue, 8);
-    read_value!(input, sps.gaps_in_frame_num_value_allowed_flag, f);
+    sps.max_num_ref_frames = read_ue_limited(input, 8, "sps.max_num_ref_frames")?;
+    sps.gaps_in_frame_num_value_allowed_flag =
+        read_f(input, "sps.gaps_in_frame_num_value_allowed_flag")?;
 
-    read_value!(input, sps.pic_width_in_mbs_minus1, ue, 16);
-    read_value!(input, sps.pic_height_in_map_units_minus1, ue, 16);
+    sps.pic_width_in_mbs_minus1 = read_ue_limited(input, 16, "sps.pic_width_in_mbs_minus1")?;
+    sps.pic_height_in_map_units_minus1 =
+        read_ue_limited(input, 16, "sps.pic_height_in_map_units_minus1")?;
 
-    read_value!(input, sps.frame_mbs_only_flag, f);
+    sps.frame_mbs_only_flag = read_f(input, "sps.frame_mbs_only_flag")?;
     if sps.frame_mbs_only_flag {
         sps.mb_adaptive_frame_field_flag = false;
     } else {
-        read_value!(input, sps.mb_adaptive_frame_field_flag, f);
+        sps.mb_adaptive_frame_field_flag = read_f(input, "sps.mb_adaptive_frame_field_flag")?;
     }
 
-    read_value!(input, sps.direct_8x8_inference_flag, f);
+    sps.direct_8x8_inference_flag = read_f(input, "sps.direct_8x8_inference_flag")?;
 
-    let frame_cropping_flag: bool;
-    read_value!(input, frame_cropping_flag, f);
+    let frame_cropping_flag: bool = read_f(input, "frame_cropping_flag")?;
     if frame_cropping_flag {
-        let frame_crop_left_offset: u32;
-        let frame_crop_right_offset: u32;
-        let frame_crop_top_offset: u32;
-        let frame_crop_bottom_offset: u32;
+        let frame_crop_left_offset: u32 = read_ue_limited(input, 32, "frame_crop_left_offset")?;
+        let frame_crop_right_offset: u32 = read_ue_limited(input, 32, "frame_crop_right_offset")?;
+        let frame_crop_top_offset: u32 = read_ue_limited(input, 32, "frame_crop_top_offset")?;
+        let frame_crop_bottom_offset: u32 = read_ue_limited(input, 32, "frame_crop_bottom_offset")?;
 
-        read_value!(input, frame_crop_left_offset, ue, 32);
-        read_value!(input, frame_crop_right_offset, ue, 32);
-        read_value!(input, frame_crop_top_offset, ue, 32);
-        read_value!(input, frame_crop_bottom_offset, ue, 32);
         sps.frame_cropping = Some(FrameCrop {
             left: frame_crop_left_offset,
             right: frame_crop_right_offset,
@@ -267,8 +270,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
         });
     }
 
-    let vui_parameters_present: bool;
-    read_value!(input, vui_parameters_present, f);
+    let vui_parameters_present: bool = read_f(input, "vui_parameters_present")?;
     if vui_parameters_present {
         sps.vui_parameters = Some(parse_vui(input)?);
     }
@@ -280,17 +282,15 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
 fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
     let mut slice_group: Option<SliceGroup> = None;
 
-    let num_slice_groups_minus1: usize;
-    let slice_group_map_type: u8;
-
-    read_value!(input, num_slice_groups_minus1, ue);
+    let num_slice_groups_minus1: usize = read_ue(input, "num_slice_groups_minus1")?;
     if num_slice_groups_minus1 > 0 {
-        read_value!(input, slice_group_map_type, ue, 8);
+        let slice_group_map_type: u8 = read_ue_limited(input, 8, "slice_group_map_type")?;
         slice_group = match slice_group_map_type {
             0 => {
                 let mut run_length_minus1 = vec![1u32; num_slice_groups_minus1 + 1];
                 for i in 0..=num_slice_groups_minus1 {
-                    read_value!(input, run_length_minus1[i], ue, 32);
+                    run_length_minus1[i] =
+                        read_ue_limited(input, 32, &format!("run_length_minus1[{}]", i))?;
                 }
                 Some(SliceGroup::Interleaved { run_length_minus1 })
             }
@@ -298,8 +298,10 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
             2 => {
                 let mut rectangles = vec![SliceRect::default(); num_slice_groups_minus1 + 1];
                 for i in 0..=num_slice_groups_minus1 {
-                    read_value!(input, rectangles[i].top_left, ue, 32);
-                    read_value!(input, rectangles[i].bottom_right, ue, 32);
+                    rectangles[i].top_left =
+                        read_ue_limited(input, 32, &format!("rectangles[{}].top_left", i))?;
+                    rectangles[i].bottom_right =
+                        read_ue_limited(input, 32, &format!("rectangles[{}].bottom_right", i))?;
                 }
                 Some(SliceGroup::Foreground { rectangles })
             }
@@ -312,10 +314,10 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
                         unreachable!();
                     }
                 };
-                let slice_group_change_direction_flag: bool;
-                let slice_group_change_rate_minus1: u32;
-                read_value!(input, slice_group_change_direction_flag, f);
-                read_value!(input, slice_group_change_rate_minus1, ue, 32);
+                let slice_group_change_direction_flag: bool =
+                    read_f(input, "slice_group_change_direction_flag")?;
+                let slice_group_change_rate_minus1: u32 =
+                    read_ue_limited(input, 32, "slice_group_change_rate_minus1")?;
 
                 Some(SliceGroup::Changing {
                     change_type,
@@ -325,13 +327,13 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
                 })
             }
             6 => {
-                let pic_size_in_map_units_minus1: usize;
-                read_value!(input, pic_size_in_map_units_minus1, ue);
+                let pic_size_in_map_units_minus1: usize =
+                    read_ue(input, "pic_size_in_map_units_minus1")?;
 
                 let slice_group_id_bits = 1 + num_slice_groups_minus1.ilog2() as u8;
                 let mut slice_group_ids = vec![0u32; num_slice_groups_minus1 + 1];
                 for i in 0..=num_slice_groups_minus1 {
-                    read_value!(input, slice_group_ids[i], u, slice_group_id_bits);
+                    slice_group_ids[i] = read_u(input, slice_group_id_bits, "slice_group_ids")?;
                 }
 
                 Some(SliceGroup::Explicit {
@@ -350,32 +352,36 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
 pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
     let mut pps = PicParameterSet::default();
 
-    read_value!(input, pps.pic_parameter_set_id, ue, 8);
-    read_value!(input, pps.seq_parameter_set_id, ue, 8);
-    read_value!(input, pps.entropy_coding_mode_flag, f);
-    read_value!(input, pps.bottom_field_pic_order_in_frame_present_flag, f);
+    pps.pic_parameter_set_id = read_ue_limited(input, 8, "pps.pic_parameter_set_id")?;
+    pps.seq_parameter_set_id = read_ue_limited(input, 8, "pps.seq_parameter_set_id")?;
+    pps.entropy_coding_mode_flag = read_f(input, "pps.entropy_coding_mode_flag")?;
+    pps.bottom_field_pic_order_in_frame_present_flag =
+        read_f(input, "pps.bottom_field_pic_order_in_frame_present_flag")?;
 
     pps.slice_group = parse_slice_group(input)?;
 
-    read_value!(input, pps.num_ref_idx_l0_default_active_minus1, ue, 32);
-    read_value!(input, pps.num_ref_idx_l1_default_active_minus1, ue, 32);
-    read_value!(input, pps.weighted_pred_flag, f);
-    read_value!(input, pps.weighted_bipred_idc, u, 2);
-    read_value!(input, pps.pic_init_qp_minus26, se);
-    read_value!(input, pps.pic_init_qs_minus26, se);
-    read_value!(input, pps.chroma_qp_index_offset, se);
-    read_value!(input, pps.deblocking_filter_control_present_flag, f);
-    read_value!(input, pps.constrained_intra_pred_flag, f);
-    read_value!(input, pps.redundant_pic_cnt_present_flag, f);
+    pps.num_ref_idx_l0_default_active_minus1 =
+        read_ue_limited(input, 32, "pps.num_ref_idx_l0_default_active_minus1")?;
+    pps.num_ref_idx_l1_default_active_minus1 =
+        read_ue_limited(input, 32, "pps.num_ref_idx_l1_default_active_minus1")?;
+    pps.weighted_pred_flag = read_f(input, "pps.weighted_pred_flag")?;
+    pps.weighted_bipred_idc = read_u(input, 2, "pps.weighted_bipred_idc")?;
+    pps.pic_init_qp_minus26 = read_se(input, "pps.pic_init_qp_minus26")?;
+    pps.pic_init_qs_minus26 = read_se(input, "pps.pic_init_qs_minus26")?;
+    pps.chroma_qp_index_offset = read_se(input, "pps.chroma_qp_index_offset")?;
+    pps.deblocking_filter_control_present_flag =
+        read_f(input, "pps.deblocking_filter_control_present_flag")?;
+    pps.constrained_intra_pred_flag = read_f(input, "pps.constrained_intra_pred_flag")?;
+    pps.redundant_pic_cnt_present_flag = read_f(input, "pps.redundant_pic_cnt_present_flag")?;
 
     if more_rbsp_data(input) {
-        read_value!(input, pps.transform_8x8_mode_flag, f);
-        let pic_scaling_matrix_present_flag: bool;
-        read_value!(input, pic_scaling_matrix_present_flag, f);
+        pps.transform_8x8_mode_flag = read_f(input, "pps.transform_8x8_mode_flag")?;
+        let pic_scaling_matrix_present_flag: bool =
+            read_f(input, "pic_scaling_matrix_present_flag")?;
         if pic_scaling_matrix_present_flag {
-            todo!("scaling matrix");
+            return Err("scaling matrix not supported".to_string());
         }
-        read_value!(input, pps.second_chroma_qp_index_offset, se);
+        pps.second_chroma_qp_index_offset = read_se(input, "pps.second_chroma_qp_index_offset")?;
     } else {
         pps.transform_8x8_mode_flag = false;
         pps.second_chroma_qp_index_offset = pps.chroma_qp_index_offset;
@@ -405,37 +411,44 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     None
 }
 
-pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
+use std::borrow::Cow;
+
+pub fn remove_emulation_if_needed(input: &[u8]) -> Cow<'_, [u8]> {
     let mut zeros = 0;
-    let mut result = Vec::<u8>::new();
-    for (byte_index, byte) in input.iter().enumerate() {
-        match *byte {
-            0 => {
-                if !result.is_empty() {
-                    result.push(*byte);
-                }
-                zeros += 1;
-            }
-            3 => {
-                if zeros >= 2 {
-                    if result.is_empty() {
-                        result.reserve(input.len());
-                        result.extend_from_slice(&input[..byte_index]);
-                    }
-                } else if !result.is_empty() {
-                    result.push(*byte);
-                }
-                zeros = 0;
-            }
-            _ => {
-                if !result.is_empty() {
-                    result.push(*byte);
-                }
-                zeros = 0;
-            }
+    let mut first_emulation_index = None;
+
+    for (i, &byte) in input.iter().enumerate() {
+        if byte == 0 {
+            zeros += 1;
+        } else if byte == 3 && zeros >= 2 {
+            first_emulation_index = Some(i);
+            break;
+        } else {
+            zeros = 0;
         }
     }
-    result
+
+    if let Some(idx) = first_emulation_index {
+        let mut result = Vec::with_capacity(input.len() - 1);
+        result.extend_from_slice(&input[..idx]);
+        // We just saw 00 00 before idx
+        let mut zeros = 2;
+        for &byte in &input[idx + 1..] {
+            if byte == 0 {
+                zeros += 1;
+                result.push(byte);
+            } else if byte == 3 && zeros >= 2 {
+                // Skip emulation prevention byte
+                zeros = 0;
+            } else {
+                zeros = 0;
+                result.push(byte);
+            }
+        }
+        Cow::Owned(result)
+    } else {
+        Cow::Borrowed(input)
+    }
 }
 
 pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
@@ -456,9 +469,9 @@ pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
         }
     }
 
-    expect_value!(input, "forbidden_zero_bit", 0, 1);
-    read_value!(input, header.nal_ref_idc, u, 2);
-    read_value!(input, header.nal_unit_type, u, 5);
+    expect_value(input, "forbidden_zero_bit", 0, 1)?;
+    header.nal_ref_idc = read_u(input, 2, "header.nal_ref_idc")?;
+    header.nal_unit_type = read_u(input, 5, "header.nal_unit_type")?;
     Ok(header)
 }
 
@@ -470,30 +483,27 @@ pub fn parse_ref_pic_list_modification(
     let mut modifications = RefPicListModifications::default();
 
     if slice_type != SliceType::I && slice_type != SliceType::SI {
-        let ref_pic_list_modification_flag_l0: bool;
-        read_value!(input, ref_pic_list_modification_flag_l0, f);
+        let ref_pic_list_modification_flag_l0: bool =
+            read_f(input, "ref_pic_list_modification_flag_l0")?;
         if ref_pic_list_modification_flag_l0 {
             loop {
-                let modification_of_pic_nums_idc: u32;
-                read_value!(input, modification_of_pic_nums_idc, ue);
+                let modification_of_pic_nums_idc: u32 =
+                    read_ue(input, "modification_of_pic_nums_idc")?;
                 match modification_of_pic_nums_idc {
                     0 => {
-                        let abs_diff_pic_num_minus1: u32;
-                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        let abs_diff_pic_num_minus1: u32 = read_ue(input, "abs_diff_pic_num_minus1")?;
                         modifications.list0.push(RefPicListModification::RemapShortTermNegative(
                             abs_diff_pic_num_minus1,
                         ));
                     }
                     1 => {
-                        let abs_diff_pic_num_minus1: u32;
-                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        let abs_diff_pic_num_minus1: u32 = read_ue(input, "abs_diff_pic_num_minus1")?;
                         modifications.list0.push(RefPicListModification::RemapShortTermPositive(
                             abs_diff_pic_num_minus1,
                         ));
                     }
                     2 => {
-                        let long_term_pic_num: u32;
-                        read_value!(input, long_term_pic_num, ue);
+                        let long_term_pic_num: u32 = read_ue(input, "long_term_pic_num")?;
                         modifications
                             .list0
                             .push(RefPicListModification::RemapLongTerm(long_term_pic_num));
@@ -506,30 +516,27 @@ pub fn parse_ref_pic_list_modification(
     }
 
     if slice_type == SliceType::B {
-        let ref_pic_list_modification_flag_l1: bool;
-        read_value!(input, ref_pic_list_modification_flag_l1, f);
+        let ref_pic_list_modification_flag_l1: bool =
+            read_f(input, "ref_pic_list_modification_flag_l1")?;
         if ref_pic_list_modification_flag_l1 {
             loop {
-                let modification_of_pic_nums_idc: u32;
-                read_value!(input, modification_of_pic_nums_idc, ue);
+                let modification_of_pic_nums_idc: u32 =
+                    read_ue(input, "modification_of_pic_nums_idc")?;
                 match modification_of_pic_nums_idc {
                     0 => {
-                        let abs_diff_pic_num_minus1: u32;
-                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        let abs_diff_pic_num_minus1: u32 = read_ue(input, "abs_diff_pic_num_minus1")?;
                         modifications.list1.push(RefPicListModification::RemapShortTermNegative(
                             abs_diff_pic_num_minus1,
                         ));
                     }
                     1 => {
-                        let abs_diff_pic_num_minus1: u32;
-                        read_value!(input, abs_diff_pic_num_minus1, ue);
+                        let abs_diff_pic_num_minus1: u32 = read_ue(input, "abs_diff_pic_num_minus1")?;
                         modifications.list1.push(RefPicListModification::RemapShortTermPositive(
                             abs_diff_pic_num_minus1,
                         ));
                     }
                     2 => {
-                        let long_term_pic_num: u32;
-                        read_value!(input, long_term_pic_num, ue);
+                        let long_term_pic_num: u32 = read_ue(input, "long_term_pic_num")?;
                         modifications
                             .list1
                             .push(RefPicListModification::RemapLongTerm(long_term_pic_num));
@@ -552,9 +559,9 @@ pub fn parse_pred_weight_table(
     pps: &PicParameterSet,
 ) -> ParseResult<PredWeightTable> {
     let mut table = PredWeightTable::default();
-    read_value!(input, table.luma_log2_weight_denom, ue, 8);
+    table.luma_log2_weight_denom = read_ue_limited(input, 8, "table.luma_log2_weight_denom")?;
     if sps.ChromaArrayType() != ChromaFormat::Monochrome {
-        read_value!(input, table.chroma_log2_weight_denom, ue, 8);
+        table.chroma_log2_weight_denom = read_ue_limited(input, 8, "table.chroma_log2_weight_denom")?;
     }
 
     for i in 0..=slice_header.num_ref_idx_l0_active_minus1 {
@@ -568,20 +575,20 @@ pub fn parse_pred_weight_table(
             chroma_offsets: [0, 0],
         };
 
-        let luma_weight_l0_flag: bool;
-        read_value!(input, luma_weight_l0_flag, f);
+        let luma_weight_l0_flag: bool = read_f(input, "luma_weight_l0_flag")?;
         if luma_weight_l0_flag {
-            read_value!(input, factors.luma_weight, se);
-            read_value!(input, factors.luma_offset, se);
+            factors.luma_weight = read_se(input, "factors.luma_weight")?;
+            factors.luma_offset = read_se(input, "factors.luma_offset")?;
         }
 
         if sps.ChromaArrayType() != ChromaFormat::Monochrome {
-            let chroma_weight_l0_flag: bool;
-            read_value!(input, chroma_weight_l0_flag, f);
+            let chroma_weight_l0_flag: bool = read_f(input, "chroma_weight_l0_flag")?;
             if chroma_weight_l0_flag {
                 for j in 0..2 {
-                    read_value!(input, factors.chroma_weights[j], se);
-                    read_value!(input, factors.chroma_offsets[j], se);
+                    factors.chroma_weights[j] =
+                        read_se(input, &format!("factors.chroma_weights[{}]", j))?;
+                    factors.chroma_offsets[j] =
+                        read_se(input, &format!("factors.chroma_offsets[{}]", j))?;
                 }
             }
         }
@@ -600,20 +607,20 @@ pub fn parse_pred_weight_table(
                 chroma_offsets: [0, 0],
             };
 
-            let luma_weight_l1_flag: bool;
-            read_value!(input, luma_weight_l1_flag, f);
+            let luma_weight_l1_flag: bool = read_f(input, "luma_weight_l1_flag")?;
             if luma_weight_l1_flag {
-                read_value!(input, factors.luma_weight, se);
-                read_value!(input, factors.luma_offset, se);
+                factors.luma_weight = read_se(input, "factors.luma_weight")?;
+                factors.luma_offset = read_se(input, "factors.luma_offset")?;
             }
 
             if sps.ChromaArrayType() != ChromaFormat::Monochrome {
-                let chroma_weight_l1_flag: bool;
-                read_value!(input, chroma_weight_l1_flag, f);
+                let chroma_weight_l1_flag: bool = read_f(input, "chroma_weight_l1_flag")?;
                 if chroma_weight_l1_flag {
                     for j in 0..2 {
-                        read_value!(input, factors.chroma_weights[j], se);
-                        read_value!(input, factors.chroma_offsets[j], se);
+                        factors.chroma_weights[j] =
+                            read_se(input, &format!("factors.chroma_weights[{}]", j))?;
+                        factors.chroma_offsets[j] =
+                            read_se(input, &format!("factors.chroma_offsets[{}]", j))?;
                     }
                 }
             }
@@ -631,57 +638,52 @@ pub fn parse_dec_ref_pic_marking(
 ) -> ParseResult<DecRefPicMarking> {
     let mut dec_ref_pic_marking = DecRefPicMarking::default();
     if idr_pic_flag {
-        let no_output_of_prior_pics_flag: bool;
-        let long_term_reference_flag: bool;
-        read_value!(input, no_output_of_prior_pics_flag, f);
-        read_value!(input, long_term_reference_flag, f);
+        let no_output_of_prior_pics_flag: bool = read_f(input, "no_output_of_prior_pics_flag")?;
+        let long_term_reference_flag: bool = read_f(input, "long_term_reference_flag")?;
         dec_ref_pic_marking.no_output_of_prior_pics_flag = Some(no_output_of_prior_pics_flag);
         dec_ref_pic_marking.long_term_reference_flag = Some(long_term_reference_flag);
     } else {
-        let adaptive_ref_pic_marking_mode_flag: bool;
-        read_value!(input, adaptive_ref_pic_marking_mode_flag, f);
+        let adaptive_ref_pic_marking_mode_flag: bool =
+            read_f(input, "adaptive_ref_pic_marking_mode_flag")?;
         dec_ref_pic_marking.adaptive_ref_pic_marking_mode_flag =
             Some(adaptive_ref_pic_marking_mode_flag);
         if adaptive_ref_pic_marking_mode_flag {
             loop {
-                let memory_management_control_operation_val: u32;
-                read_value!(input, memory_management_control_operation_val, ue);
+                let memory_management_control_operation_val: u32 =
+                    read_ue(input, "memory_management_control_operation_val")?;
 
                 let op = match memory_management_control_operation_val {
                     0 => break,
                     1 => {
-                        let difference_of_pic_nums_minus1: u32;
-                        read_value!(input, difference_of_pic_nums_minus1, ue);
+                        let difference_of_pic_nums_minus1: u32 =
+                            read_ue(input, "difference_of_pic_nums_minus1")?;
                         MemoryManagementControlOperation::MarkShortTermUnused {
                             difference_of_pic_nums_minus1,
                         }
                     }
                     2 => {
-                        let long_term_pic_num: u32;
-                        read_value!(input, long_term_pic_num, ue);
+                        let long_term_pic_num: u32 = read_ue(input, "long_term_pic_num")?;
                         MemoryManagementControlOperation::MarkLongTermUnused { long_term_pic_num }
                     }
                     3 => {
-                        let difference_of_pic_nums_minus1: u32;
-                        read_value!(input, difference_of_pic_nums_minus1, ue);
-                        let long_term_frame_idx: u32;
-                        read_value!(input, long_term_frame_idx, ue);
+                        let difference_of_pic_nums_minus1: u32 =
+                            read_ue(input, "difference_of_pic_nums_minus1")?;
+                        let long_term_frame_idx: u32 = read_ue(input, "long_term_frame_idx")?;
                         MemoryManagementControlOperation::MarkShortTermAsLongTerm {
                             difference_of_pic_nums_minus1,
                             long_term_frame_idx,
                         }
                     }
                     4 => {
-                        let max_long_term_frame_idx_plus1: u32;
-                        read_value!(input, max_long_term_frame_idx_plus1, ue);
+                        let max_long_term_frame_idx_plus1: u32 =
+                            read_ue(input, "max_long_term_frame_idx_plus1")?;
                         MemoryManagementControlOperation::SetMaxLongTermFrameIdx {
                             max_long_term_frame_idx_plus1,
                         }
                     }
                     5 => MemoryManagementControlOperation::MarkAllUnused,
                     6 => {
-                        let long_term_frame_idx: u32;
-                        read_value!(input, long_term_frame_idx, ue);
+                        let long_term_frame_idx: u32 = read_ue(input, "long_term_frame_idx")?;
                         MemoryManagementControlOperation::MarkCurrentAsLongTerm {
                             long_term_frame_idx,
                         }
@@ -709,9 +711,9 @@ pub fn parse_slice_header(
     let idr_pic_flag = nal.nal_unit_type == NalUnitType::IDRSlice;
 
     let mut header = SliceHeader::default();
-    read_value!(input, header.first_mb_in_slice, ue, 32);
-    read_value!(input, header.slice_type, ue, 8);
-    read_value!(input, header.pic_parameter_set_id, ue, 8);
+    header.first_mb_in_slice = read_ue_limited(input, 32, "header.first_mb_in_slice")?;
+    header.slice_type = read_ue_limited(input, 8, "header.slice_type")?;
+    header.pic_parameter_set_id = read_ue_limited(input, 8, "header.pic_parameter_set_id")?;
 
     let pps = match ctx.get_pps(header.pic_parameter_set_id) {
         Some(pps) => pps,
@@ -727,8 +729,7 @@ pub fn parse_slice_header(
     };
 
     if sps.separate_color_plane_flag {
-        let color_plane_id: u8;
-        read_value!(input, color_plane_id, u, 2);
+        let color_plane_id: u8 = read_u(input, 2, "color_plane_id")?;
         header.color_plane = match color_plane_id {
             0 => Some(ColorPlane::Y),
             1 => Some(ColorPlane::Cb),
@@ -737,43 +738,44 @@ pub fn parse_slice_header(
         };
     }
 
-    read_value!(input, header.frame_num, u, sps.bits_in_frame_num());
+    header.frame_num = read_u(input, sps.bits_in_frame_num(), "header.frame_num")?;
 
     if sps.frame_mbs_only_flag {
         header.field_pic_flag = false;
     } else {
-        read_value!(input, header.field_pic_flag, f);
+        header.field_pic_flag = read_f(input, "header.field_pic_flag")?;
         if header.field_pic_flag {
-            let bottom_field_flag: bool;
-            read_value!(input, bottom_field_flag, f);
+            let bottom_field_flag: bool = read_f(input, "bottom_field_flag")?;
             header.bottom_field_flag = Some(bottom_field_flag);
         }
-        todo!("implement interlaced video. i.e. fields");
+        return Err("interlaced video not supported".to_string());
     }
 
     if idr_pic_flag {
-        read_value!(input, header.idr_pic_id, ue, 16);
+        header.idr_pic_id = read_ue_limited(input, 16, "header.idr_pic_id")?;
     }
 
     if sps.pic_order_cnt_type == 0 {
-        read_value!(input, header.pic_order_cnt_lsb, u, sps.bits_in_max_pic_order_cnt());
+        header.pic_order_cnt_lsb =
+            read_u(input, sps.bits_in_max_pic_order_cnt(), "header.pic_order_cnt_lsb")?;
         if pps.bottom_field_pic_order_in_frame_present_flag && !header.field_pic_flag {
-            read_value!(input, header.delta_pic_order_cnt_bottom, se);
+            header.delta_pic_order_cnt_bottom = read_se(input, "header.delta_pic_order_cnt_bottom")?;
         }
     } else {
-        todo!();
+        return Err("pic_order_cnt_type != 0 not supported".to_string());
     }
     if pps.redundant_pic_cnt_present_flag {
-        read_value!(input, header.redundant_pic_cnt, ue);
+        header.redundant_pic_cnt = read_ue(input, "header.redundant_pic_cnt")?;
     }
 
     if matches!(header.slice_type, SliceType::P | SliceType::SP | SliceType::B) {
-        let num_ref_idx_active_override_flag: bool;
-        read_value!(input, num_ref_idx_active_override_flag, f);
+        let num_ref_idx_active_override_flag: bool = read_f(input, "num_ref_idx_active_override_flag")?;
         if num_ref_idx_active_override_flag {
-            read_value!(input, header.num_ref_idx_l0_active_minus1, ue);
+            header.num_ref_idx_l0_active_minus1 =
+                read_ue(input, "header.num_ref_idx_l0_active_minus1")?;
             if header.slice_type == SliceType::B {
-                read_value!(input, header.num_ref_idx_l1_active_minus1, ue);
+                header.num_ref_idx_l1_active_minus1 =
+                    read_ue(input, "header.num_ref_idx_l1_active_minus1")?;
             }
         } else {
             header.num_ref_idx_l0_active_minus1 = pps.num_ref_idx_l0_default_active_minus1;
@@ -793,14 +795,12 @@ pub fn parse_slice_header(
         header.dec_ref_pic_marking = Some(parse_dec_ref_pic_marking(input, idr_pic_flag)?);
     }
 
-    read_value!(input, header.slice_qp_delta, se);
+    header.slice_qp_delta = read_se(input, "header.slice_qp_delta")?;
     if pps.deblocking_filter_control_present_flag {
-        read_value!(input, header.deblocking_filter_idc, ue, 8);
+        header.deblocking_filter_idc = read_ue_limited(input, 8, "header.deblocking_filter_idc")?;
         if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
-            let slice_alpha_c0_offset_div2: i32;
-            let slice_beta_offset_div2: i32;
-            read_value!(input, slice_alpha_c0_offset_div2, se);
-            read_value!(input, slice_beta_offset_div2, se);
+            let slice_alpha_c0_offset_div2: i32 = read_se(input, "slice_alpha_c0_offset_div2")?;
+            let slice_beta_offset_div2: i32 = read_se(input, "slice_beta_offset_div2")?;
         }
     }
 
@@ -894,7 +894,7 @@ pub fn parse_residual(
             }
         }
     } else {
-        todo!("i444");
+        return Err("i444 not supported".to_string());
     }
     Ok(())
 }
@@ -934,8 +934,7 @@ fn calc_prev_intra4x4_pred_mode(
 
 // Section 7.3.5 Macroblock layer syntax
 pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
-    let mb_type_val: u32;
-    read_value!(input, mb_type_val, ue);
+    let mb_type_val: u32 = read_ue(input, "mb_type_val")?;
 
     if matches!(slice.header.slice_type, SliceType::I | SliceType::SI) {
         let mb_type = IMbType::try_from(mb_type_val)?;
@@ -1274,15 +1273,14 @@ pub fn parse_p_macroblock(
         if mb_part_pred_mode != MbPredictionMode::Pred_L1 {
             if slice.header.num_ref_idx_l0_active_minus1 > 0 {
                 for i in 0..num_mb_part {
-                    read_value!(input, partitions[i].ref_idx_l0, ue, 8);
+                    partitions[i].ref_idx_l0 =
+                        read_ue_limited(input, 8, &format!("partitions[{}].ref_idx_l0", i))?;
                 }
             }
 
             for i in 0..num_mb_part {
-                let mvd_x: i32;
-                let mvd_y: i32;
-                read_value!(input, mvd_x, se);
-                read_value!(input, mvd_y, se);
+                let mvd_x: i32 = read_se(input, "mvd_x")?;
+                let mvd_y: i32 = read_se(input, "mvd_y")?;
                 partitions[i].mv_l0 = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
             }
         }
@@ -1290,8 +1288,7 @@ pub fn parse_p_macroblock(
         // P_8x8 or P_8x8ref0
         for i in 0..sub_macroblocks.len() {
             // 4 sub-macroblocks
-            let sub_mb_type_val: u32;
-            read_value!(input, sub_mb_type_val, ue);
+            let sub_mb_type_val: u32 = read_ue(input, "sub_mb_type_val")?;
             let sub_mb_type = SubMbType::try_from(sub_mb_type_val)?;
             sub_macroblocks[i].sub_mb_type = sub_mb_type;
         }
@@ -1302,7 +1299,7 @@ pub fn parse_p_macroblock(
                 if mb_type == PMbType::P_8x8ref0 {
                     ref_idx_l0[i] = 0;
                 } else {
-                    read_value!(input, ref_idx_l0[i], ue, 8);
+                    ref_idx_l0[i] = read_ue_limited(input, 8, &format!("ref_idx_l0[{}]", i))?;
                 }
             }
         }
@@ -1313,10 +1310,8 @@ pub fn parse_p_macroblock(
             let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
             for j in 0..num_sub_mb_part {
                 // sub-macroblock partition index
-                let mvd_x: i32;
-                let mvd_y: i32;
-                read_value!(input, mvd_x, se);
-                read_value!(input, mvd_y, se);
+                let mvd_x: i32 = read_se(input, "mvd_x")?;
+                let mvd_y: i32 = read_se(input, "mvd_y")?;
                 mvd_l0[i][j] = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
             }
         }
@@ -1332,14 +1327,13 @@ pub fn parse_p_macroblock(
 
     block.motion = calculate_motion(slice, this_mb_addr, mb_type, &partitions, &sub_macroblocks);
 
-    let coded_block_pattern_num: u8;
-    read_value!(input, coded_block_pattern_num, ue, 8);
+    let coded_block_pattern_num: u8 = read_ue_limited(input, 8, "coded_block_pattern_num")?;
     block.coded_block_pattern =
         tables::code_num_to_inter_coded_block_pattern(coded_block_pattern_num)
             .ok_or("Invalid coded_block_pattern")?;
 
     if !block.coded_block_pattern.is_zero() {
-        read_value!(input, block.mb_qp_delta, se);
+        block.mb_qp_delta = read_se(input, "block.mb_qp_delta")?;
         let mut residual = Box::<Residual>::default();
         residual.coded_block_pattern = block.coded_block_pattern;
         residual.prediction_mode = block.MbPartPredMode(0);
@@ -1378,7 +1372,7 @@ pub fn parse_i_macroblock(
         let mut block = IMb { mb_type, ..IMb::default() };
         let this_mb_addr = slice.get_next_mb_addr();
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
-            read_value!(input, block.transform_size_8x8_flag, f);
+            block.transform_size_8x8_flag = read_f(input, "block.transform_size_8x8_flag")?;
         }
         match block.MbPartPredMode(0) {
             MbPredictionMode::Intra_4x4 => {
@@ -1387,14 +1381,14 @@ pub fn parse_i_macroblock(
                     let prev_pred_mode =
                         calc_prev_intra4x4_pred_mode(slice, &block, this_mb_addr, blk_idx);
 
-                    let prev_intra4x4_pred_mode_flag: bool;
-                    read_value!(input, prev_intra4x4_pred_mode_flag, f);
+                    let prev_intra4x4_pred_mode_flag: bool =
+                        read_f(input, "prev_intra4x4_pred_mode_flag")?;
                     let mode = &mut block.rem_intra4x4_pred_mode[blk_idx];
                     if prev_intra4x4_pred_mode_flag {
                         *mode = prev_pred_mode
                     } else {
-                        let rem_intra4x4_pred_mode: Intra_4x4_SamplePredMode;
-                        read_value!(input, rem_intra4x4_pred_mode, u, 3);
+                        let rem_intra4x4_pred_mode: Intra_4x4_SamplePredMode =
+                            read_u(input, 3, "rem_intra4x4_pred_mode")?;
                         if rem_intra4x4_pred_mode < prev_pred_mode {
                             *mode = rem_intra4x4_pred_mode;
                         } else {
@@ -1407,17 +1401,16 @@ pub fn parse_i_macroblock(
                 }
             }
             MbPredictionMode::Intra_16x16 => {}
-            _ => todo!("implement Intra_8x8"),
+            _ => return Err("Intra_8x8 not implemented".to_string()),
         };
         if slice.sps.ChromaArrayType().is_chrome_subsampled() {
-            read_value!(input, block.intra_chroma_pred_mode, ue, 2);
+            block.intra_chroma_pred_mode = read_ue_limited(input, 2, "block.intra_chroma_pred_mode")?;
         }
         if block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
             block.coded_block_pattern = tables::mb_type_to_coded_block_pattern(block.mb_type)
                 .ok_or("Invalid coded_block_pattern")?;
         } else {
-            let coded_block_pattern_num: u8;
-            read_value!(input, coded_block_pattern_num, ue, 8);
+            let coded_block_pattern_num: u8 = read_ue_limited(input, 8, "coded_block_pattern_num")?;
             block.coded_block_pattern =
                 tables::code_num_to_intra_coded_block_pattern(coded_block_pattern_num)
                     .ok_or("Invalid coded_block_pattern")?;
@@ -1427,7 +1420,7 @@ pub fn parse_i_macroblock(
         if !block.coded_block_pattern.is_zero()
             || block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16
         {
-            read_value!(input, block.mb_qp_delta, se);
+            block.mb_qp_delta = read_se(input, "block.mb_qp_delta")?;
             let mut residual = Box::<Residual>::default();
             residual.coded_block_pattern = block.coded_block_pattern;
             residual.prediction_mode = block.MbPartPredMode(0);
@@ -1446,7 +1439,7 @@ pub fn parse_i_macroblock(
 pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
     // Baseline profile features
     if slice.sps.profile != Profile::Baseline {
-        todo!("profiles above baseline");
+        return Err("profiles above baseline not supported".to_string());
     }
     assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
@@ -1463,8 +1456,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     loop {
         let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
         if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
-            let mb_skip_run: usize;
-            read_value!(input, mb_skip_run, ue);
+            let mb_skip_run: usize = read_ue(input, "mb_skip_run")?;
             let blocks_left = pic_size_in_mbs - slice.get_next_mb_addr() as usize;
             if mb_skip_run > blocks_left {
                 return Err(format!(
@@ -1720,18 +1712,23 @@ mod tests {
     #[test]
     pub fn test_remove_emulation_if_needed() {
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0f, 0x00, 0x00, 0x00, 0x00];
-        assert!(remove_emulation_if_needed(&data).is_empty());
+        assert_eq!(remove_emulation_if_needed(&data).as_ref(), &data);
+        assert!(matches!(remove_emulation_if_needed(&data), Cow::Borrowed(_)));
 
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0f, 0x00, 0x00, 0x03, 0x00];
         assert_eq!(
-            remove_emulation_if_needed(&data),
-            vec![0xAA, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00]
+            remove_emulation_if_needed(&data).as_ref(),
+            &[0xAA, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00]
         );
 
         let data = [0x00, 0x03, 0x0f, 0x00, 0x00, 0x03];
-        assert_eq!(remove_emulation_if_needed(&data), vec![0x00, 0x03, 0x0f, 0x00, 0x00]);
+        assert_eq!(
+            remove_emulation_if_needed(&data).as_ref(),
+            &[0x00, 0x03, 0x0f, 0x00, 0x00]
+        );
 
         let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4];
-        assert!(remove_emulation_if_needed(&data).is_empty());
+        assert_eq!(remove_emulation_if_needed(&data).as_ref(), &data);
+        assert!(matches!(remove_emulation_if_needed(&data), Cow::Borrowed(_)));
     }
 }

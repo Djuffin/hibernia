@@ -149,6 +149,8 @@ pub struct SliceHeader {
     pub sp_for_switch_flag: Option<bool>,
     pub slice_qs: Option<u32>,
     pub deblocking_filter_idc: DeblockingFilterIdc,
+    pub slice_alpha_c0_offset_div2: i32,
+    pub slice_beta_offset_div2: i32,
 }
 
 #[derive(Clone)]

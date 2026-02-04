@@ -797,10 +797,8 @@ pub fn parse_slice_header(
     if pps.deblocking_filter_control_present_flag {
         read_value!(input, header.deblocking_filter_idc, ue, 8);
         if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
-            let slice_alpha_c0_offset_div2: i32;
-            let slice_beta_offset_div2: i32;
-            read_value!(input, slice_alpha_c0_offset_div2, se);
-            read_value!(input, slice_beta_offset_div2, se);
+            read_value!(input, header.slice_alpha_c0_offset_div2, se);
+            read_value!(input, header.slice_beta_offset_div2, se);
         }
     }
 

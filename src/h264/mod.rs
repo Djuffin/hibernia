@@ -1,4 +1,5 @@
 pub mod cavlc;
+pub mod deblocking_filter;
 pub mod decoder;
 pub mod dpb;
 pub mod inter_pred;

@@ -390,6 +390,9 @@ impl Decoder {
                 }
             }
         }
+
+        super::deblocking_filter::apply_deblocking_filter(slice, frame);
+
         Ok(())
     }
 

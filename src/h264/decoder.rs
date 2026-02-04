@@ -7,7 +7,7 @@ use crate::h264::tables::mb_type_to_16x16_pred_mode;
 use crate::h264::ColorPlane;
 
 use super::dpb::{DecodedPictureBuffer, DpbPicture};
-use super::inter_pred::{interpolate_chroma, interpolate_luma};
+use super::inter_pred::{interpolate_chroma, interpolate_luma, InterpolationBuffer};
 use super::macroblock::{
     self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
     get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
@@ -67,15 +67,27 @@ impl DecoderContext {
     }
 }
 
-#[derive(Debug)]
 pub struct Decoder {
     context: DecoderContext,
     dpb: DecodedPictureBuffer,
     output_frames: Vec<VideoFrame>,
+    interpolation_buffer: InterpolationBuffer,
 
     // POC Type 0 state
     prev_pic_order_cnt_msb: i32,
     prev_pic_order_cnt_lsb: i32,
+}
+
+impl std::fmt::Debug for Decoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Decoder")
+            .field("context", &self.context)
+            .field("dpb", &self.dpb)
+            .field("output_frames", &self.output_frames)
+            .field("prev_pic_order_cnt_msb", &self.prev_pic_order_cnt_msb)
+            .field("prev_pic_order_cnt_lsb", &self.prev_pic_order_cnt_lsb)
+            .finish()
+    }
 }
 
 impl Default for Decoder {
@@ -90,6 +102,7 @@ impl Decoder {
             context: DecoderContext::default(),
             dpb: DecodedPictureBuffer::new(1),
             output_frames: Vec::new(),
+            interpolation_buffer: InterpolationBuffer::new(),
             prev_pic_order_cnt_msb: 0,
             prev_pic_order_cnt_lsb: 0,
         }
@@ -349,7 +362,13 @@ impl Decoder {
                         };
 
                         render_luma_inter_prediction(
-                            slice, block, mb_loc, frame, &residuals, references,
+                            slice,
+                            block,
+                            mb_loc,
+                            frame,
+                            &residuals,
+                            references,
+                            &mut self.interpolation_buffer,
                         );
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
@@ -608,6 +627,7 @@ pub fn render_luma_inter_prediction(
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
     references: &[DpbPicture],
+    buffer: &mut InterpolationBuffer,
 ) {
     let y_plane = &mut frame.planes[0];
 
@@ -638,6 +658,7 @@ pub fn render_luma_inter_prediction(
                     mv,
                     &mut dst,
                     4, // stride for 4x4 block buffer
+                    buffer,
                 );
 
                 // Add residual

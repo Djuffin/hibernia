@@ -16,6 +16,7 @@ pub fn interpolate_luma(
     mv: MotionVector,
     dst: &mut [u8],
     dst_stride: usize,
+    buffer: &mut InterpolationBuffer,
 ) {
     let x_int = (mb_x as i32) + (blk_x as i32) + (mv.x >> 2) as i32;
     let y_int = (mb_y as i32) + (blk_y as i32) + (mv.y >> 2) as i32;
@@ -26,7 +27,6 @@ pub fn interpolate_luma(
     // we need a window of (width + 5) x (height + 5) integer pixels.
     // Specifically, for 6-tap filter at pos G, we need E, F, G, H, I, J.
     // That is 2 pixels to the left/top and 3 pixels to the right/bottom.
-    let mut buffer = InterpolationBuffer::new(); // Max block size 16x16 + 5 padding
     let buf_w = (width as usize) + 5;
     let buf_h = (height as usize) + 5;
 
@@ -84,7 +84,7 @@ pub fn interpolate_luma(
             for y in 0..height as usize {
                 for x in 0..width as usize {
                     dst[y * dst_stride + x] =
-                        interpolate_quarter_pel(&buffer, x, y, x_frac, y_frac);
+                        interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
                 }
             }
         }
@@ -187,14 +187,14 @@ fn filter_6tap_center_and_clip(p: &[i32]) -> u8 {
     ((val + 512) >> 10).clamp(0, 255) as u8
 }
 
-struct InterpolationBuffer {
+pub struct InterpolationBuffer {
     data: [[i16; 21]; 21],
 }
 
 impl InterpolationBuffer {
     const PADDING: usize = 2;
 
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self { data: [[0; 21]; 21] }
     }
 
@@ -367,7 +367,8 @@ mod tests {
     fn test_interpolate_integer() {
         let plane = create_test_plane(32, 32, 100);
         let mut dst = [0u8; 16];
-        interpolate_luma(&plane, 0, 0, 0, 0, 4, 4, MotionVector { x: 0, y: 0 }, &mut dst, 4);
+        let mut buffer = InterpolationBuffer::new();
+        interpolate_luma(&plane, 0, 0, 0, 0, 4, 4, MotionVector { x: 0, y: 0 }, &mut dst, 4, &mut buffer);
         assert_eq!(dst, [100; 16]);
     }
 
@@ -391,7 +392,8 @@ mod tests {
             }
         }
         let mut dst = [0u8; 4];
-        interpolate_luma(&plane, 2, 2, 0, 0, 4, 1, MotionVector { x: 2, y: 0 }, &mut dst, 4);
+        let mut buffer = InterpolationBuffer::new();
+        interpolate_luma(&plane, 2, 2, 0, 0, 4, 1, MotionVector { x: 2, y: 0 }, &mut dst, 4, &mut buffer);
         assert_eq!(dst[0], 150);
     }
 
@@ -410,7 +412,8 @@ mod tests {
             }
         }
         let mut dst = [0u8; 4];
-        interpolate_luma(&plane, 2, 2, 0, 0, 4, 1, MotionVector { x: 1, y: 0 }, &mut dst, 4);
+        let mut buffer = InterpolationBuffer::new();
+        interpolate_luma(&plane, 2, 2, 0, 0, 4, 1, MotionVector { x: 1, y: 0 }, &mut dst, 4, &mut buffer);
         assert_eq!(dst[0], 125);
     }
 

@@ -25,6 +25,7 @@ const BETA_TABLE: [u8; 52] = [
 ];
 
 // Table 8-17 – Value of tc0
+// Column 0 for bS=1, Column 1 for bS=2, Column 2 for bS=3
 const TC0_TABLE: [[u8; 3]; 52] = [
     [0, 0, 0],
     [0, 0, 0],
@@ -141,24 +142,6 @@ fn get_boundary_strength_luma(
         return 0;
     };
 
-    // If using deblocking_filter_idc == 2 (OnExceptSliceBounds), and the boundary is a slice boundary, BS = 0.
-    // However, here we only check MB availability within the slice struct which contains MBs of the current slice.
-    // If the neighbor is in another slice, slice.get_mb(addr) might return None if slice only stores its own MBs.
-    // The `slice` struct in `slice.rs` seems to store `macroblocks` which are only for the current slice.
-    // If the neighbor is in a previous slice, `slice.get_mb(addr)` will return None.
-    // But `slice.get_mb_neighbor` uses `get_neighbor_mbs` which calculates the address.
-    // Wait, the `Slice` struct only holds `macroblocks` for the current slice.
-    // So if the neighbor is in a different slice, `slice.get_mb` will return None.
-    // The decoder maintains `dpb` and potentially we could access other slices, but here we only have `slice`.
-    // However, the deblocking filter is applied after the slice is constructed.
-    // If the neighbor is not in the current slice, it implies it belongs to a previously decoded slice in the same picture.
-    // The problem is that `Slice` struct doesn't seem to have access to other slices' macroblocks directly.
-    // BUT, the test `test_BA1_Sony_D` has "Each picture contains only one slice".
-    // So for this test case, all MBs are in the same slice.
-    // For the general case, we might need access to the whole picture's MB map.
-    // Assuming for now that `slice` contains all MBs or we treat inter-slice boundaries as unavailable if we can't access them.
-    // Wait, if `slice.get_mb` returns None, it returns 0.
-
     let curr_is_intra = curr_mb.is_intra();
     let neighbor_is_intra = neighbor_mb.is_intra();
 
@@ -166,19 +149,8 @@ fn get_boundary_strength_luma(
         // Condition 1: Intra coded
         // If the boundary is a macroblock boundary
         let is_mb_boundary = if vertical_edge {
-            // Vertical edge 0 corresponds to left MB boundary
-            // 4x4 blocks 0, 2, 8, 10 are on the left edge.
-            // But we iterate edges 0..4. Edge 0 is the left boundary of the MB.
-            // Inner edges are 1, 2, 3.
-            // The `filter_luma_edge_vertical` calls this with `edge` index.
-            // `edge == 0` means MB boundary.
-            // But here we rely on the caller to handle loop logic.
-            // Let's assume this function is called for a specific 4x4 block edge.
-            // We need to know if it is a macroblock boundary.
-            // We can check if `curr_mb_addr != neighbor_mb_addr`.
             curr_mb_addr != neighbor_mb_addr.unwrap()
         } else {
-            // Horizontal edge
             curr_mb_addr != neighbor_mb_addr.unwrap()
         };
 
@@ -190,13 +162,6 @@ fn get_boundary_strength_luma(
     }
 
     // Condition 2: Non-zero transform coefficients
-    // We need to check Coded Block Pattern (CBP) or residual data.
-    // The `Macroblock` struct has `residual` field.
-    // `Residual` has `get_nc`.
-    // But we need to know if there are non-zero coefficients in the specific 4x4 blocks.
-    // `residual.samples` contains the coefficients. We can check if any is non-zero.
-    // Or we can check CBP. But CBP is for 8x8 blocks (Luma).
-    // Actually, we should check the coefficients.
     let curr_has_coeffs = check_non_zero_coeffs(curr_mb, curr_blk_idx);
     let neighbor_has_coeffs = check_non_zero_coeffs(neighbor_mb, neighbor_blk_idx);
 
@@ -210,14 +175,7 @@ fn get_boundary_strength_luma(
     let neighbor_motion = neighbor_mb.get_motion_info();
 
     // Map 4x4 block index to 4x4 grid coordinates (0..3, 0..3)
-    let curr_p = get_4x4luma_block_location(curr_blk_idx); // This returns absolute coords in MB (0..15, 0..15)?? No, get_4x4luma_block_location returns relative to MB?
-                                                            // Let's check macroblock.rs.
-                                                            // get_4x4luma_block_location(idx) returns Point {x, y} relative to MB top-left?
-                                                            // macroblock.rs:
-                                                            // pub const fn get_4x4luma_block_location(idx: u8) -> Point { ... }
-                                                            // idx 0 -> (0,0), idx 5 -> (4, 4)?
-                                                            // Yes. It returns pixel coordinates.
-                                                            // To get partition grid index (0..3), we divide by 4.
+    let curr_p = get_4x4luma_block_location(curr_blk_idx);
     let curr_grid_x = (curr_p.x / 4) as usize;
     let curr_grid_y = (curr_p.y / 4) as usize;
 
@@ -257,12 +215,7 @@ fn check_non_zero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
                 false
             }
         }
-        Macroblock::PCM(_) => false, // PCM samples are reconstructed directly, effectively BS=0 usually? Or treated as Intra?
-                                     // PCM is Intra. So it should hit Condition 1.
-                                     // But if we are here, it means it's not Intra?
-                                     // Wait, PCM returns `is_intra() -> true`.
-                                     // So we should have returned 4 or 3.
-                                     // So this branch is unreachable for PCM.
+        Macroblock::PCM(_) => false,
     }
 }
 
@@ -275,17 +228,7 @@ fn filter_luma_edge_vertical(
 ) {
     let mb_x = mb_loc.x;
     let mb_y = mb_loc.y;
-    let x_offset = edge * 4; // 0, 4, 8, 12
-
-    // Filter 16 lines (rows)
-    // But we process 4x4 blocks.
-    // The loop in spec usually iterates over 4x4 blocks.
-    // For vertical edge `edge`, we have 4 blocks vertically: rows 0..3, 4..7, 8..11, 12..15.
-    // Block indices for edge 0: (0, A), (2, A), (8, A), (10, A) -- if considering MB boundary.
-    // Actually, let's look at the samples q0, p0.
-    // p0 is at x_offset - 1, q0 is at x_offset.
-    // We calculate BS for each 4x4 block boundary.
-    // So for edge=0, we have 4 4x4 boundaries.
+    let x_offset = edge * 4;
 
     for k in 0..4 {
         let y_offset = k * 4;
@@ -375,9 +318,6 @@ fn filter_luma_edge_vertical(
              let y = (mb_y + blk_y + i) as isize;
              let x = (mb_x + blk_x) as isize;
 
-             // Samples p3, p2, p1, p0, q0, q1, q2, q3
-             // p is left (neighbor), q is right (current)
-             // p0 is at x-1
              // Using mut_slice to access rows because row_mut is not available
              // But we need random access to a row.
              // We can get a slice starting at (0, y) and take the row.
@@ -398,7 +338,16 @@ fn filter_luma_edge_vertical(
              let dq1q0 = (q1 as i32 - q0 as i32).abs();
 
              if dp0q0 < alpha as i32 && dp1p0 < beta as i32 && dq1q0 < beta as i32 {
-                 let tc0_idx = if bs == 4 { 2 } else { if bs > 0 { 1 } else { 0 } };
+                 // Table 8-17:
+                 // bS=1 -> column 0
+                 // bS=2 -> column 1
+                 // bS=3 -> column 2
+                 // bS=4 -> column 2 (if weak filter applied)
+                 let tc0_idx = match bs {
+                     1 => 0,
+                     2 => 1,
+                     _ => 2,
+                 };
                  let tc0 = TC0_TABLE[index_a as usize][tc0_idx] as i32;
 
                  // Calculate p2 and q2 diffs for both cases
@@ -419,20 +368,11 @@ fn filter_luma_edge_vertical(
                      } else {
                          // Weak filter for p
                          // p0' = p0 + clip(...)
-                         let delta = (((q0 as i32 - p0 as i32) << 2) + (p1 as i32 - q1 as i32) + 4) >> 3;
-                         let tc = tc0 + (dp2p0 < beta as i32) as i32; // This logic is for Bs < 4.
-                         // For Bs = 4, if not strong, do we assume weak?
-                         // Spec 8.7.2.2:
-                         // "Otherwise ( any of the above conditions are not satisfied ), the following ordered steps apply:"
-                         // It falls back to weak filter logic but with tc0 for Bs=4?
-                         // "tc = tc0 + ( | p2 - p0 | < beta ? 1 : 0 ) + ( | q2 - q0 | < beta ? 1 : 0 )" is for Bs < 4.
-                         // For Bs=4, weak filter is slightly different?
-                         // Actually 8.7.2.2 says:
-                         // If Bs < 4: ...
-                         // Else (Bs == 4): ...
-                         //   If ( p_strong ) ...
-                         //   Else: p0' = ( 2*p1 + p0 + q1 + 2 ) >> 2
-                         // Wait, that's simple weak filtering for Bs=4.
+                         // "For the calculation of the filtered sample values p0' ... the corresponding value of tc is set equal to tc0 + 1" (8.7.2.3 for Chroma? No, 8.7.2.2 Luma for bS=4, weak)
+                         // Wait, 8.7.2.2 says if bS=4 and !strong:
+                         // p0' = (2*p1 + p0 + q1 + 2) >> 2
+                         // No clipping with tc here?
+                         // "The filtered samples p0', p1', p2' are derived ... as follows: p0' = (2*p1 + p0 + q1 + 2) >> 2"
                          let val = (2 * p1 as i32 + p0 as i32 + q1 as i32 + 2) >> 2;
                          row[(x - 1) as usize] = val.clamp(0, 255) as u8;
                      }
@@ -588,7 +528,11 @@ fn filter_luma_edge_horizontal(
              let dq1q0 = (q1 as i32 - q0 as i32).abs();
 
              if dp0q0 < alpha as i32 && dp1p0 < beta as i32 && dq1q0 < beta as i32 {
-                 let tc0_idx = if bs == 4 { 2 } else { if bs > 0 { 1 } else { 0 } };
+                 let tc0_idx = match bs {
+                     1 => 0,
+                     2 => 1,
+                     _ => 2,
+                 };
                  let tc0 = TC0_TABLE[index_a as usize][tc0_idx] as i32;
 
                  let dp2p0 = (p2 as i32 - p0 as i32).abs();
@@ -600,10 +544,7 @@ fn filter_luma_edge_horizontal(
                      let q_strong = dq2q0 < beta as i32 && dp0q0 < alpha_prime;
 
                      if p_strong {
-                         // Check bounds for p3 access (mainly for y-4 overflow protection)
-                         if y < 4 {
-                             continue;
-                         }
+                         if y < 4 { continue; }
                          let p3 = plane.p(x as usize, (y - 4) as usize);
                          plane.mut_slice(PlaneOffset{x: x, y: y-1})[0][0] = ((p2 as i32 + 2 * p1 as i32 + 2 * p0 as i32 + 2 * q0 as i32 + q1 as i32 + 4) >> 3).clamp(0, 255) as u8;
                          plane.mut_slice(PlaneOffset{x: x, y: y-2})[0][0] = ((p2 as i32 + p1 as i32 + p0 as i32 + q0 as i32 + 2) >> 2).clamp(0, 255) as u8;
@@ -768,7 +709,7 @@ fn filter_chroma_edge_vertical(
 
             // Lines 0, 1
             {
-                 let luma_blk_y = (blk_y_chroma * 2); // 0 -> 0. 4 -> 8.
+                 let luma_blk_y = blk_y_chroma * 2; // 0 -> 0. 4 -> 8.
                  let luma_blk_x = blk_x_chroma * 2; // 0 -> 0. 4 -> 8.
 
                  // Get BS for Luma block at (luma_blk_x, luma_blk_y)
@@ -891,7 +832,11 @@ fn apply_chroma_filter_vertical(
 
     // TC0 index logic is same as luma?
     // "tc0 is determined ... as specified in ... using indexA"
-    let tc0_idx = if bs == 4 { 2 } else { 1 }; // For chroma, bs>0 is implied if we are here.
+    let tc0_idx = match bs {
+        1 => 0,
+        2 => 1,
+        _ => 2,
+    };
     let tc0 = TC0_TABLE[index_a as usize][tc0_idx] as i32;
     let tc = tc0 + (if bs == 4 { 1 } else { 0 });
 
@@ -1060,7 +1005,11 @@ fn apply_chroma_filter_horizontal(
     let alpha = ALPHA_TABLE[index_a as usize];
     let beta = BETA_TABLE[index_b as usize];
 
-    let tc0_idx = if bs == 4 { 2 } else { 1 };
+    let tc0_idx = match bs {
+        1 => 0,
+        2 => 1,
+        _ => 2,
+    };
     let tc0 = TC0_TABLE[index_a as usize][tc0_idx] as i32;
     let tc = tc0 + (if bs == 4 { 1 } else { 0 });
 

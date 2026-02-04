@@ -368,6 +368,7 @@ pub struct PcmMb {
     pub pcm_sample_luma: Vec<u8>,
     pub pcm_sample_chroma_cb: Vec<u8>,
     pub pcm_sample_chroma_cr: Vec<u8>,
+    pub qp: u8,
 }
 
 // Macroblock of type I
@@ -379,6 +380,7 @@ pub struct IMb {
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
+    pub qp: u8,
     pub residual: Option<Box<Residual>>,
 }
 
@@ -447,6 +449,8 @@ pub struct PMb {
     pub motion: MbMotion,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
+    pub qp: u8,
+    pub transform_size_8x8_flag: bool,
     pub residual: Option<Box<Residual>>,
 }
 

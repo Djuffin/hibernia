@@ -149,6 +149,8 @@ pub struct SliceHeader {
     pub sp_for_switch_flag: Option<bool>,
     pub slice_qs: Option<u32>,
     pub deblocking_filter_idc: DeblockingFilterIdc,
+    pub slice_alpha_c0_offset_div2: i32,
+    pub slice_beta_offset_div2: i32,
 }
 
 #[derive(Clone)]
@@ -195,6 +197,11 @@ impl Slice {
     pub fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
         let index = mb_addr - self.header.first_mb_in_slice;
         self.macroblocks.get(index as usize)
+    }
+
+    pub fn get_mb_mut(&mut self, mb_addr: MbAddr) -> Option<&mut Macroblock> {
+        let index = mb_addr - self.header.first_mb_in_slice;
+        self.macroblocks.get_mut(index as usize)
     }
 
     pub fn get_mb_neighbor(

@@ -137,7 +137,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not yet implemented"]
     pub fn test_BA1_Sony_D() -> Result<(), String> {
         // Decoding of I slices with the deblocking filter process enabled.
         // All slices are coded as I slices. Each picture contains only one slice.

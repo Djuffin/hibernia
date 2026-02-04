@@ -797,10 +797,8 @@ pub fn parse_slice_header(
     if pps.deblocking_filter_control_present_flag {
         read_value!(input, header.deblocking_filter_idc, ue, 8);
         if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
-            let slice_alpha_c0_offset_div2: i32;
-            let slice_beta_offset_div2: i32;
-            read_value!(input, slice_alpha_c0_offset_div2, se);
-            read_value!(input, slice_beta_offset_div2, se);
+            read_value!(input, header.slice_alpha_c0_offset_div2, se);
+            read_value!(input, header.slice_beta_offset_div2, se);
         }
     }
 
@@ -1012,8 +1010,7 @@ pub fn predict_mv_l0(
     let abs_part_x = mb_loc.x as i32 + part_x as i32;
     let abs_part_y = mb_loc.y as i32 + part_y as i32;
 
-    let get_neighbor_raw =
-        |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
+    let get_neighbor_raw = |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
 
     // Directional segmentation prediction for 16x8 and 8x16
     if part_w == 16 && part_h == 8 {
@@ -1259,7 +1256,7 @@ pub fn parse_p_macroblock(
     slice: &Slice,
     mb_type: PMbType,
 ) -> ParseResult<Macroblock> {
-    let mut block = PMb { mb_type, ..PMb::default() };
+    let mut block = PMb { mb_type, transform_size_8x8_flag: false, qp: 0, ..PMb::default() };
     let this_mb_addr = slice.get_next_mb_addr();
     let num_mb_part = block.NumMbPart();
     let mb_part_pred_mode = block.MbPartPredMode(0);
@@ -1356,7 +1353,7 @@ pub fn parse_i_macroblock(
     mb_type: IMbType,
 ) -> ParseResult<Macroblock> {
     if mb_type == IMbType::I_PCM {
-        let mut block = PcmMb::default();
+        let mut block = PcmMb { qp: 0, ..PcmMb::default() };
         input.align();
 
         let luma_samples =
@@ -1375,7 +1372,7 @@ pub fn parse_i_macroblock(
         }
         Ok(Macroblock::PCM(block))
     } else {
-        let mut block = IMb { mb_type, ..IMb::default() };
+        let mut block = IMb { mb_type, qp: 0, ..IMb::default() };
         let this_mb_addr = slice.get_next_mb_addr();
         if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
             read_value!(input, block.transform_size_8x8_flag, f);

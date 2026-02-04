@@ -187,6 +187,9 @@ fn filter_6tap_center_and_clip(p: &[i32]) -> u8 {
     ((val + 512) >> 10).clamp(0, 255) as u8
 }
 
+/// Buffer for storing integer pixels with padding for 6-tap filtering.
+/// The size is 21x21 to accommodate a 16x16 block with 2 pixels padding on top/left
+/// and 3 pixels padding on bottom/right (required for 6-tap filter).
 pub struct InterpolationBuffer {
     data: [[i16; 21]; 21],
 }

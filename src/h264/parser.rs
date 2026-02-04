@@ -983,7 +983,7 @@ pub fn get_motion_at_coord(
 
     let neighbor_mb = slice.get_mb(mb_addr)?;
     if neighbor_mb.is_intra() {
-        return None;
+        return Some(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default() });
     }
     let motion_info = neighbor_mb.get_motion_info();
 

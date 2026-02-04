@@ -1,0 +1,64 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/main.rs (target/debug/deps/hibernia-0668ced706a8fcd4)
+
+running 47 tests
+test h264::cavlc::tests::test_lookup_coeff_token ... ok
+test h264::cavlc::tests::test_lookup_run_before ... ok
+test h264::cavlc::tests::test_lookup_total_zeros_chroma ... ok
+test h264::cavlc::tests::test_lookup_total_zeros ... ok
+test h264::cavlc::tests::test_parse_residual_refcase1 ... ok
+test h264::cavlc::tests::test_parse_residual ... ok
+test h264::cavlc::tests::test_parse_residual_refcase2 ... ok
+test h264::dpb::tests::test_dpb_bumping_process ... ok
+test h264::dpb::tests::test_dpb_flush_on_idr ... ok
+test h264::dpb::tests::test_dpb_output_order ... ok
+test h264::dpb::tests::test_dpb_store_and_full ... ok
+test h264::dpb::tests::test_find_reference_pictures ... ok
+test h264::inter_pred::tests::test_interpolate_chroma_eighth ... ok
+test h264::inter_pred::tests::test_interpolate_chroma_half ... ok
+test h264::inter_pred::tests::test_interpolate_chroma_integer ... ok
+test h264::inter_pred::tests::test_interpolate_half_pel_horizontal ... ok
+test h264::inter_pred::tests::test_interpolate_integer ... ok
+test h264::inter_pred::tests::test_interpolate_quarter_pel_a ... ok
+test h264::macroblock::tests::test_get_4x4chroma_block_neighbor ... ok
+test h264::macroblock::tests::test_get_4x4luma_block_neighbor ... ok
+test h264::macroblock::tests::test_get_neighbor_mbs ... ok
+test h264::parser::tests::test_count_bytes_till_start_code ... ok
+test h264::parser::tests::test_nal_header ... ok
+test h264::parser::tests::test_pps1 ... ok
+test h264::parser::tests::test_pps2 ... ok
+test h264::parser::tests::test_remove_emulation_if_needed ... ok
+test h264::parser::tests::test_sps1 ... ok
+test h264::parser::tests::test_sps2 ... ok
+test h264::parser::tests::test_slice ... ok
+test h264::rbsp::tests::test_peek_or_pad16 ... ok
+test h264::rbsp::tests::test_se ... ok
+test h264::rbsp::tests::test_ue ... ok
+test h264::residual::tests::test_norm_adjust_4x4 ... ok
+test h264::residual::tests::test_transform_4x4_ex1 ... ok
+test h264::residual::tests::test_transform_4x4_ex2 ... ok
+test h264::residual::tests::test_transform_4x4_ex3 ... ok
+test h264::residual::tests::test_transform_4x4_ex4 ... ok
+test h264::residual::tests::test_transform_4x4_zeros ... ok
+test h264::residual::tests::test_unscan_block_4x4 ... ok
+test h264::residual::tests::test_zig_zag ... ok
+test h264::slice::tests::test_slice_addressing ... ok
+test h264::cavlc::tests::brute_force_test_lookup_coeff_token ... ok
+test tests::test_NL1_Sony_D ... ok
+test h264::cavlc::tests::brute_force_test_lookup_total_zeros ... ok
+test tests::test_BA1_Sony_D ... FAILED
+test tests::test_SVA_NL1_B ... ok
+test tests::test_NL2_Sony_H ... ok
+
+failures:
+
+---- tests::test_BA1_Sony_D stdout ----
+Error: "Frame #0 mismatch: U-plane mismatch at 43,1 (MB:5) : 123 != 122\nV-plane mismatch at 60,31 (MB:40) width_in_mb:11 : 136 != 137\n"
+
+
+failures:
+    tests::test_BA1_Sony_D
+
+test result: FAILED. 46 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.73s
+
+error: test failed, to rerun pass `--bin hibernia`

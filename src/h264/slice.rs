@@ -199,6 +199,11 @@ impl Slice {
         self.macroblocks.get(index as usize)
     }
 
+    pub fn get_mb_mut(&mut self, mb_addr: MbAddr) -> Option<&mut Macroblock> {
+        let index = mb_addr - self.header.first_mb_in_slice;
+        self.macroblocks.get_mut(index as usize)
+    }
+
     pub fn get_mb_neighbor(
         &self,
         mb_addr: MbAddr,

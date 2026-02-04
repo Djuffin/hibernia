@@ -275,6 +275,23 @@ impl Decoder {
         self.construct_ref_pic_list0(slice)?;
 
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
+        for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
+            if let Some(mb) = slice.get_mb_mut(mb_addr) {
+                match mb {
+                    Macroblock::I(m) => {
+                        qp = (qp + m.mb_qp_delta).clamp(0, 51);
+                        m.qp_y = qp as u8;
+                    }
+                    Macroblock::P(m) => {
+                        qp = (qp + m.mb_qp_delta).clamp(0, 51);
+                        m.qp_y = qp as u8;
+                    }
+                    Macroblock::PCM(_) => {}
+                }
+            }
+        }
+
+        let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
         let split_idx = self.dpb.pictures.len() - 1;
         let (references, current) = self.dpb.pictures.split_at_mut(split_idx);
         let frame = &mut current[0].picture.frame;

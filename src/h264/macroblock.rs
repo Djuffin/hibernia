@@ -375,6 +375,7 @@ pub struct IMb {
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
+    pub qp_y: u8,
     pub residual: Option<Box<Residual>>,
 }
 
@@ -443,6 +444,7 @@ pub struct PMb {
     pub motion: MbMotion,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,
+    pub qp_y: u8,
     pub residual: Option<Box<Residual>>,
 }
 
@@ -555,28 +557,27 @@ impl Macroblock {
         }
     }
 
+    pub fn get_qp_y(&self) -> u8 {
+        match self {
+            Macroblock::I(mb) => mb.qp_y,
+            Macroblock::P(mb) => mb.qp_y,
+            Macroblock::PCM(_) => 0,
+        }
+    }
+
+    pub fn set_qp_y(&mut self, qp: u8) {
+        match self {
+            Macroblock::I(mb) => mb.qp_y = qp,
+            Macroblock::P(mb) => mb.qp_y = qp,
+            Macroblock::PCM(_) => {}
+        }
+    }
+
     pub fn get_mb_qp_delta(&self) -> i32 {
         match self {
             Macroblock::I(mb) => mb.mb_qp_delta,
             Macroblock::P(mb) => mb.mb_qp_delta,
-            Macroblock::PCM(_) => 0, // Should result in QP=0 ultimately if we handle it correctly.
-            // Actually, mb_qp_delta is applied to base QP.
-            // For PCM, QP should be 0.
-            // If we use this delta, QP = base + delta.
-            // We need to return a delta such that base + delta = 0?
-            // Or we should handle QP calculation specifically for PCM.
-            // However, typical usage in deblocking is:
-            // qp_p = ... + mb_qp_delta
-            // If we assume decoder.rs handles PCM QP correctly (it doesn't use mb_qp_delta for PCM, it hardcodes logic? No, wait)
-            // decoder.rs:
-            // Macroblock::PCM(block) => { ... }
-            // It doesn't calculate QP for PCM. It just copies samples.
-            // But deblocking needs QP.
-            // "The value of QpY for I_PCM macroblocks is equal to 0."
-            // So if I return 0 here, and the caller adds base QP, it will be wrong (base QP != 0 usually).
-            // So I should expose `get_qp` or let the caller handle PCM.
-            // Or `get_mb_qp_delta` is not appropriate for PCM.
-            // But for I/P, it is fine.
+            Macroblock::PCM(_) => 0,
         }
     }
 }

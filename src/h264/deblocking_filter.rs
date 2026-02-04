@@ -186,7 +186,12 @@ fn get_boundary_strength_luma(
     let curr_part = curr_motion.partitions[curr_grid_y][curr_grid_x];
     let neighbor_part = neighbor_motion.partitions[neighbor_grid_y][neighbor_grid_x];
 
-    if curr_part.ref_idx_l0 != neighbor_part.ref_idx_l0 {
+    // Check reference pictures.
+    // Compare the pictures they point to, not just indices.
+    let pic_curr = slice.ref_pic_list0.get(curr_part.ref_idx_l0 as usize);
+    let pic_neighbor = slice.ref_pic_list0.get(neighbor_part.ref_idx_l0 as usize);
+
+    if pic_curr != pic_neighbor {
         return 1;
     }
 
@@ -200,22 +205,33 @@ fn get_boundary_strength_luma(
 }
 
 fn check_non_zero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
+    let check_res = |res: &crate::h264::residual::Residual| -> bool {
+        if res.has_separate_luma_dc() {
+            if res.dc_level16x16[blk_idx as usize] != 0 {
+                return true;
+            }
+            res.ac_level16x16[blk_idx as usize].iter().any(|&c| c != 0)
+        } else {
+            res.luma_level4x4[blk_idx as usize].iter().any(|&c| c != 0)
+        }
+    };
+
     match mb {
         Macroblock::I(m) => {
             if let Some(res) = &m.residual {
-                res.get_nc(blk_idx, ColorPlane::Y) > 0
+                check_res(res)
             } else {
                 false
             }
         }
         Macroblock::P(m) => {
             if let Some(res) = &m.residual {
-                res.get_nc(blk_idx, ColorPlane::Y) > 0
+                check_res(res)
             } else {
                 false
             }
         }
-        Macroblock::PCM(_) => false,
+        Macroblock::PCM(_) => true,
     }
 }
 
@@ -285,11 +301,7 @@ fn filter_luma_edge_vertical(
         // Get QP values
         let curr_mb = slice.get_mb(mb_addr).unwrap();
         let get_qp = |mb: &Macroblock| -> i32 {
-            if let Macroblock::PCM(_) = mb {
-                0
-            } else {
-                (mb.get_mb_qp_delta() + slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta).clamp(0, 51)
-            }
+            mb.get_qp_y() as i32
         };
 
         let qp_p = if let Some(addr) = neighbor_mb_addr {
@@ -483,11 +495,7 @@ fn filter_luma_edge_horizontal(
 
         let curr_mb = slice.get_mb(mb_addr).unwrap();
         let get_qp = |mb: &Macroblock| -> i32 {
-            if let Macroblock::PCM(_) = mb {
-                0
-            } else {
-                (mb.get_mb_qp_delta() + slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta).clamp(0, 51)
-            }
+            mb.get_qp_y() as i32
         };
 
         let qp_p = if let Some(addr) = neighbor_mb_addr {
@@ -744,7 +752,7 @@ fn filter_chroma_edge_vertical(
                  );
 
                  if bs > 0 {
-                     apply_chroma_filter_vertical(slice, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 0, 2, bs, mb_addr, neighbor_mb_addr);
+                     apply_chroma_filter_vertical(slice, plane_idx, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 0, 2, bs, mb_addr, neighbor_mb_addr);
                  }
             }
 
@@ -781,7 +789,7 @@ fn filter_chroma_edge_vertical(
                  );
 
                  if bs > 0 {
-                     apply_chroma_filter_vertical(slice, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 2, 2, bs, mb_addr, neighbor_mb_addr);
+                     apply_chroma_filter_vertical(slice, plane_idx, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 2, 2, bs, mb_addr, neighbor_mb_addr);
                  }
             }
         }
@@ -790,6 +798,7 @@ fn filter_chroma_edge_vertical(
 
 fn apply_chroma_filter_vertical(
     slice: &Slice,
+    plane_idx: usize,
     plane: &mut v_frame::plane::Plane<u8>,
     mb_x: u32, mb_y: u32,
     blk_x: u32, blk_y: u32,
@@ -803,8 +812,14 @@ fn apply_chroma_filter_vertical(
         if let Macroblock::PCM(_) = mb {
             0
         } else {
-            let qp_y = (mb.get_mb_qp_delta() + slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta).clamp(0, 51);
-            crate::h264::decoder::get_chroma_qp(qp_y, slice.pps.chroma_qp_index_offset, 0)
+            let qp_y = mb.get_qp_y() as i32;
+            let offset = if plane_idx == 1 {
+                slice.pps.chroma_qp_index_offset
+            } else {
+                slice.pps.second_chroma_qp_index_offset
+            };
+            let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
+            crate::h264::decoder::get_chroma_qp(qp_y, offset, qp_bd_offset_c)
         }
     };
 
@@ -924,7 +939,7 @@ fn filter_chroma_edge_horizontal(
                  );
 
                  if bs > 0 {
-                     apply_chroma_filter_horizontal(slice, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 0, 2, bs, mb_addr, neighbor_mb_addr);
+                     apply_chroma_filter_horizontal(slice, plane_idx, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 0, 2, bs, mb_addr, neighbor_mb_addr);
                  }
             }
 
@@ -961,7 +976,7 @@ fn filter_chroma_edge_horizontal(
                  );
 
                  if bs > 0 {
-                     apply_chroma_filter_horizontal(slice, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 2, 2, bs, mb_addr, neighbor_mb_addr);
+                     apply_chroma_filter_horizontal(slice, plane_idx, plane, mb_x_chroma, mb_y_chroma, blk_x_chroma, blk_y_chroma, 2, 2, bs, mb_addr, neighbor_mb_addr);
                  }
             }
         }
@@ -970,6 +985,7 @@ fn filter_chroma_edge_horizontal(
 
 fn apply_chroma_filter_horizontal(
     slice: &Slice,
+    plane_idx: usize,
     plane: &mut v_frame::plane::Plane<u8>,
     mb_x: u32, mb_y: u32,
     blk_x: u32, blk_y: u32,
@@ -983,8 +999,14 @@ fn apply_chroma_filter_horizontal(
         if let Macroblock::PCM(_) = mb {
             0
         } else {
-            let qp_y = (mb.get_mb_qp_delta() + slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta).clamp(0, 51);
-            crate::h264::decoder::get_chroma_qp(qp_y, slice.pps.chroma_qp_index_offset, 0)
+            let qp_y = mb.get_qp_y() as i32;
+            let offset = if plane_idx == 1 {
+                slice.pps.chroma_qp_index_offset
+            } else {
+                slice.pps.second_chroma_qp_index_offset
+            };
+            let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
+            crate::h264::decoder::get_chroma_qp(qp_y, offset, qp_bd_offset_c)
         }
     };
 

@@ -153,4 +153,22 @@ mod tests {
         // h264 (Constrained Baseline), yuv420p(progressive), 176x144
         test_decoding_against_gold("data/NL2_Sony_H.jsv", "data/NL2_Sony_H.y4m")
     }
+
+    #[test]
+    #[ignore]
+    pub fn test_SVA_BA2_D() -> Result<(), String> {
+        // Decoding of I or P slices. Each picture contains only one slice.
+        // deblocking filter process enabled.
+        // pic_order_cnt_type is equal to 2.
+        test_decoding_against_gold("data/SVA_BA2_D.264", "data/SVA_BA2_D_rec.y4m")
+    }
+
+    #[test]
+    #[ignore]
+    pub fn test_BA2_Sony_F() -> Result<(), String> {
+        // Decoding of I or P slices. Each picture contains only one slice.
+        // deblocking filter process enabled.
+        // pic_order_cnt_type is equal to 0.
+        test_decoding_against_gold("data/BA2_Sony_F.jsv", "data/BA2_Sony_F.y4m")
+    }
 }

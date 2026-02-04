@@ -1,5 +1,4 @@
 use std::cmp::{max, min, Ordering};
-use std::collections::HashMap;
 use std::io::Read;
 
 use crate::h264::dpb::{DpbMarking, ReferenceDisposition};
@@ -42,25 +41,29 @@ pub enum DecodingError {
 
 #[derive(Clone, Debug, Default)]
 pub struct DecoderContext {
-    sps: HashMap<u8, sps::SequenceParameterSet>,
-    pps: HashMap<u8, pps::PicParameterSet>,
+    sps: Vec<sps::SequenceParameterSet>,
+    pps: Vec<pps::PicParameterSet>,
 }
 
 impl DecoderContext {
     pub fn get_sps(&self, id: u8) -> Option<&sps::SequenceParameterSet> {
-        self.sps.get(&id)
+        self.sps.iter().find(|x| x.seq_parameter_set_id == id)
     }
 
     pub fn put_sps(&mut self, sps: sps::SequenceParameterSet) {
-        self.sps.insert(sps.seq_parameter_set_id, sps);
+        let id = sps.seq_parameter_set_id;
+        self.sps.retain(|x| x.seq_parameter_set_id != id);
+        self.sps.push(sps);
     }
 
     pub fn get_pps(&self, id: u8) -> Option<&pps::PicParameterSet> {
-        self.pps.get(&id)
+        self.pps.iter().find(|x| x.seq_parameter_set_id == id)
     }
 
     pub fn put_pps(&mut self, pps: pps::PicParameterSet) {
-        self.pps.insert(pps.pic_parameter_set_id, pps);
+        let id = pps.seq_parameter_set_id;
+        self.pps.retain(|x| x.seq_parameter_set_id != id);
+        self.pps.push(pps);
     }
 }
 
@@ -126,8 +129,12 @@ impl Decoder {
                     data.len() - cur_byte_index
                 };
             let nal_buffer = &data[cur_byte_index..cur_byte_index + nal_size_bytes];
-            let nal_cow = parser::remove_emulation_if_needed(nal_buffer);
-            let mut unit_input = parser::BitReader::new(&nal_cow);
+            let nal_vec = parser::remove_emulation_if_needed(nal_buffer);
+            let mut unit_input = if nal_vec.is_empty() {
+                parser::BitReader::new(nal_buffer)
+            } else {
+                parser::BitReader::new(nal_vec.as_slice())
+            };
             input.skip((nal_size_bytes * 8) as u32).map_err(parse_error_handler)?;
 
             match nal.nal_unit_type {

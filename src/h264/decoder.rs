@@ -20,7 +20,7 @@ use super::{nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
 use v_frame::frame;
-use v_frame::plane::{self, PlaneMutSlice, PlaneOffset};
+use v_frame::plane::{self, PlaneOffset, PlaneSlice};
 
 pub type VideoFrame = frame::Frame<u8>;
 type Plane = v_frame::plane::Plane<u8>;
@@ -267,131 +267,6 @@ impl Decoder {
         self.output_frames.clear();
     }
 
-    fn process_pcm_mb(
-        frame: &mut VideoFrame,
-        mb_loc: Point,
-        block: &macroblock::PcmMb,
-    ) {
-        let y_plane = &mut frame.planes[0];
-        let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(mb_loc));
-
-        for (idx, row) in plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate() {
-            let row_range = idx * tables::MB_WIDTH..(idx + 1) * tables::MB_WIDTH;
-            row[..tables::MB_WIDTH].copy_from_slice(&block.pcm_sample_luma[row_range]);
-        }
-    }
-
-    fn process_i_mb(
-        slice: &Slice,
-        mb_addr: u32,
-        mb_loc: Point,
-        frame: &mut VideoFrame,
-        imb: &IMb,
-        qp: &mut i32,
-    ) -> Result<(), DecodingError> {
-        *qp = (*qp + imb.mb_qp_delta).clamp(0, 51);
-        let qp_val: u8 = (*qp).try_into().unwrap();
-        let residuals = if let Some(residual) = imb.residual.as_ref() {
-            residual.restore(ColorPlane::Y, qp_val)
-        } else {
-            Vec::new()
-        };
-
-        let luma_plane = &mut frame.planes[0];
-        let luma_prediction_mode = imb.MbPartPredMode(0);
-        info!(
-            "MB {mb_addr} {qp} Luma: {:?} Chroma: {:?}",
-            luma_prediction_mode, imb.intra_chroma_pred_mode
-        );
-        match luma_prediction_mode {
-            MbPredictionMode::None => panic!("impossible pred mode"),
-            MbPredictionMode::Intra_4x4 => {
-                render_luma_4x4_intra_prediction(
-                    slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
-                );
-            }
-            MbPredictionMode::Intra_8x8 => return Err(DecodingError::MisformedData("8x8 pred mode not supported".to_string())),
-            MbPredictionMode::Intra_16x16 => {
-                render_luma_16x16_intra_prediction(
-                    slice,
-                    mb_addr,
-                    mb_loc,
-                    luma_plane,
-                    mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
-                    &residuals,
-                );
-            }
-            MbPredictionMode::Pred_L0 => return Err(DecodingError::MisformedData("Pred_L0 in I_MB".to_string())),
-            MbPredictionMode::Pred_L1 => return Err(DecodingError::MisformedData("Pred_L1 in I_MB".to_string())),
-        }
-
-        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
-            let chroma_qp =
-                get_chroma_qp(*qp, slice.pps.chroma_qp_index_offset, 0)
-                    .try_into()
-                    .unwrap();
-            let chroma_plane = &mut frame.planes[plane_name as usize];
-            let residuals = if let Some(residual) = imb.residual.as_ref() {
-                residual.restore(plane_name, chroma_qp)
-            } else {
-                Vec::new()
-            };
-            render_chroma_intra_prediction(
-                slice,
-                mb_addr,
-                mb_loc,
-                chroma_plane,
-                imb.intra_chroma_pred_mode,
-                &residuals,
-            )
-        }
-        Ok(())
-    }
-
-    fn process_p_mb(
-        slice: &Slice,
-        mb_loc: Point,
-        frame: &mut VideoFrame,
-        block: &PMb,
-        references: &[DpbPicture],
-        qp: &mut i32,
-        interpolation_buffer: &mut InterpolationBuffer,
-    ) {
-        *qp = (*qp + block.mb_qp_delta).clamp(0, 51);
-        let qp_val: u8 = (*qp).try_into().unwrap();
-        let residuals = if let Some(residual) = block.residual.as_ref() {
-            residual.restore(ColorPlane::Y, qp_val)
-        } else {
-            Vec::new()
-        };
-
-        render_luma_inter_prediction(
-            slice,
-            block,
-            mb_loc,
-            frame,
-            &residuals,
-            references,
-            interpolation_buffer,
-        );
-
-        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
-            let chroma_qp =
-                get_chroma_qp(*qp, slice.pps.chroma_qp_index_offset, 0)
-                    .try_into()
-                    .unwrap();
-            let residuals = if let Some(residual) = block.residual.as_ref() {
-                residual.restore(plane_name, chroma_qp)
-            } else {
-                Vec::new()
-            };
-            render_chroma_inter_prediction(
-                slice, block, mb_loc, plane_name, frame, &residuals,
-                references,
-            );
-        }
-    }
-
     fn process_slice(&mut self, slice: &mut Slice) -> Result<(), DecodingError> {
         if self.dpb.pictures.is_empty() {
             return Err(DecodingError::Wtf);
@@ -407,19 +282,111 @@ impl Decoder {
             let mb_loc = slice.get_mb_location(mb_addr);
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
-                    Macroblock::PCM(block) => Self::process_pcm_mb(frame, mb_loc, block),
-                    Macroblock::I(imb) => {
-                        Self::process_i_mb(slice, mb_addr, mb_loc, frame, imb, &mut qp)?
+                    Macroblock::PCM(block) => {
+                        let y_plane = &mut frame.planes[0];
+                        let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(mb_loc));
+
+                        for (idx, row) in
+                            plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
+                        {
+                            let row_range = idx * tables::MB_WIDTH..(idx + 1) * tables::MB_WIDTH;
+                            row[..tables::MB_WIDTH]
+                                .copy_from_slice(&block.pcm_sample_luma[row_range]);
+                        }
                     }
-                    Macroblock::P(block) => Self::process_p_mb(
-                        slice,
-                        mb_loc,
-                        frame,
-                        block,
-                        references,
-                        &mut qp,
-                        &mut self.interpolation_buffer,
-                    ),
+                    Macroblock::I(imb) => {
+                        qp = (qp + imb.mb_qp_delta).clamp(0, 51);
+                        let qp = qp.try_into().unwrap();
+                        let residuals = if let Some(residual) = imb.residual.as_ref() {
+                            residual.restore(ColorPlane::Y, qp)
+                        } else {
+                            Vec::new()
+                        };
+
+                        let luma_plane = &mut frame.planes[0];
+                        let luma_prediction_mode = imb.MbPartPredMode(0);
+                        info!(
+                            "MB {mb_addr} {qp} Luma: {:?} Chroma: {:?}",
+                            luma_prediction_mode, imb.intra_chroma_pred_mode
+                        );
+                        match luma_prediction_mode {
+                            MbPredictionMode::None => panic!("impossible pred mode"),
+                            MbPredictionMode::Intra_4x4 => {
+                                render_luma_4x4_intra_prediction(
+                                    slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
+                                );
+                            }
+                            MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
+                            MbPredictionMode::Intra_16x16 => {
+                                render_luma_16x16_intra_prediction(
+                                    slice,
+                                    mb_addr,
+                                    mb_loc,
+                                    luma_plane,
+                                    mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
+                                    &residuals,
+                                );
+                            }
+                            MbPredictionMode::Pred_L0 => todo!(),
+                            MbPredictionMode::Pred_L1 => todo!(),
+                        }
+
+                        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
+                            let chroma_qp =
+                                get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0)
+                                    .try_into()
+                                    .unwrap();
+                            let chroma_plane = &mut frame.planes[plane_name as usize];
+                            let residuals = if let Some(residual) = imb.residual.as_ref() {
+                                residual.restore(plane_name, chroma_qp)
+                            } else {
+                                Vec::new()
+                            };
+                            render_chroma_intra_prediction(
+                                slice,
+                                mb_addr,
+                                mb_loc,
+                                chroma_plane,
+                                imb.intra_chroma_pred_mode,
+                                &residuals,
+                            )
+                        }
+                    }
+                    Macroblock::P(block) => {
+                        qp = (qp + block.mb_qp_delta).clamp(0, 51);
+                        let qp = qp.try_into().unwrap();
+                        let residuals = if let Some(residual) = block.residual.as_ref() {
+                            residual.restore(ColorPlane::Y, qp)
+                        } else {
+                            Vec::new()
+                        };
+
+                        render_luma_inter_prediction(
+                            slice,
+                            block,
+                            mb_loc,
+                            frame,
+                            &residuals,
+                            references,
+                            &mut self.interpolation_buffer,
+                        );
+
+                        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
+                            let chroma_qp =
+                                get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0)
+                                    .try_into()
+                                    .unwrap();
+                            let residuals = if let Some(residual) = block.residual.as_ref() {
+                                residual.restore(plane_name, chroma_qp)
+                            } else {
+                                Vec::new()
+                            };
+                            render_chroma_inter_prediction(
+                                slice, block, mb_loc, plane_name, frame, &residuals,
+                                references,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -835,166 +802,6 @@ pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -
     qp_c + qp_bd_offset_c
 }
 
-#[inline]
-fn weighted_avg(double: u8, single_a: u8, single_b: u8) -> u8 {
-    ((2 * (double as u16) + (single_a as u16) + (single_b as u16) + 2) >> 2) as u8
-}
-
-#[inline]
-fn avg(a: u8, b: u8) -> u8 {
-    (((a as u16) + (b as u16) + 1) >> 1) as u8
-}
-
-fn pred_luma_4x4_vertical(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let src = ctx.top4();
-    for row in target_slice.rows_iter_mut().take(4) {
-        row[0..4].copy_from_slice(src);
-    }
-}
-
-fn pred_luma_4x4_horizontal(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let src = ctx.left4();
-    for (idx, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-        row[0..4].fill(src[idx]);
-    }
-}
-
-fn pred_luma_4x4_dc(
-    slice: &Slice,
-    mb_addr: MbAddr,
-    blk_idx: u8,
-    ctx: &Surroundings4x4,
-    target_slice: &mut PlaneMutSlice<u8>,
-) {
-    let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
-    let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
-        Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
-    } else {
-        None
-    };
-
-    let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
-    let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
-        Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
-    } else {
-        None
-    };
-
-    let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
-    if sum_a.is_some() && sum_b.is_some() {
-        sum = (sum + 4) >> 3;
-    } else if sum_a.is_some() != sum_b.is_some() {
-        sum = (sum + 2) >> 2;
-    } else {
-        sum = 1 << 7;
-    }
-
-    for row in target_slice.rows_iter_mut().take(4) {
-        row[0..4].fill(sum as u8);
-    }
-}
-
-fn pred_luma_4x4_diagonal_down_left(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let top_row = &ctx.top_row[1..=8];
-    for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-        for (x, value) in row.iter_mut().take(4).enumerate() {
-            let i = x + y;
-            *value = if i == 6 {
-                weighted_avg(top_row[7], top_row[7], top_row[6])
-            } else {
-                weighted_avg(top_row[i + 1], top_row[i], top_row[i + 2])
-            };
-        }
-    }
-}
-
-fn pred_luma_4x4_diagonal_down_right(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let top = &ctx.top_row;
-    let left = &ctx.left_column;
-    for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-        for (x, value) in row.iter_mut().take(4).enumerate() {
-            *value = match x.cmp(&y) {
-                Ordering::Greater => {
-                    let i = 1 + x - y;
-                    weighted_avg(top[i - 1], top[i - 2], top[i])
-                }
-                Ordering::Less => {
-                    let i = 1 + y - x;
-                    weighted_avg(left[i - 1], left[i - 2], left[i])
-                }
-                Ordering::Equal => weighted_avg(top[0], top[1], left[1]),
-            }
-        }
-    }
-}
-
-fn pred_luma_4x4_vertical_right(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let left = &ctx.left_column;
-    let top = &ctx.top_row;
-    for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-        for (x, value) in row.iter_mut().take(4).enumerate() {
-            let z = 2 * (x as isize) - (y as isize);
-            let i = 1 + x - (y >> 1);
-            *value = match z {
-                0 | 2 | 4 | 6 => avg(top[i], top[i - 1]),
-                1 | 3 | 5 => weighted_avg(top[i - 1], top[i - 2], top[i]),
-                -1 => weighted_avg(top[0], top[1], left[1]),
-                _ => {
-                    let y = y + 1;
-                    weighted_avg(left[y - 2], left[y - 1], left[y - 3])
-                }
-            };
-        }
-    }
-}
-
-fn pred_luma_4x4_horizontal_down(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let left = &ctx.left_column;
-    let top = &ctx.top_row;
-    for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-        for (x, value) in row.iter_mut().take(4).enumerate() {
-            let z = 2 * (y as isize) - (x as isize);
-            let i = 1 + y - (x >> 1);
-            *value = match z {
-                0 | 2 | 4 | 6 => avg(left[i - 1], left[i]),
-                1 | 3 | 5 => weighted_avg(left[i - 1], left[i - 2], left[i]),
-                -1 => weighted_avg(top[0], left[1], top[1]),
-                _ => weighted_avg(top[x - 1], top[x], top[x - 2]),
-            };
-        }
-    }
-}
-
-fn pred_luma_4x4_vertical_left(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let top_row = &ctx.top_row[1..];
-    for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-        for (x, value) in row.iter_mut().take(4).enumerate() {
-            let i = x + (y >> 1);
-            *value = if y % 2 == 0 {
-                avg(top_row[i], top_row[i + 1])
-            } else {
-                weighted_avg(top_row[i + 1], top_row[i + 2], top_row[i])
-            };
-        }
-    }
-}
-
-fn pred_luma_4x4_horizontal_up(ctx: &Surroundings4x4, target_slice: &mut PlaneMutSlice<u8>) {
-    let left = ctx.left4();
-    for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-        for (x, value) in row.iter_mut().take(4).enumerate() {
-            let z = x + 2 * y;
-            let i = y + (x >> 1);
-            *value = match z {
-                0 | 2 | 4 => avg(left[i], left[i + 1]),
-                1 | 3 => weighted_avg(left[i + 1], left[i], left[i + 2]),
-                5 => weighted_avg(left[3], left[3], left[2]),
-                _ => left[3],
-            };
-        }
-    }
-}
-
 // Section 8.3.1.1 Derivation process for Intra4x4PredMode
 pub fn render_luma_4x4_intra_prediction(
     slice: &Slice,
@@ -1004,6 +811,16 @@ pub fn render_luma_4x4_intra_prediction(
     target: &mut Plane,
     residuals: &[Block4x4],
 ) {
+    #[inline]
+    fn weighted_avg(double: u8, single_a: u8, single_b: u8) -> u8 {
+        ((2 * (double as u16) + (single_a as u16) + (single_b as u16) + 2) >> 2) as u8
+    }
+
+    #[inline]
+    fn avg(a: u8, b: u8) -> u8 {
+        (((a as u16) + (b as u16) + 1) >> 1) as u8
+    }
+
     let mut ctx = Surroundings4x4::default();
     let has_c_mb_neighbor = slice.has_mb_neighbor(mb_addr, MbNeighborName::C);
     for blk_idx in 0..16 {
@@ -1021,31 +838,150 @@ pub fn render_luma_4x4_intra_prediction(
         let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
         match mode {
             Intra_4x4_SamplePredMode::Vertical => {
-                pred_luma_4x4_vertical(&ctx, &mut target_slice);
+                // Section 8.3.1.2.1 Specification of Intra_4x4_Vertical prediction mode
+                let src = ctx.top4();
+                for row in target_slice.rows_iter_mut().take(4) {
+                    row[0..4].copy_from_slice(src);
+                }
             }
             Intra_4x4_SamplePredMode::Horizontal => {
-                pred_luma_4x4_horizontal(&ctx, &mut target_slice);
+                // Section 8.3.1.2.2 Specification of Intra_4x4_Horizontal prediction mode
+                let src = ctx.left4();
+                for (idx, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    row[0..4].fill(src[idx]);
+                }
             }
             Intra_4x4_SamplePredMode::DC => {
-                pred_luma_4x4_dc(slice, mb_addr, blk_idx, &ctx, &mut target_slice);
+                // Section 8.3.1.2.3 Specification of Intra_4x4_DC prediction mode
+                // Calculate the sum of all the values at the left of the current macroblock
+                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
+                let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+                    Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
+                } else {
+                    None
+                };
+
+                // Calculate the sum of all the values at the top of the current macroblock
+                let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
+                let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                    Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
+                } else {
+                    None
+                };
+
+                let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
+                if sum_a.is_some() && sum_b.is_some() {
+                    sum = (sum + 4) >> 3;
+                } else if sum_a.is_some() != sum_b.is_some() {
+                    sum = (sum + 2) >> 2;
+                } else {
+                    sum = 1 << 7;
+                }
+
+                for row in target_slice.rows_iter_mut().take(4) {
+                    row[0..4].fill(sum as u8);
+                }
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Left => {
-                pred_luma_4x4_diagonal_down_left(&ctx, &mut target_slice);
+                // Section 8.3.1.2.4 Specification of Intra_4x4_Diagonal_Down_Left prediction mode
+                let top_row = &ctx.top_row[1..=8];
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        let i = x + y;
+                        *value = if i == 6 {
+                            weighted_avg(top_row[7], top_row[7], top_row[6])
+                        } else {
+                            weighted_avg(top_row[i + 1], top_row[i], top_row[i + 2])
+                        };
+                    }
+                }
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Right => {
-                pred_luma_4x4_diagonal_down_right(&ctx, &mut target_slice);
+                // Section 8.3.1.2.5 Specification of Intra_4x4_Diagonal_Down_Right prediction mode
+                let top = &ctx.top_row;
+                let left = &ctx.left_column;
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        *value = match x.cmp(&y) {
+                            Ordering::Greater => {
+                                let i = 1 + x - y;
+                                weighted_avg(top[i - 1], top[i - 2], top[i])
+                            }
+                            Ordering::Less => {
+                                let i = 1 + y - x;
+                                weighted_avg(left[i - 1], left[i - 2], left[i])
+                            }
+                            Ordering::Equal => weighted_avg(top[0], top[1], left[1]),
+                        }
+                    }
+                }
             }
             Intra_4x4_SamplePredMode::Vertical_Right => {
-                pred_luma_4x4_vertical_right(&ctx, &mut target_slice);
+                // Section 8.3.1.2.6 Specification of Intra_4x4_Vertical_Right prediction mode
+                let left = &ctx.left_column;
+                let top = &ctx.top_row;
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        let z = 2 * (x as isize) - (y as isize);
+                        let i = 1 + x - (y >> 1);
+                        *value = match z {
+                            0 | 2 | 4 | 6 => avg(top[i], top[i - 1]),
+                            1 | 3 | 5 => weighted_avg(top[i - 1], top[i - 2], top[i]),
+                            -1 => weighted_avg(top[0], top[1], left[1]),
+                            _ => {
+                                let y = y + 1;
+                                weighted_avg(left[y - 2], left[y - 1], left[y - 3])
+                            }
+                        };
+                    }
+                }
             }
             Intra_4x4_SamplePredMode::Horizontal_Down => {
-                pred_luma_4x4_horizontal_down(&ctx, &mut target_slice);
+                // Section 8.3.1.2.7 Specification of Intra_4x4_Horizontal_Down prediction mode
+                let left = &ctx.left_column;
+                let top = &ctx.top_row;
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        let z = 2 * (y as isize) - (x as isize);
+                        let i = 1 + y - (x >> 1);
+                        *value = match z {
+                            0 | 2 | 4 | 6 => avg(left[i - 1], left[i]),
+                            1 | 3 | 5 => weighted_avg(left[i - 1], left[i - 2], left[i]),
+                            -1 => weighted_avg(top[0], left[1], top[1]),
+                            _ => weighted_avg(top[x - 1], top[x], top[x - 2]),
+                        };
+                    }
+                }
             }
             Intra_4x4_SamplePredMode::Vertical_Left => {
-                pred_luma_4x4_vertical_left(&ctx, &mut target_slice);
+                // Section 8.3.1.2.8 Specification of Intra_4x4_Vertical_Left prediction mode
+                let top_row = &ctx.top_row[1..];
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        let i = x + (y >> 1);
+                        *value = if y % 2 == 0 {
+                            avg(top_row[i], top_row[i + 1])
+                        } else {
+                            weighted_avg(top_row[i + 1], top_row[i + 2], top_row[i])
+                        };
+                    }
+                }
             }
             Intra_4x4_SamplePredMode::Horizontal_Up => {
-                pred_luma_4x4_horizontal_up(&ctx, &mut target_slice);
+                // Section 8.3.1.2.9 Specification of Intra_4x4_Horizontal_Up prediction mode
+                let left = ctx.left4();
+                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
+                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                        let z = x + 2 * y;
+                        let i = y + (x >> 1);
+                        *value = match z {
+                            0 | 2 | 4 => avg(left[i], left[i + 1]),
+                            1 | 3 => weighted_avg(left[i + 1], left[i], left[i + 2]),
+                            5 => weighted_avg(left[3], left[3], left[2]),
+                            _ => left[3],
+                        };
+                    }
+                }
             }
         }
 

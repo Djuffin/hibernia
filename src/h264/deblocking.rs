@@ -660,7 +660,7 @@ fn get_bs(
     }
 
     // Condition 3: Motion vectors / Reference frames
-    if check_motion_discontinuity(mb_p, blk_p_idx, mb_q, blk_q_idx) {
+    if check_motion_discontinuity(slice, mb_p, blk_p_idx, mb_q, blk_q_idx) {
         return 1;
     }
 
@@ -714,6 +714,7 @@ fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
 }
 
 fn check_motion_discontinuity(
+    slice: &Slice,
     mb_p: &Macroblock,
     blk_p_idx: usize,
     mb_q: &Macroblock,
@@ -738,9 +739,18 @@ fn check_motion_discontinuity(
     match (p_part, q_part) {
         (Some(pp), Some(qq)) => {
             // Check ref index
-            if pp.ref_idx_l0 != qq.ref_idx_l0 {
+            // If reference pictures are different, bS = 1.
+            let ref_p = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize);
+            let ref_q = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize);
+
+            // If either index is out of bounds (should not happen in valid streams), treat as different?
+            // Or if both out of bounds, treat as same?
+            // Assuming valid stream, ref_idx points to valid entry.
+            // If they point to different DPB indices, they are different pictures.
+            if ref_p != ref_q {
                 return true;
             }
+
             // Check MV difference >= 4 (quarter pel units)
             let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
             let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();

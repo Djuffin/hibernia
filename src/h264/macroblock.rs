@@ -517,6 +517,14 @@ impl Macroblock {
         matches!(self, Macroblock::I(_) | Macroblock::PCM(_))
     }
 
+    pub fn transform_size_8x8_flag(&self) -> bool {
+        match self {
+            Macroblock::I(m) => m.transform_size_8x8_flag,
+            Macroblock::P(m) => m.transform_size_8x8_flag,
+            Macroblock::PCM(_) => false,
+        }
+    }
+
     // Calculates nC for the block withing the macroblock
     pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         // Section 9.2.1

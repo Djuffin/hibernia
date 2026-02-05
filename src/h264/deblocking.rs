@@ -70,12 +70,7 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
         filter_luma_edge(slice, frame, mb_addr, mb_xy, 0, true);
     }
     // Internal vertical edges 1, 2, 3
-    // If transform_8x8 is enabled, we skip edges 1 and 3.
-    let transform_8x8 = match mb {
-        Macroblock::I(m) => m.transform_size_8x8_flag,
-        Macroblock::P(m) => m.transform_size_8x8_flag,
-        _ => false,
-    };
+    let transform_8x8 = mb.transform_size_8x8_flag();
 
     if !transform_8x8 {
         filter_luma_edge(slice, frame, mb_addr, mb_xy, 1, true);
@@ -670,31 +665,45 @@ fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
     // Check if the residual block has any non-zero coefficients.
     // This implements the check "contains non-zero transform coefficient levels" from Clause 8.7.2.1.
 
-    match mb {
-        Macroblock::I(m) => {
-            if let Some(res) = &m.residual {
-                // Check specific 4x4 block in luma_level4x4
-                if m.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
-                    // For Intra_16x16, check both AC (in 4x4 block) and the corresponding DC coefficient.
-                    let has_ac = res.ac_level16x16[blk_idx as usize].iter().any(|&x| x != 0);
-                    let has_dc = res.dc_level16x16[blk_idx as usize] != 0;
-                    has_ac || has_dc
-                } else {
-                    res.luma_level4x4[blk_idx as usize].iter().any(|&x| x != 0)
-                }
-            } else {
-                false
-            }
+    let res = match mb {
+        Macroblock::I(m) => m.residual.as_ref(),
+        Macroblock::P(m) => m.residual.as_ref(),
+        _ => return false,
+    };
+
+    if let Some(res) = res {
+        let transform_8x8 = mb.transform_size_8x8_flag();
+
+        // Luma check
+        let luma_nonzero = if mb.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
+            // For Intra_16x16, check both AC (in 4x4 block) and the corresponding DC coefficient.
+            // Luma DC levels are stored in zig-zag order.
+            let (row, col) = super::residual::unscan_4x4(blk_idx as usize);
+            let zig_idx = super::residual::zig_zag_4x4(row, col);
+            res.ac_level16x16_nc[blk_idx as usize] > 0 || res.dc_level16x16[zig_idx] != 0
+        } else if transform_8x8 {
+            // Section 8.7.2.1: if transform_size_8x8_flag is 1, check the 8x8 block
+            let blk8x8_idx = blk_idx / 4;
+            (blk8x8_idx * 4..(blk8x8_idx + 1) * 4).any(|i| res.luma_level4x4_nc[i as usize] > 0)
+        } else {
+            res.luma_level4x4_nc[blk_idx as usize] > 0
+        };
+        if luma_nonzero {
+            return true;
         }
-        Macroblock::P(m) => {
-            if let Some(res) = &m.residual {
-                res.luma_level4x4[blk_idx as usize].iter().any(|&x| x != 0)
-            } else {
-                false
-            }
+
+        // Chroma check (4:2:0 assumed)
+        let chroma_blk_idx = blk_idx as usize / 4;
+        if res.chroma_cb_dc_level[chroma_blk_idx] != 0
+            || res.chroma_cb_level4x4_nc[chroma_blk_idx] > 0
+            || res.chroma_cr_dc_level[chroma_blk_idx] != 0
+            || res.chroma_cr_level4x4_nc[chroma_blk_idx] > 0
+        {
+            return true;
         }
-        _ => false,
     }
+
+    false
 }
 
 fn check_motion_discontinuity(

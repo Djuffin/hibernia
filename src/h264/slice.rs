@@ -195,11 +195,17 @@ impl Slice {
     }
 
     pub fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
+        if mb_addr < self.header.first_mb_in_slice {
+            return None;
+        }
         let index = mb_addr - self.header.first_mb_in_slice;
         self.macroblocks.get(index as usize)
     }
 
     pub fn get_mb_mut(&mut self, mb_addr: MbAddr) -> Option<&mut Macroblock> {
+        if mb_addr < self.header.first_mb_in_slice {
+            return None;
+        }
         let index = mb_addr - self.header.first_mb_in_slice;
         self.macroblocks.get_mut(index as usize)
     }

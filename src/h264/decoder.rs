@@ -154,6 +154,10 @@ impl Decoder {
                         parser::parse_slice_header(&self.context, &nal, &mut unit_input)
                             .map_err(parse_error_handler)?;
 
+                    if slice.header.slice_type == SliceType::B {
+                        return Err(DecodingError::MisformedData("B-slices are not supported yet!".to_owned()));
+                    }
+
                     info!("{:?} {:#?}", nal.nal_unit_type, slice);
                     let frame = VideoFrame::new_with_padding(
                         slice.sps.pic_width(),
@@ -325,7 +329,7 @@ impl Decoder {
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
                     Macroblock::PCM(block) => {
-                        qp = 0;
+                        // For next MB, QP remains the same as before PCM MB.
                         mb_qps.push(0);
                         let y_plane = &mut frame.planes[0];
                         let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(mb_loc));

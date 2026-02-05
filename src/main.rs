@@ -47,15 +47,21 @@ fn main() {
             .write_header(&mut writer)
             .unwrap();
 
+        let mut planes = Vec::<Vec<u8>>::new();
         for (num, frame) in decoder.get_frame_buffer().iter().enumerate() {
             info!("Writing frame #{num} {w} x {h} to y4m");
 
-            let mut planes = Vec::<Vec<u8>>::new();
-            for plane in &frame.planes {
+            if planes.len() < frame.planes.len() {
+                planes.resize_with(frame.planes.len(), Vec::new);
+            }
+
+            for (i, plane) in frame.planes.iter().enumerate() {
                 let data_size = plane.cfg.width * plane.cfg.height;
-                let mut data = vec![0; data_size];
-                plane.copy_to_raw_u8(&mut data, plane.cfg.width, 1);
-                planes.push(data)
+                let data = &mut planes[i];
+                if data.len() != data_size {
+                    data.resize(data_size, 0);
+                }
+                plane.copy_to_raw_u8(data, plane.cfg.width, 1);
             }
 
             let yuv_frame = y4m::Frame::new(
@@ -99,13 +105,19 @@ mod tests {
                 .write_header(&mut writer)
                 .unwrap();
 
+            let mut planes = Vec::<Vec<u8>>::new();
             for (num, frame) in decoder.get_frame_buffer().iter().enumerate() {
-                let mut planes = Vec::<Vec<u8>>::new();
-                for plane in &frame.planes {
+                if planes.len() < frame.planes.len() {
+                    planes.resize_with(frame.planes.len(), Vec::new);
+                }
+
+                for (i, plane) in frame.planes.iter().enumerate() {
                     let data_size = plane.cfg.width * plane.cfg.height;
-                    let mut data = vec![0; data_size];
-                    plane.copy_to_raw_u8(&mut data, plane.cfg.width, 1);
-                    planes.push(data)
+                    let data = &mut planes[i];
+                    if data.len() != data_size {
+                        data.resize(data_size, 0);
+                    }
+                    plane.copy_to_raw_u8(data, plane.cfg.width, 1);
                 }
 
                 let yuv_frame = y4m::Frame::new(

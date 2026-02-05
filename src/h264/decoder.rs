@@ -77,6 +77,10 @@ pub struct Decoder {
     // POC Type 0 state
     prev_pic_order_cnt_msb: i32,
     prev_pic_order_cnt_lsb: i32,
+
+    // POC Type 2 state
+    prev_frame_num: i32,
+    prev_frame_num_offset: i32,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -106,6 +110,8 @@ impl Decoder {
             interpolation_buffer: InterpolationBuffer::new(),
             prev_pic_order_cnt_msb: 0,
             prev_pic_order_cnt_lsb: 0,
+            prev_frame_num: 0,
+            prev_frame_num_offset: 0,
         }
     }
 
@@ -220,7 +226,7 @@ impl Decoder {
         match slice.sps.pic_order_cnt_type {
             0 => self.calculate_poc_type0(slice, disposition),
             1 => 0, // TODO: Implement Type 1
-            2 => 0, // TODO: Implement Type 2
+            2 => self.calculate_poc_type2(slice, disposition),
             _ => 0,
         }
     }
@@ -258,6 +264,39 @@ impl Decoder {
         // but effectively just TopFieldOrderCnt for now.
 
         top_field_order_cnt
+    }
+
+    fn calculate_poc_type2(&mut self, slice: &Slice, disposition: ReferenceDisposition) -> i32 {
+        // Section 8.2.1.3 Decoding process for picture order count type 2
+        let (frame_num_offset, temp_pic_order_cnt) = if disposition == ReferenceDisposition::Idr {
+            (0, 0)
+        } else {
+            let prev_frame_num = self.prev_frame_num;
+            let prev_frame_num_offset = self.prev_frame_num_offset;
+            let frame_num = slice.header.frame_num as i32;
+
+            let frame_num_offset = if prev_frame_num > frame_num {
+                let max_frame_num = 1 << (slice.sps.log2_max_frame_num_minus4 + 4);
+                prev_frame_num_offset + max_frame_num
+            } else {
+                prev_frame_num_offset
+            };
+
+            let temp_pic_order_cnt = if disposition == ReferenceDisposition::NonReference {
+                2 * (frame_num_offset + frame_num) - 1
+            } else {
+                2 * (frame_num_offset + frame_num)
+            };
+
+            (frame_num_offset, temp_pic_order_cnt)
+        };
+
+        if disposition != ReferenceDisposition::NonReference {
+            self.prev_frame_num_offset = frame_num_offset;
+            self.prev_frame_num = slice.header.frame_num as i32;
+        }
+
+        temp_pic_order_cnt
     }
 
     pub fn get_frame_buffer(&self) -> &[VideoFrame] {
@@ -1290,5 +1329,103 @@ pub fn render_chroma_intra_prediction(
                 *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::h264::slice::SliceHeader;
+    use crate::h264::sps::{SequenceParameterSet, VuiParameters};
+    use crate::h264::pps::PicParameterSet;
+    use crate::h264::{ChromaFormat, Profile};
+
+    fn prepare_slice() -> Slice {
+        let sps = SequenceParameterSet {
+            profile: Profile::Baseline,
+            level_idc: 20,
+            seq_parameter_set_id: 0,
+            chroma_format_idc: ChromaFormat::YUV420,
+            separate_color_plane_flag: false,
+            log2_max_frame_num_minus4: 0, // max_frame_num = 16
+            log2_max_pic_order_cnt_lsb_minus4: 4,
+            max_num_ref_frames: 1,
+            pic_width_in_mbs_minus1: 3,
+            pic_height_in_map_units_minus1: 3,
+            frame_mbs_only_flag: true,
+            pic_order_cnt_type: 2, // Important for Type 2 testing
+            vui_parameters: None,
+            ..SequenceParameterSet::default()
+        };
+
+        let pps = PicParameterSet {
+            pic_parameter_set_id: 0,
+            seq_parameter_set_id: 0,
+            entropy_coding_mode_flag: false,
+            deblocking_filter_control_present_flag: true,
+            ..PicParameterSet::default()
+        };
+
+        let header = SliceHeader { first_mb_in_slice: 0, ..SliceHeader::default() };
+
+        Slice::new(sps, pps, header)
+    }
+
+    #[test]
+    fn test_poc_type2_non_ref() {
+        let mut decoder = Decoder::new();
+        let mut slice = prepare_slice();
+
+        // IDR
+        decoder.calculate_poc(&slice, ReferenceDisposition::Idr);
+
+        // Frame 1 (Ref)
+        slice.header.frame_num = 1;
+        decoder.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
+
+        // Frame 2 (Non-Ref)
+        // Non-ref usually shares frame_num with previous ref, or increments?
+        // Spec says: "If the current picture is not a reference picture, frame_num shall be equal to FrameNum of the preceding reference picture."
+        // But let's assume valid bitstream where frame_num matches logic.
+        // If we provide frame_num = 2, and non-ref.
+        slice.header.frame_num = 2;
+        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::NonReference);
+        // tempPOC = 2 * (0 + 2) - 1 = 3
+        assert_eq!(poc, 3);
+
+        // Decoder state should NOT update for non-ref
+        assert_eq!(decoder.prev_frame_num, 1);
+    }
+
+    #[test]
+    fn test_poc_type2_wrapping() {
+        let mut decoder = Decoder::new();
+        let mut slice = prepare_slice();
+        // log2_max_frame_num_minus4 = 0 => max_frame_num = 1 << 4 = 16.
+
+        // IDR
+        decoder.calculate_poc(&slice, ReferenceDisposition::Idr);
+
+        // Frame 15 (Ref)
+        slice.header.frame_num = 15;
+        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
+        assert_eq!(poc, 30); // 2 * 15
+        assert_eq!(decoder.prev_frame_num, 15);
+
+        // Frame 0 (Ref) - Wrap around
+        slice.header.frame_num = 0;
+        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
+        // prev_frame_num (15) > frame_num (0) => offset += 16 => offset = 16.
+        // POC = 2 * (16 + 0) = 32.
+        assert_eq!(poc, 32);
+        assert_eq!(decoder.prev_frame_num, 0);
+        assert_eq!(decoder.prev_frame_num_offset, 16);
+
+        // Frame 1 (Ref)
+        slice.header.frame_num = 1;
+        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
+        // prev_frame_num (0) > frame_num (1) is False. Offset stays 16.
+        // POC = 2 * (16 + 1) = 34.
+        assert_eq!(poc, 34);
     }
 }

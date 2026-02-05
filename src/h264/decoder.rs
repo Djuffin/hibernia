@@ -19,6 +19,7 @@ use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
 use slice::Slice;
+use smallvec::SmallVec;
 use v_frame::frame;
 use v_frame::plane::{self, PlaneOffset, PlaneSlice};
 
@@ -305,7 +306,7 @@ impl Decoder {
                         let residuals = if let Some(residual) = imb.residual.as_ref() {
                             residual.restore(ColorPlane::Y, qp)
                         } else {
-                            Vec::new()
+                            SmallVec::new()
                         };
 
                         let luma_plane = &mut frame.planes[0];
@@ -345,7 +346,7 @@ impl Decoder {
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {
-                                Vec::new()
+                                SmallVec::new()
                             };
                             render_chroma_intra_prediction(
                                 slice,
@@ -364,7 +365,7 @@ impl Decoder {
                         let residuals = if let Some(residual) = block.residual.as_ref() {
                             residual.restore(ColorPlane::Y, qp)
                         } else {
-                            Vec::new()
+                            SmallVec::new()
                         };
 
                         render_luma_inter_prediction(
@@ -385,7 +386,7 @@ impl Decoder {
                             let residuals = if let Some(residual) = block.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {
-                                Vec::new()
+                                SmallVec::new()
                             };
                             render_chroma_inter_prediction(
                                 slice, block, mb_loc, plane_name, frame, &residuals, references,

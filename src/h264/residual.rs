@@ -1,18 +1,19 @@
 use std::result;
 
 use log::info;
+use smallvec::SmallVec;
 
 use super::{
     macroblock::{self, CodedBlockPattern, MbPredictionMode},
     tables, ColorPlane,
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Block4x4 {
     pub samples: [[i32; 4]; 4],
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Block2x2 {
     pub samples: [[i32; 2]; 2],
 }
@@ -103,9 +104,8 @@ impl Residual {
         self.prediction_mode == MbPredictionMode::Intra_16x16
     }
 
-    pub fn restore(&self, plane: ColorPlane, qp: u8) -> Vec<Block4x4> {
-        let mut result = Vec::new();
-        result.reserve(if plane.is_luma() { 16 } else { 4 });
+    pub fn restore(&self, plane: ColorPlane, qp: u8) -> SmallVec<[Block4x4; 16]> {
+        let mut result = SmallVec::new();
 
         if plane == ColorPlane::Y {
             if self.has_separate_luma_dc() {

@@ -517,6 +517,10 @@ impl Macroblock {
         matches!(self, Macroblock::I(_) | Macroblock::PCM(_))
     }
 
+    pub fn is_pcm(&self) -> bool {
+        matches!(self, Macroblock::PCM(_))
+    }
+
     // Calculates nC for the block withing the macroblock
     pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         // Section 9.2.1

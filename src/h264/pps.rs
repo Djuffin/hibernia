@@ -35,6 +35,8 @@ pub enum SliceGroup {
     },
 }
 
+use super::ColorPlane;
+
 // Section 7.4.2.2 Picture parameter set RBSP semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct PicParameterSet {
@@ -70,4 +72,14 @@ pub struct PicParameterSet {
     pub transform_8x8_mode_flag: bool,
     //pub pic_scaling_matrix: Option<PicScalingMatrix>,
     pub second_chroma_qp_index_offset: i32,
+}
+
+impl PicParameterSet {
+    pub fn get_chroma_qp_index_offset(&self, plane: ColorPlane) -> i32 {
+        match plane {
+            ColorPlane::Cb => self.chroma_qp_index_offset,
+            ColorPlane::Cr => self.second_chroma_qp_index_offset,
+            _ => 0,
+        }
+    }
 }

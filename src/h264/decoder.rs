@@ -337,10 +337,10 @@ impl Decoder {
                         }
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
-                            let chroma_qp =
-                                get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0)
-                                    .try_into()
-                                    .unwrap();
+                            let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
+                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, 0)
+                                .try_into()
+                                .unwrap();
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
@@ -378,10 +378,10 @@ impl Decoder {
                         );
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
-                            let chroma_qp =
-                                get_chroma_qp(qp as i32, slice.pps.chroma_qp_index_offset, 0)
-                                    .try_into()
-                                    .unwrap();
+                            let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
+                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, 0)
+                                .try_into()
+                                .unwrap();
                             let residuals = if let Some(residual) = block.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {

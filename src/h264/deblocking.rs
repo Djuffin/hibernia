@@ -501,25 +501,24 @@ fn filter_chroma_edge(
             continue;
         }
 
-        // Chroma QP
-        let qp_av = (p_qp as i32 + q_qp as i32 + 1) >> 1;
-        // Clause 8.7.2: qPz (chroma) derivation
-        // qPz is set equal to the value of QPC that corresponds to the value QPY
-
-        // Re-calculate QPC for P and Q
-        let qp_index_offset = slice.pps.chroma_qp_index_offset; // only for Cb? assume Cb/Cr same or loop
-        let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
-        let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0);
-        let qp_av_c = (qp_p_c + qp_q_c + 1) >> 1;
-
-        let index_a = (qp_av_c + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
-        let index_b = (qp_av_c + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
-
-        let alpha = ALPHA_TABLE[index_a];
-        let beta = BETA_TABLE[index_b];
-
         // Filtering for both Cb and Cr
         for plane_idx in [ColorPlane::Cb, ColorPlane::Cr] {
+            // Clause 8.7.2: qPz (chroma) derivation
+            // qPz is set equal to the value of QPC that corresponds to the value QPY
+            let qp_index_offset = slice.pps.get_chroma_qp_index_offset(plane_idx);
+
+            let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
+            let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0);
+            let qp_av_c = (qp_p_c + qp_q_c + 1) >> 1;
+
+            let index_a =
+                (qp_av_c + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
+            let index_b =
+                (qp_av_c + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
+
+            let alpha = ALPHA_TABLE[index_a];
+            let beta = BETA_TABLE[index_b];
+
             let plane = &mut frame.planes[plane_idx as usize];
 
             // Coords

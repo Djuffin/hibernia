@@ -787,6 +787,7 @@ pub fn render_chroma_inter_prediction(
 
 // Section 8.5.8 Derivation process for chroma quantization parameters
 pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -> i32 {
+    // qP_I = Clip3( -QpBdOffset_C, 51, qP + qP_Offset )
     let qp_i = (luma_qp + chroma_qp_offset).clamp(-qp_bd_offset_c, 51);
 
     // 2. Look up qP_C from qP_I using Table 8-15

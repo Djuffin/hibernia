@@ -5,12 +5,9 @@
 #![allow(clippy::needless_late_init)]
 #![allow(non_snake_case)]
 
-#[macro_use]
-extern crate num_derive;
-
-pub mod diag;
-pub mod h264;
-pub mod y4m_cmp;
+use hibernia::diag;
+use hibernia::h264;
+use hibernia::y4m_cmp;
 
 use std::env;
 use std::fmt::Error;
@@ -19,7 +16,7 @@ use std::io;
 
 use log::info;
 use v_frame::plane::PlaneOffset;
-use y4m_cmp::compare_y4m_buffers;
+use hibernia::y4m_cmp::compare_y4m_buffers;
 
 fn main() {
     diag::init(false);

@@ -11,7 +11,6 @@ When I ask for code, you provide it directly, optimized for clarity and correctn
 * **Plan First:** Always create a plan before making changes to the code and ask for approval.
 * **Clarify:** If you lack context or essential information, ask questions.
 * **Follow Instructions:** Follow the user's requests directly without trying to guess the intent.
-* **Search:** Use `rgrep` for code search when you need it.
 
 ## Project Overview
 
@@ -57,4 +56,5 @@ and reasonably performant decoder. Adherence to the official ITU-T H.264 specifi
 
 * For new code, provide a complete, runnable file or a `mod.rs` with its child modules.
 * For code modifications, use a diff format or clearly explain the changes by showing the "before" and "after" code blocks.
+
 * If a request is ambiguous or conflicts with the H.264 spec, ask for clarification.

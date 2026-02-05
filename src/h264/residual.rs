@@ -206,6 +206,11 @@ pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
     TABLE[idx]
 }
 
+#[inline]
+pub const fn scan_4x4(row: usize, col: usize) -> usize {
+    (row / 2) * 8 + (col / 2) * 4 + (row % 2) * 2 + (col % 2)
+}
+
 // Figure 8-7 – Assignment of the indices of dcC to chroma4x4BlkIdx
 #[inline]
 pub const fn unscan_2x2(idx: usize) -> (/* row */ usize, /* column */ usize) {
@@ -551,5 +556,13 @@ mod tests {
         let block =
             Block4x4 { samples: [[0, 1, 4, 5], [2, 3, 6, 7], [8, 9, 12, 13], [10, 11, 14, 15]] };
         assert_eq!(block, unscan_block_4x4(&input));
+    }
+
+    #[test]
+    pub fn test_scan_unscan_4x4() {
+        for i in 0..16 {
+            let (r, c) = unscan_4x4(i);
+            assert_eq!(scan_4x4(r, c), i);
+        }
     }
 }

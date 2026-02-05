@@ -2,6 +2,7 @@ use super::decoder::{get_chroma_qp, VideoFrame};
 use super::macroblock::{
     get_neighbor_mbs, IMb, Macroblock, MbAddr, MbNeighborName, MbPredictionMode,
 };
+use super::residual::{transform_dc, unscan_4x4, unzip_block_4x4};
 use super::slice::{DeblockingFilterIdc, Slice, SliceType};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{ColorPlane, Point};
@@ -58,6 +59,9 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
         Some(mb) => mb,
         None => return,
     };
+    if mb.is_pcm() {
+        return;
+    }
 
     let mb_xy = slice.get_mb_location(mb_addr);
 
@@ -634,6 +638,10 @@ fn get_bs(
     let mb_p = slice.get_mb(mb_p_addr).unwrap();
     let mb_q = slice.get_mb(mb_q_addr).unwrap();
 
+    if mb_p.is_pcm() || mb_q.is_pcm() {
+        return 0;
+    }
+
     // Condition 1: Intra coding
     if mb_p.is_intra() || mb_q.is_intra() {
         // If edge is a macroblock edge ...
@@ -651,7 +659,7 @@ fn get_bs(
     }
 
     // Condition 3: Motion vectors / Reference frames
-    if check_motion_discontinuity(mb_p, blk_p_idx, mb_q, blk_q_idx) {
+    if check_motion_discontinuity(slice, mb_p, blk_p_idx, mb_q, blk_q_idx) {
         return 1;
     }
 
@@ -677,7 +685,14 @@ fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
                 if m.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
                     // For Intra_16x16, check both AC (in 4x4 block) and the corresponding DC coefficient.
                     let has_ac = res.ac_level16x16[blk_idx as usize].iter().any(|&x| x != 0);
-                    let has_dc = res.dc_level16x16[blk_idx as usize] != 0;
+
+                    // Reconstruct DC 4x4 block
+                    let dcs_block = unzip_block_4x4(&res.dc_level16x16);
+                    let transformed_dc = transform_dc(&dcs_block);
+                    let (r, c) = unscan_4x4(blk_idx as usize);
+                    let dc_val = transformed_dc.samples[r][c];
+
+                    let has_dc = dc_val != 0;
                     has_ac || has_dc
                 } else {
                     res.luma_level4x4[blk_idx as usize].iter().any(|&x| x != 0)
@@ -698,6 +713,7 @@ fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
 }
 
 fn check_motion_discontinuity(
+    slice: &Slice,
     mb_p: &Macroblock,
     blk_p_idx: usize,
     mb_q: &Macroblock,
@@ -722,9 +738,18 @@ fn check_motion_discontinuity(
     match (p_part, q_part) {
         (Some(pp), Some(qq)) => {
             // Check ref index
-            if pp.ref_idx_l0 != qq.ref_idx_l0 {
+            // If reference pictures are different, bS = 1.
+            let ref_p = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize);
+            let ref_q = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize);
+
+            // If either index is out of bounds (should not happen in valid streams), treat as different?
+            // Or if both out of bounds, treat as same?
+            // Assuming valid stream, ref_idx points to valid entry.
+            // If they point to different DPB indices, they are different pictures.
+            if ref_p != ref_q {
                 return true;
             }
+
             // Check MV difference >= 4 (quarter pel units)
             let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
             let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();

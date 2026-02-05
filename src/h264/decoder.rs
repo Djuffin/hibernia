@@ -820,6 +820,19 @@ pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -
     qp_c + qp_bd_offset_c
 }
 
+fn is_neighbor_available(slice: &Slice, mb_addr: MbAddr, n: MbNeighborName) -> bool {
+    match slice.get_mb_neighbor(mb_addr, n) {
+        Some(mb) => {
+            if slice.pps.constrained_intra_pred_flag {
+                mb.is_intra()
+            } else {
+                true
+            }
+        }
+        None => false,
+    }
+}
+
 // Section 8.3.1.1 Derivation process for Intra4x4PredMode
 pub fn render_luma_4x4_intra_prediction(
     slice: &Slice,
@@ -873,7 +886,7 @@ pub fn render_luma_4x4_intra_prediction(
                 // Section 8.3.1.2.3 Specification of Intra_4x4_DC prediction mode
                 // Calculate the sum of all the values at the left of the current macroblock
                 let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
-                let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+                let sum_a = if same_mb || is_neighbor_available(slice, mb_addr, MbNeighborName::A) {
                     Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
                 } else {
                     None
@@ -881,7 +894,7 @@ pub fn render_luma_4x4_intra_prediction(
 
                 // Calculate the sum of all the values at the top of the current macroblock
                 let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
-                let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                let sum_b = if same_mb || is_neighbor_available(slice, mb_addr, MbNeighborName::B) {
                     Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
                 } else {
                     None
@@ -1045,7 +1058,7 @@ pub fn render_luma_16x16_intra_prediction(
         }
         Intra_16x16_SamplePredMode::Intra_16x16_DC => {
             // Section 8.3.3.3 Specification of Intra_16x16_DC prediction mode
-            let sum_a = if slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+            let sum_a = if is_neighbor_available(slice, mb_addr, MbNeighborName::A) {
                 let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
                 Some(target_slice.rows_iter().take(16).map(|r| r[0] as u32).sum::<u32>())
             } else {
@@ -1053,7 +1066,7 @@ pub fn render_luma_16x16_intra_prediction(
             };
 
             // Calculate the sum of all the values at the top of the current macroblock
-            let sum_b = if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+            let sum_b = if is_neighbor_available(slice, mb_addr, MbNeighborName::B) {
                 let row = &target.row(y as isize - 1)[x..(x + 16)];
                 Some(row.iter().map(|r| *r as u32).sum::<u32>())
             } else {
@@ -1166,7 +1179,7 @@ pub fn render_chroma_intra_prediction(
             // Calculate the sum of all the values at the top of the current block
             let mut top_left = None;
             let mut top_right = None;
-            if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+            if is_neighbor_available(slice, mb_addr, MbNeighborName::B) {
                 let target_slice = target.slice(PlaneOffset { y: offset.y - 1, ..offset });
                 top_left = Some(sum(&target_slice[0][0..4]));
                 top_right = Some(sum(&target_slice[0][4..8]));
@@ -1175,7 +1188,7 @@ pub fn render_chroma_intra_prediction(
             // Calculate the sum of all the values at the left of the current block
             let mut left_top = None;
             let mut left_bottom = None;
-            if slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
+            if is_neighbor_available(slice, mb_addr, MbNeighborName::A) {
                 let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
                 let mut left_column = [0u8; 8];
                 for (idx, row) in target_slice.rows_iter().take(8).enumerate() {

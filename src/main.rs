@@ -138,6 +138,7 @@ mod tests {
         test_decoding_against_gold("data/NL1_Sony_D.jsv", "data/NL1_Sony_D.y4m")
     }
 
+
     #[test]
     pub fn test_SVA_NL1_B() -> Result<(), String> {
         // All slices are coded as I slices. Each picture contains only one slice.

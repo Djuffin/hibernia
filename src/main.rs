@@ -173,7 +173,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     pub fn test_BA2_Sony_F() -> Result<(), String> {
         // Decoding of I or P slices. Each picture contains only one slice.
         // deblocking filter process enabled.

@@ -14,7 +14,7 @@
     <h1>Hibernia WASM H.264 Decoder</h1>
     <div id="status">Loading WASM...</div>
     <div id="controls">
-        <button id="decodeBtn" disabled>Decode input.h264</button>
+        <button id="decodeBtn" disabled>Decode data/NL2_Sony_H.jsv</button>
         <button id="nextFrameBtn" disabled>Next Frame</button>
     </div>
     <div id="info"></div>
@@ -43,7 +43,7 @@
         document.getElementById('decodeBtn').onclick = async () => {
             document.getElementById('status').innerText = 'Fetching and decoding...';
             try {
-                const response = await fetch('input.h264');
+                const response = await fetch('data/NL2_Sony_H.jsv');
                 const buffer = await response.arrayBuffer();
                 const data = new Uint8Array(buffer);
 
@@ -76,36 +76,9 @@
             canvas.height = height;
             const ctx = canvas.getContext('2d');
 
-            const yPlane = decoder.get_y_plane(idx);
-            const uPlane = decoder.get_u_plane(idx);
-            const vPlane = decoder.get_v_plane(idx);
+            const rgbaData = decoder.get_frame_rgba(idx);
 
-            const imageData = ctx.createImageData(width, height);
-            const data = imageData.data;
-
-            // Simple YUV420 to RGB conversion
-            for (let y = 0; y < height; y++) {
-                for (let x = 0; x < width; x++) {
-                    const yIdx = y * width + x;
-                    const uvIdx = (Math.floor(y / 2) * (width / 2) + Math.floor(x / 2));
-
-                    const Y = yPlane[yIdx];
-                    const U = uPlane[uvIdx] - 128;
-                    const V = vPlane[uvIdx] - 128;
-
-                    // Standard BT.601 conversion
-                    let r = Y + 1.402 * V;
-                    let g = Y - 0.344136 * U - 0.714136 * V;
-                    let b = Y + 1.772 * U;
-
-                    const outIdx = (y * width + x) * 4;
-                    data[outIdx] = r;
-                    data[outIdx + 1] = g;
-                    data[outIdx + 2] = b;
-                    data[outIdx + 3] = 255;
-                }
-            }
-
+            const imageData = new ImageData(new Uint8ClampedArray(rgbaData), width, height);
             ctx.putImageData(imageData, 0, 0);
             document.getElementById('info').innerText = `Frame ${idx + 1} / ${frameCount} (${width}x${height})`;
         }

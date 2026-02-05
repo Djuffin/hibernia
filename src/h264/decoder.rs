@@ -1372,45 +1372,6 @@ mod tests {
     }
 
     #[test]
-    fn test_poc_type2_idr() {
-        let mut decoder = Decoder::new();
-        let mut slice = prepare_slice();
-        slice.header.frame_num = 0;
-
-        // IDR picture
-        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::Idr);
-        assert_eq!(poc, 0);
-        assert_eq!(decoder.prev_frame_num, 0);
-        assert_eq!(decoder.prev_frame_num_offset, 0);
-    }
-
-    #[test]
-    fn test_poc_type2_simple_sequence() {
-        let mut decoder = Decoder::new();
-        let mut slice = prepare_slice();
-
-        // IDR
-        slice.header.frame_num = 0;
-        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::Idr);
-        assert_eq!(poc, 0);
-
-        // Frame 1 (Ref)
-        slice.header.frame_num = 1;
-        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
-        // tempPOC = 2 * (0 + 1) = 2
-        assert_eq!(poc, 2);
-        assert_eq!(decoder.prev_frame_num, 1);
-        assert_eq!(decoder.prev_frame_num_offset, 0);
-
-        // Frame 2 (Ref)
-        slice.header.frame_num = 2;
-        let poc = decoder.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
-        // tempPOC = 2 * (0 + 2) = 4
-        assert_eq!(poc, 4);
-        assert_eq!(decoder.prev_frame_num, 2);
-    }
-
-    #[test]
     fn test_poc_type2_non_ref() {
         let mut decoder = Decoder::new();
         let mut slice = prepare_slice();

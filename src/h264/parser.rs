@@ -75,6 +75,11 @@ macro_rules! read_value {
         let value = $input.se().map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
+    ($input:ident, $dest:expr, te, $range:expr) => {
+        let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
+        let value = $input.te($range).map_err(error_handler)?;
+        cast_or_error!($dest, value);
+    };
     ($input:ident, $dest:expr, f) => {
         let error_handler = |e| format!("Error while parsing '{}': {}", stringify!($dest), e);
         let value = $input.f().map_err(error_handler)?;
@@ -1271,7 +1276,7 @@ pub fn parse_p_macroblock(
         if mb_part_pred_mode != MbPredictionMode::Pred_L1 {
             if slice.header.num_ref_idx_l0_active_minus1 > 0 {
                 for i in 0..num_mb_part {
-                    read_value!(input, partitions[i].ref_idx_l0, ue, 8);
+                    read_value!(input, partitions[i].ref_idx_l0, te, slice.header.num_ref_idx_l0_active_minus1);
                 }
             }
 
@@ -1299,7 +1304,7 @@ pub fn parse_p_macroblock(
                 if mb_type == PMbType::P_8x8ref0 {
                     ref_idx_l0[i] = 0;
                 } else {
-                    read_value!(input, ref_idx_l0[i], ue, 8);
+                    read_value!(input, ref_idx_l0[i], te, slice.header.num_ref_idx_l0_active_minus1);
                 }
             }
         }

@@ -63,6 +63,16 @@ impl<'a> RbspReader<'a> {
         Ok(result)
     }
 
+    // Truncated Exp-Golomb entropy coding. Section 9.1.2
+    pub fn te(&mut self, range_max: u32) -> ParseResult<u32> {
+        if range_max > 1 {
+            self.ue(32)
+        } else {
+            let bit = self.f()?;
+            Ok(if bit { 0 } else { 1 })
+        }
+    }
+
     pub fn peek_or_pad16(&mut self) -> ParseResult<u16> {
         let mut tmp_reader = self.reader.clone();
         if self.remaining() >= 16 {

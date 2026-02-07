@@ -562,6 +562,14 @@ impl Macroblock {
             Macroblock::I(_) | Macroblock::PCM(_) => MbMotion::default(),
         }
     }
+
+    pub fn set_qp(&mut self, qp: u8) {
+        match self {
+            Macroblock::I(m) => m.qp = qp,
+            Macroblock::P(m) => m.qp = qp,
+            Macroblock::PCM(m) => m.qp = qp,
+        }
+    }
 }
 
 #[cfg(test)]

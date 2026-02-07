@@ -59,6 +59,10 @@ impl DecodedPictureBuffer {
         DecodedPictureBuffer { pictures: Vec::with_capacity(max_size), max_size }
     }
 
+    pub fn set_max_size(&mut self, max_size: usize) {
+        self.max_size = max_size;
+    }
+
     pub fn is_full(&self) -> bool {
         self.pictures.len() >= self.max_size
     }

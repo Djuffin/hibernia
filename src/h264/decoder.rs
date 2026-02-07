@@ -198,6 +198,16 @@ impl Decoder {
                     let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
                     info!("SPS: {:#?}", sps);
                     assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
+
+                    // Update DPB size based on SPS and VUI parameters
+                    let mut max_dpb_size = max(sps.max_num_ref_frames as usize, 1);
+                    if let Some(vui) = &sps.vui_parameters {
+                        if vui.bitstream_restriction_flag {
+                            max_dpb_size = max(max_dpb_size, vui.max_dec_frame_buffering as usize);
+                        }
+                    }
+                    self.dpb.set_max_size(max_dpb_size);
+
                     self.context.put_sps(sps);
                 }
                 NalUnitType::PicParameterSet => {

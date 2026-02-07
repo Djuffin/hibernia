@@ -55,8 +55,12 @@ pub struct DecodedPictureBuffer {
 }
 
 impl DecodedPictureBuffer {
-    pub fn new(max_size: usize) -> Self {
-        DecodedPictureBuffer { pictures: Vec::with_capacity(max_size), max_size }
+    pub fn new() -> Self {
+        DecodedPictureBuffer { pictures: Vec::with_capacity(16), max_size: 16 }
+    }
+
+    pub fn set_max_size(&mut self, max_size: usize) {
+        self.max_size = max_size;
     }
 
     pub fn is_full(&self) -> bool {
@@ -341,7 +345,8 @@ mod tests {
 
     #[test]
     fn test_dpb_store_and_full() {
-        let mut dpb = DecodedPictureBuffer::new(2);
+        let mut dpb = DecodedPictureBuffer::new();
+        dpb.set_max_size(2);
         assert!(!dpb.is_full());
 
         let pic1 = create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference);
@@ -357,7 +362,8 @@ mod tests {
 
     #[test]
     fn test_dpb_bumping_process() {
-        let mut dpb = DecodedPictureBuffer::new(2);
+        let mut dpb = DecodedPictureBuffer::new();
+        dpb.set_max_size(2);
 
         let pic1 = create_dummy_dpb_picture(1, 2, DpbMarking::UnusedForReference);
         let pic2 = create_dummy_dpb_picture(2, 4, DpbMarking::UsedForShortTermReference);
@@ -380,7 +386,8 @@ mod tests {
 
     #[test]
     fn test_dpb_output_order() {
-        let mut dpb = DecodedPictureBuffer::new(3);
+        let mut dpb = DecodedPictureBuffer::new();
+        dpb.set_max_size(3);
 
         let pic1 = create_dummy_dpb_picture(3, 6, DpbMarking::UnusedForReference);
         let pic2 = create_dummy_dpb_picture(1, 2, DpbMarking::UnusedForReference);
@@ -399,7 +406,8 @@ mod tests {
 
     #[test]
     fn test_dpb_flush_on_idr() {
-        let mut dpb = DecodedPictureBuffer::new(3);
+        let mut dpb = DecodedPictureBuffer::new();
+        dpb.set_max_size(3);
 
         let pic1 = create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference);
         let pic2 = create_dummy_dpb_picture(2, 4, DpbMarking::UsedForLongTermReference(0));
@@ -421,7 +429,8 @@ mod tests {
 
     #[test]
     fn test_find_reference_pictures() {
-        let mut dpb = DecodedPictureBuffer::new(3);
+        let mut dpb = DecodedPictureBuffer::new();
+        dpb.set_max_size(3);
 
         let pic1 = create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference);
         let pic2 = create_dummy_dpb_picture(2, 4, DpbMarking::UsedForLongTermReference(0));

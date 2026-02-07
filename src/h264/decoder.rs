@@ -322,13 +322,11 @@ impl Decoder {
         for i in 0..slice.get_macroblock_count() {
             let mb_addr = first_mb_addr + i as u32;
             let mb_loc = slice.get_mb_location(mb_addr);
-            let mut current_mb_qp = 0;
 
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
                     Macroblock::PCM(block) => {
                         qp = 0;
-                        current_mb_qp = 0;
                         let y_plane = &mut frame.planes[0];
                         let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(mb_loc));
 
@@ -342,7 +340,6 @@ impl Decoder {
                     }
                     Macroblock::I(imb) => {
                         qp = (qp + imb.mb_qp_delta).clamp(0, 51);
-                        current_mb_qp = qp as u8;
                         let mb_qp = qp as u8;
                         let residuals = if let Some(residual) = imb.residual.as_ref() {
                             residual.restore(ColorPlane::Y, mb_qp)
@@ -401,7 +398,6 @@ impl Decoder {
                     }
                     Macroblock::P(block) => {
                         qp = (qp + block.mb_qp_delta).clamp(0, 51);
-                        current_mb_qp = qp as u8;
                         let mb_qp = qp as u8;
                         let residuals = if let Some(residual) = block.residual.as_ref() {
                             residual.restore(ColorPlane::Y, mb_qp)
@@ -438,7 +434,7 @@ impl Decoder {
             }
 
             if let Some(mb) = slice.get_mb_mut(mb_addr) {
-                mb.set_qp(current_mb_qp);
+                mb.set_qp(qp as u8);
             }
         }
 

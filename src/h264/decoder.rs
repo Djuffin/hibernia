@@ -340,9 +340,8 @@ impl Decoder {
                     }
                     Macroblock::I(imb) => {
                         qp = (qp + imb.mb_qp_delta).clamp(0, 51);
-                        let mb_qp = qp as u8;
                         let residuals = if let Some(residual) = imb.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, mb_qp)
+                            residual.restore(ColorPlane::Y, qp as u8)
                         } else {
                             SmallVec::new()
                         };
@@ -350,8 +349,8 @@ impl Decoder {
                         let luma_plane = &mut frame.planes[0];
                         let luma_prediction_mode = imb.MbPartPredMode(0);
                         info!(
-                            "MB {mb_addr} {mb_qp} Luma: {:?} Chroma: {:?}",
-                            luma_prediction_mode, imb.intra_chroma_pred_mode
+                            "MB {mb_addr} {} Luma: {:?} Chroma: {:?}",
+                            qp, luma_prediction_mode, imb.intra_chroma_pred_mode
                         );
                         match luma_prediction_mode {
                             MbPredictionMode::None => panic!("impossible pred mode"),
@@ -398,9 +397,8 @@ impl Decoder {
                     }
                     Macroblock::P(block) => {
                         qp = (qp + block.mb_qp_delta).clamp(0, 51);
-                        let mb_qp = qp as u8;
                         let residuals = if let Some(residual) = block.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, mb_qp)
+                            residual.restore(ColorPlane::Y, qp as u8)
                         } else {
                             SmallVec::new()
                         };

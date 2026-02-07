@@ -318,15 +318,15 @@ impl Decoder {
         let split_idx = self.dpb.pictures.len() - 1;
         let (references, current) = self.dpb.pictures.split_at_mut(split_idx);
         let frame = &mut current[0].picture.frame;
-        let mut mb_qps = Vec::with_capacity(slice.get_macroblock_count());
-
-        for mb_addr in 0..(slice.sps.pic_size_in_mbs() as u32) {
+        let first_mb_addr = slice.header.first_mb_in_slice;
+        for i in 0..slice.get_macroblock_count() {
+            let mb_addr = first_mb_addr + i as u32;
             let mb_loc = slice.get_mb_location(mb_addr);
+
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
                     Macroblock::PCM(block) => {
                         qp = 0;
-                        mb_qps.push(0);
                         let y_plane = &mut frame.planes[0];
                         let mut plane_slice = y_plane.mut_slice(point_to_plane_offset(mb_loc));
 
@@ -340,10 +340,8 @@ impl Decoder {
                     }
                     Macroblock::I(imb) => {
                         qp = (qp + imb.mb_qp_delta).clamp(0, 51);
-                        mb_qps.push(qp as u8);
-                        let qp = qp.try_into().unwrap();
                         let residuals = if let Some(residual) = imb.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp)
+                            residual.restore(ColorPlane::Y, qp as u8)
                         } else {
                             SmallVec::new()
                         };
@@ -351,8 +349,8 @@ impl Decoder {
                         let luma_plane = &mut frame.planes[0];
                         let luma_prediction_mode = imb.MbPartPredMode(0);
                         info!(
-                            "MB {mb_addr} {qp} Luma: {:?} Chroma: {:?}",
-                            luma_prediction_mode, imb.intra_chroma_pred_mode
+                            "MB {mb_addr} {} Luma: {:?} Chroma: {:?}",
+                            qp, luma_prediction_mode, imb.intra_chroma_pred_mode
                         );
                         match luma_prediction_mode {
                             MbPredictionMode::None => panic!("impossible pred mode"),
@@ -399,10 +397,8 @@ impl Decoder {
                     }
                     Macroblock::P(block) => {
                         qp = (qp + block.mb_qp_delta).clamp(0, 51);
-                        mb_qps.push(qp as u8);
-                        let qp = qp.try_into().unwrap();
                         let residuals = if let Some(residual) = block.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp)
+                            residual.restore(ColorPlane::Y, qp as u8)
                         } else {
                             SmallVec::new()
                         };
@@ -434,17 +430,9 @@ impl Decoder {
                     }
                 }
             }
-        }
 
-        // Store QPs in macroblocks
-        for (i, qp) in mb_qps.into_iter().enumerate() {
-            let mb_addr = slice.header.first_mb_in_slice + i as u32;
             if let Some(mb) = slice.get_mb_mut(mb_addr) {
-                match mb {
-                    Macroblock::I(m) => m.qp = qp,
-                    Macroblock::P(m) => m.qp = qp,
-                    Macroblock::PCM(m) => m.qp = qp,
-                }
+                mb.set_qp(qp as u8);
             }
         }
 

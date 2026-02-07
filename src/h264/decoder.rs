@@ -328,7 +328,7 @@ impl Decoder {
                         qp = 0;
                         mb_qps.push(0);
                         let y_plane = &mut frame.planes[0];
-                        let mut plane_slice = y_plane.mut_slice(point_to_plain_offset(mb_loc));
+                        let mut plane_slice = y_plane.mut_slice(point_to_plane_offset(mb_loc));
 
                         for (idx, row) in
                             plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
@@ -622,7 +622,7 @@ impl Decoder {
 }
 
 #[inline]
-fn point_to_plain_offset(p: Point) -> PlaneOffset {
+fn point_to_plane_offset(p: Point) -> PlaneOffset {
     PlaneOffset { x: p.x as isize, y: p.y as isize }
 }
 
@@ -635,7 +635,7 @@ struct Surroundings4x4 {
 
 impl Surroundings4x4 {
     pub fn load(&mut self, plane: &Plane, blk_loc: Point, substitute_right: bool) {
-        let mut offset = point_to_plain_offset(blk_loc);
+        let mut offset = point_to_plane_offset(blk_loc);
         offset.x -= 1;
         offset.y -= 1;
         let mut target_slice = plane.slice(offset);
@@ -1063,7 +1063,7 @@ pub fn render_luma_16x16_intra_prediction(
 ) {
     let x = loc.x as usize;
     let y = loc.y as usize;
-    let offset = point_to_plain_offset(loc);
+    let offset = point_to_plane_offset(loc);
     info!("luma 16x16 prediction: {mode:?}");
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
@@ -1151,7 +1151,7 @@ pub fn render_luma_16x16_intra_prediction(
         blk_loc.x += loc.x;
         blk_loc.y += loc.y;
 
-        let mut plane_slice = target.mut_slice(point_to_plain_offset(blk_loc));
+        let mut plane_slice = target.mut_slice(point_to_plane_offset(blk_loc));
         for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
             for (x, pixel) in row.iter_mut().take(4).enumerate() {
                 *pixel = (*pixel as i32 + blk.samples[y][x]).clamp(0, 255) as u8;
@@ -1173,7 +1173,7 @@ pub fn render_chroma_intra_prediction(
     let loc = Point { x: loc.x >> chroma_shift.width, y: loc.y >> chroma_shift.width };
     let mb_width = MB_WIDTH >> chroma_shift.width;
     let mb_height = MB_HEIGHT >> chroma_shift.height;
-    let offset = point_to_plain_offset(loc);
+    let offset = point_to_plane_offset(loc);
 
     #[inline]
     fn sum(slice: &[u8]) -> u32 {
@@ -1277,7 +1277,7 @@ pub fn render_chroma_intra_prediction(
                 let mut blk_loc = get_4x4chroma_block_location(blk_idx);
                 blk_loc.x += loc.x;
                 blk_loc.y += loc.y;
-                let mut target_slice = target.mut_slice(point_to_plain_offset(blk_loc));
+                let mut target_slice = target.mut_slice(point_to_plane_offset(blk_loc));
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].fill(result as u8);
                 }
@@ -1323,7 +1323,7 @@ pub fn render_chroma_intra_prediction(
         let mut blk_loc = get_4x4chroma_block_location(blk_idx as u8);
         blk_loc.x += loc.x;
         blk_loc.y += loc.y;
-        let mut target_slice = target.mut_slice(point_to_plain_offset(blk_loc));
+        let mut target_slice = target.mut_slice(point_to_plane_offset(blk_loc));
         for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
             for (x, pixel) in row.iter_mut().take(4).enumerate() {
                 *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;

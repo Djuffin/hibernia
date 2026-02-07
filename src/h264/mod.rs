@@ -66,7 +66,7 @@ pub enum ChromaFormat {
 
 impl ChromaFormat {
     #[inline]
-    pub fn is_chrome_subsampled(&self) -> bool {
+    pub fn is_chroma_subsampled(&self) -> bool {
         matches!(self, ChromaFormat::YUV420 | ChromaFormat::YUV422)
     }
 

@@ -875,7 +875,7 @@ pub fn parse_residual(
     let pred_mode = residual.prediction_mode;
     let coded_block_pattern = residual.coded_block_pattern;
     parse_residual_luma(input, slice, residual)?;
-    if slice.sps.ChromaArrayType().is_chrome_subsampled() {
+    if slice.sps.ChromaArrayType().is_chroma_subsampled() {
         if coded_block_pattern.chroma() & 3 != 0 {
             for plane in [ColorPlane::Cb, ColorPlane::Cr] {
                 let levels = residual.get_dc_levels_for(plane);
@@ -1411,7 +1411,7 @@ pub fn parse_i_macroblock(
             MbPredictionMode::Intra_16x16 => {}
             _ => todo!("implement Intra_8x8"),
         };
-        if slice.sps.ChromaArrayType().is_chrome_subsampled() {
+        if slice.sps.ChromaArrayType().is_chroma_subsampled() {
             read_value!(input, block.intra_chroma_pred_mode, ue, 2);
         }
         if block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {

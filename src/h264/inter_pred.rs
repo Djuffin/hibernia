@@ -30,10 +30,14 @@ pub fn interpolate_luma(
     let buf_w = (width as usize) + 5;
     let buf_h = (height as usize) + 5;
 
+    let plane_height = ref_plane.cfg.height as i32;
+    let plane_width = ref_plane.cfg.width as i32;
     for y in 0..buf_h {
+        let cy = (y_int + (y as i32) - 2).clamp(0, plane_height - 1);
+        let row = ref_plane.row(cy as isize);
         for x in 0..buf_w {
-            buffer.data[y][x] =
-                get_clamped_pixel(ref_plane, x_int + (x as i32) - 2, y_int + (y as i32) - 2) as i16;
+            let cx = (x_int + (x as i32) - 2).clamp(0, plane_width - 1);
+            buffer.data[y][x] = row[cx as usize] as i16;
         }
     }
 
@@ -131,17 +135,23 @@ pub fn interpolate_chroma(
     let x_frac = (mv.x & 7) as i32;
     let y_frac = (mv.y & 7) as i32;
 
+    let plane_width = ref_plane.cfg.width as i32;
+    let plane_height = ref_plane.cfg.height as i32;
     for y in 0..height as usize {
+        let cy = (y_int + y as i32).clamp(0, plane_height - 1);
+        let cy1 = (y_int + y as i32 + 1).clamp(0, plane_height - 1);
+        let row = ref_plane.row(cy as isize);
+        let row1 = ref_plane.row(cy1 as isize);
         for x in 0..width as usize {
-            let cx = x_int + x as i32;
-            let cy = y_int + y as i32;
+            let cx = (x_int + x as i32).clamp(0, plane_width - 1);
+            let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
 
             // 2. Fetch Neighbors
             // Section 8.4.2.2.2: A, B, C, D samples
-            let val_a = get_clamped_pixel(ref_plane, cx, cy) as i32;
-            let val_b = get_clamped_pixel(ref_plane, cx + 1, cy) as i32;
-            let val_c = get_clamped_pixel(ref_plane, cx, cy + 1) as i32;
-            let val_d = get_clamped_pixel(ref_plane, cx + 1, cy + 1) as i32;
+            let val_a = row[cx as usize] as i32;
+            let val_b = row[cx1 as usize] as i32;
+            let val_c = row1[cx as usize] as i32;
+            let val_d = row1[cx1 as usize] as i32;
 
             // 3. Bilinear Interpolation
             // Equation 8-266
@@ -157,16 +167,6 @@ pub fn interpolate_chroma(
             dst[y * dst_stride + x] = prediction.clamp(0, 255) as u8;
         }
     }
-}
-
-/// Section 8.4.2.1: Clamping for "Unrestricted Motion Vector"
-#[inline]
-fn get_clamped_pixel(plane: &Plane<u8>, x: i32, y: i32) -> u8 {
-    let width = plane.cfg.width as i32;
-    let height = plane.cfg.height as i32;
-    let cx = x.clamp(0, width - 1);
-    let cy = y.clamp(0, height - 1);
-    plane.p(cx as usize, cy as usize)
 }
 
 #[inline]

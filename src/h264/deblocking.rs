@@ -256,18 +256,24 @@ fn filter_luma_edge(
         // Load samples p3..p0, q0..q3
         // p0 is at (abs_x_q - dx, abs_y_q - dy)
         // q0 is at (abs_x_q, abs_y_q)
+        let stride = plane.cfg.stride;
+        let data = plane.data_origin_mut();
 
         let mut samples = [0u8; 8];
-        for i in 0..4 {
-            let offset_p = i as i32 + 1;
-            let p_x = (abs_x_q as i32 - offset_p * dx) as usize;
-            let p_y = (abs_y_q as i32 - offset_p * dy) as usize;
-            samples[3 - i] = plane.p(p_x, p_y);
-
-            let offset_q = i as i32;
-            let q_x = (abs_x_q as i32 + offset_q * dx) as usize;
-            let q_y = (abs_y_q as i32 + offset_q * dy) as usize;
-            samples[4 + i] = plane.p(q_x, q_y);
+        if is_vertical {
+            let row_off = abs_y_q as usize * stride;
+            let x_off = abs_x_q as usize;
+            for i in 0..4 {
+                samples[3 - i] = data[row_off + x_off - (i + 1)];
+                samples[4 + i] = data[row_off + x_off + i];
+            }
+        } else {
+            let y_off = abs_y_q as usize * stride;
+            let x_off = abs_x_q as usize;
+            for i in 0..4 {
+                samples[3 - i] = data[y_off - (i + 1) * stride + x_off];
+                samples[4 + i] = data[y_off + i * stride + x_off];
+            }
         }
 
         let (p0, q0) = (samples[3], samples[4]);
@@ -278,6 +284,16 @@ fn filter_luma_edge(
             && (samples[2] as i32 - p0 as i32).abs() < beta as i32
             && (samples[5] as i32 - q0 as i32).abs() < beta as i32
         {
+            let (q0_idx, p0_idx, p1_idx, q1_idx, p2_idx, q2_idx) = if is_vertical {
+                let row_off = abs_y_q as usize * stride;
+                let x_off = abs_x_q as usize;
+                (row_off + x_off, row_off + x_off - 1, row_off + x_off - 2, row_off + x_off + 1, row_off + x_off - 3, row_off + x_off + 2)
+            } else {
+                let y_off = abs_y_q as usize * stride;
+                let x_off = abs_x_q as usize;
+                (y_off + x_off, y_off - stride + x_off, y_off - 2 * stride + x_off, y_off + stride + x_off, y_off - 3 * stride + x_off, y_off + 2 * stride + x_off)
+            };
+
             if bs < 4 {
                 // Calculate tc0
                 let tc0 = TC0_TABLE[(bs - 1) as usize][index_a];
@@ -303,17 +319,8 @@ fn filter_luma_edge(
                 let q0_new = (q0 as i32 - delta_c).clamp(0, 255) as u8;
 
                 // Write back
-                let p_x = (abs_x_q as i32 - dx) as usize;
-                let p_y = (abs_y_q as i32 - dy) as usize;
-                let mut slice_p = plane
-                    .mut_slice(v_frame::plane::PlaneOffset { x: p_x as isize, y: p_y as isize });
-                slice_p[0][0] = p0_new;
-
-                let q_x = abs_x_q as usize;
-                let q_y = abs_y_q as usize;
-                let mut slice_q = plane
-                    .mut_slice(v_frame::plane::PlaneOffset { x: q_x as isize, y: q_y as isize });
-                slice_q[0][0] = q0_new;
+                data[p0_idx] = p0_new;
+                data[q0_idx] = q0_new;
 
                 // Filter p1 (Section 8.7.2.3)
                 if ap < beta as i32 {
@@ -322,14 +329,7 @@ fn filter_luma_edge(
                     let delta_p1 = (p2 + ((p0 as i32 + q0 as i32 + 1) >> 1) - (p1 << 1)) >> 1;
                     let p1_new =
                         (p1 + delta_p1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
-
-                    let p1_x = (abs_x_q as i32 - 2 * dx) as usize;
-                    let p1_y = (abs_y_q as i32 - 2 * dy) as usize;
-                    let mut slice_p1 = plane.mut_slice(v_frame::plane::PlaneOffset {
-                        x: p1_x as isize,
-                        y: p1_y as isize,
-                    });
-                    slice_p1[0][0] = p1_new;
+                    data[p1_idx] = p1_new;
                 }
 
                 if aq < beta as i32 {
@@ -338,14 +338,7 @@ fn filter_luma_edge(
                     let delta_q1 = (q2 + ((p0 as i32 + q0 as i32 + 1) >> 1) - (q1 << 1)) >> 1;
                     let q1_new =
                         (q1 + delta_q1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
-
-                    let q1_x = (abs_x_q as i32 + dx) as usize;
-                    let q1_y = (abs_y_q as i32 + dy) as usize;
-                    let mut slice_q1 = plane.mut_slice(v_frame::plane::PlaneOffset {
-                        x: q1_x as isize,
-                        y: q1_y as isize,
-                    });
-                    slice_q1[0][0] = q1_new;
+                    data[q1_idx] = q1_new;
                 }
             } else {
                 // Strong filtering (bs == 4)
@@ -362,41 +355,15 @@ fn filter_luma_edge(
                     let q0 = samples[4] as i32;
                     let q1 = samples[5] as i32;
 
-                    let p0_new =
-                        ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(0, 255) as u8;
-                    let p1_new = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
-                    let p2_new = ((2 * samples[0] as i32 + 3 * p2 + p1 + p0 + q0 + 4) >> 3)
-                        .clamp(0, 255) as u8;
-
-                    // Write p0, p1, p2
-                    for i in 0..3 {
-                        let offset = (i + 1) as i32;
-                        let x = (abs_x_q as i32 - offset * dx) as usize;
-                        let y = (abs_y_q as i32 - offset * dy) as usize;
-                        let mut slice = plane.mut_slice(v_frame::plane::PlaneOffset {
-                            x: x as isize,
-                            y: y as isize,
-                        });
-                        slice[0][0] = match i {
-                            0 => p0_new,
-                            1 => p1_new,
-                            2 => p2_new,
-                            _ => unreachable!(),
-                        };
-                    }
+                    data[p0_idx] = ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(0, 255) as u8;
+                    data[p1_idx] = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
+                    data[p2_idx] = ((2 * samples[0] as i32 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(0, 255) as u8;
                 } else {
                     // Weak filter p0 only (same as bs < 4 but with tc0=0)
                     let p1 = samples[2] as i32;
                     let p0 = samples[3] as i32;
                     let q1 = samples[5] as i32;
-                    let p0_new = ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
-                    let p_x = (abs_x_q as i32 - dx) as usize;
-                    let p_y = (abs_y_q as i32 - dy) as usize;
-                    let mut slice_p = plane.mut_slice(v_frame::plane::PlaneOffset {
-                        x: p_x as isize,
-                        y: p_y as isize,
-                    });
-                    slice_p[0][0] = p0_new;
+                    data[p0_idx] = ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
                 }
 
                 if aq < beta as i32 && small_diff {
@@ -406,39 +373,14 @@ fn filter_luma_edge(
                     let p0 = samples[3] as i32;
                     let p1 = samples[2] as i32;
 
-                    let q0_new =
-                        ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
-                    let q1_new = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
-                    let q2_new = ((2 * samples[7] as i32 + 3 * q2 + q1 + q0 + p0 + 4) >> 3)
-                        .clamp(0, 255) as u8;
-
-                    for i in 0..3 {
-                        let offset = i as i32;
-                        let x = (abs_x_q as i32 + offset * dx) as usize;
-                        let y = (abs_y_q as i32 + offset * dy) as usize;
-                        let mut slice = plane.mut_slice(v_frame::plane::PlaneOffset {
-                            x: x as isize,
-                            y: y as isize,
-                        });
-                        slice[0][0] = match i {
-                            0 => q0_new,
-                            1 => q1_new,
-                            2 => q2_new,
-                            _ => unreachable!(),
-                        };
-                    }
+                    data[q0_idx] = ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
+                    data[q1_idx] = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
+                    data[q2_idx] = ((2 * samples[7] as i32 + 3 * q2 + q1 + q0 + p0 + 4) >> 3).clamp(0, 255) as u8;
                 } else {
                     let q1 = samples[5] as i32;
                     let q0 = samples[4] as i32;
                     let p1 = samples[2] as i32;
-                    let q0_new = ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
-                    let q_x = abs_x_q as usize;
-                    let q_y = abs_y_q as usize;
-                    let mut slice_q = plane.mut_slice(v_frame::plane::PlaneOffset {
-                        x: q_x as isize,
-                        y: q_y as isize,
-                    });
-                    slice_q[0][0] = q0_new;
+                    data[q0_idx] = ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
                 }
             }
         }
@@ -527,13 +469,24 @@ fn filter_chroma_edge(
 
             let abs_x_q = (mb_xy.x >> chroma_shift_x) + x_q_c;
             let abs_y_q = (mb_xy.y >> chroma_shift_y) + y_q_c;
-            let (dx, dy) = if is_vertical { (1, 0) } else { (0, 1) };
 
-            let p0 = plane.p((abs_x_q as i32 - dx) as usize, (abs_y_q as i32 - dy) as usize);
-            let q0 = plane.p(abs_x_q as usize, abs_y_q as usize);
-            let p1 =
-                plane.p((abs_x_q as i32 - 2 * dx) as usize, (abs_y_q as i32 - 2 * dy) as usize);
-            let q1 = plane.p((abs_x_q as i32 + dx) as usize, (abs_y_q as i32 + dy) as usize);
+            let stride = plane.cfg.stride;
+            let data = plane.data_origin_mut();
+
+            let (q0_idx, p0_idx, p1_idx, q1_idx) = if is_vertical {
+                let row_off = abs_y_q as usize * stride;
+                let x_off = abs_x_q as usize;
+                (row_off + x_off, row_off + x_off - 1, row_off + x_off - 2, row_off + x_off + 1)
+            } else {
+                let y_off = abs_y_q as usize * stride;
+                let x_off = abs_x_q as usize;
+                (y_off + x_off, y_off - stride + x_off, y_off - 2 * stride + x_off, y_off + stride + x_off)
+            };
+
+            let p0 = data[p0_idx];
+            let q0 = data[q0_idx];
+            let p1 = data[p1_idx];
+            let q1 = data[q1_idx];
 
             if (p0 as i32 - q0 as i32).abs() < alpha as i32
                 && (p1 as i32 - p0 as i32).abs() < beta as i32
@@ -559,17 +512,8 @@ fn filter_chroma_edge(
                     (p0_new, q0_new)
                 };
 
-                let mut slice_p = plane.mut_slice(v_frame::plane::PlaneOffset {
-                    x: (abs_x_q as i32 - dx) as isize,
-                    y: (abs_y_q as i32 - dy) as isize,
-                });
-                slice_p[0][0] = p0_new;
-
-                let mut slice_q = plane.mut_slice(v_frame::plane::PlaneOffset {
-                    x: abs_x_q as isize,
-                    y: abs_y_q as isize,
-                });
-                slice_q[0][0] = q0_new;
+                data[p0_idx] = p0_new;
+                data[q0_idx] = q0_new;
             }
         }
     }

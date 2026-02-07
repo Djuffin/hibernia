@@ -197,35 +197,45 @@ fn filter_luma_edge(
     let q_mb = slice.get_mb(mb_addr).unwrap();
     let q_qp = get_qp(q_mb);
 
+    // Determine p0 location and P MB
+    let (p_mb_addr, p_mb, p_qp) = if edge_idx == 0 {
+        // External edge
+        let neighbor_name = if is_vertical { MbNeighborName::A } else { MbNeighborName::B };
+        match slice.get_mb_neighbor(mb_addr, neighbor_name) {
+            Some(mb) => {
+                let addr = get_neighbor_mbs(
+                    slice.sps.pic_width_in_mbs() as u32,
+                    slice.header.first_mb_in_slice,
+                    mb_addr,
+                    neighbor_name,
+                )
+                .unwrap();
+                (addr, mb, get_qp(mb))
+            }
+            None => return,
+        }
+    } else {
+        // Internal edge
+        (mb_addr, q_mb, q_qp)
+    };
+
+    let plane = &mut frame.planes[ColorPlane::Y as usize];
+    let stride = plane.cfg.stride;
+    let data = plane.data_origin_mut();
+
+    let qp_av = (p_qp as i32 + q_qp as i32 + 1) >> 1;
+    let index_a = (qp_av + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
+    let index_b = (qp_av + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
+
+    let alpha = ALPHA_TABLE[index_a];
+    let beta = BETA_TABLE[index_b];
+
     // Filter 16 samples (length of edge)
     for k in 0..16 {
-        // Location of q0 relative to MB
-        let (x_q, y_q) = if is_vertical {
-            (edge_idx as u32 * 4, k as u32)
+        let (abs_x_q, abs_y_q) = if is_vertical {
+            (mb_xy.x + edge_idx as u32 * 4, mb_xy.y + k as u32)
         } else {
-            (k as u32, edge_idx as u32 * 4)
-        };
-
-        // Determine p0 location and P MB
-        let (p_mb_addr, p_mb, p_qp) = if (is_vertical && x_q == 0) || (!is_vertical && y_q == 0) {
-            // External edge
-            let neighbor_name = if is_vertical { MbNeighborName::A } else { MbNeighborName::B };
-            match slice.get_mb_neighbor(mb_addr, neighbor_name) {
-                Some(mb) => {
-                    let addr = get_neighbor_mbs(
-                        slice.sps.pic_width_in_mbs() as u32,
-                        slice.header.first_mb_in_slice,
-                        mb_addr,
-                        neighbor_name,
-                    )
-                    .unwrap();
-                    (addr, mb, get_qp(mb))
-                }
-                None => return,
-            }
-        } else {
-            // Internal edge
-            (mb_addr, q_mb, q_qp)
+            (mb_xy.x + k as u32, mb_xy.y + edge_idx as u32 * 4)
         };
 
         // Determine Boundary Strength (bS)
@@ -234,39 +244,12 @@ fn filter_luma_edge(
             continue;
         }
 
-        // Calculate thresholds
-        let qp_av = (p_qp as i32 + q_qp as i32 + 1) >> 1;
-        let index_a = (qp_av + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
-        let index_b = (qp_av + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
-
-        let alpha = ALPHA_TABLE[index_a];
-        let beta = BETA_TABLE[index_b];
-
-        // Perform filtering
-        // We need to pass sample pointers or read/write samples
-        // Accessing plane directly
-        let plane = &mut frame.planes[ColorPlane::Y as usize];
-
-        // Calculate absolute coordinates
-        let abs_x_q = mb_xy.x + x_q;
-        let abs_y_q = mb_xy.y + y_q;
-
-        let (dx, dy) = if is_vertical { (1, 0) } else { (0, 1) };
-
         // Load samples p3..p0, q0..q3
-        // p0 is at (abs_x_q - dx, abs_y_q - dy)
-        // q0 is at (abs_x_q, abs_y_q)
-        let stride = plane.cfg.stride;
-        let data = plane.data_origin_mut();
-
         let mut samples = [0u8; 8];
         if is_vertical {
             let row_off = abs_y_q as usize * stride;
             let x_off = abs_x_q as usize;
-            for i in 0..4 {
-                samples[3 - i] = data[row_off + x_off - (i + 1)];
-                samples[4 + i] = data[row_off + x_off + i];
-            }
+            samples.copy_from_slice(&data[row_off + x_off - 4..row_off + x_off + 4]);
         } else {
             let y_off = abs_y_q as usize * stride;
             let x_off = abs_x_q as usize;
@@ -279,7 +262,6 @@ fn filter_luma_edge(
         let (p0, q0) = (samples[3], samples[4]);
 
         // Check filter condition
-        // Abs( p0 - q0 ) < alpha && Abs( p1 - p0 ) < beta && Abs( q1 - q0 ) < beta
         if (p0 as i32 - q0 as i32).abs() < alpha as i32
             && (samples[2] as i32 - p0 as i32).abs() < beta as i32
             && (samples[5] as i32 - q0 as i32).abs() < beta as i32
@@ -287,11 +269,25 @@ fn filter_luma_edge(
             let (q0_idx, p0_idx, p1_idx, q1_idx, p2_idx, q2_idx) = if is_vertical {
                 let row_off = abs_y_q as usize * stride;
                 let x_off = abs_x_q as usize;
-                (row_off + x_off, row_off + x_off - 1, row_off + x_off - 2, row_off + x_off + 1, row_off + x_off - 3, row_off + x_off + 2)
+                (
+                    row_off + x_off,
+                    row_off + x_off - 1,
+                    row_off + x_off - 2,
+                    row_off + x_off + 1,
+                    row_off + x_off - 3,
+                    row_off + x_off + 2,
+                )
             } else {
                 let y_off = abs_y_q as usize * stride;
                 let x_off = abs_x_q as usize;
-                (y_off + x_off, y_off - stride + x_off, y_off - 2 * stride + x_off, y_off + stride + x_off, y_off - 3 * stride + x_off, y_off + 2 * stride + x_off)
+                (
+                    y_off + x_off,
+                    y_off - stride + x_off,
+                    y_off - 2 * stride + x_off,
+                    y_off + stride + x_off,
+                    y_off - 3 * stride + x_off,
+                    y_off + 2 * stride + x_off,
+                )
             };
 
             if bs < 4 {
@@ -400,6 +396,30 @@ fn filter_chroma_edge(
     let q_mb = slice.get_mb(mb_addr).unwrap();
     let q_qp = get_qp(q_mb);
 
+    // Determine P MB
+    let (p_mb_addr, p_mb, p_qp) = if edge_idx == 0 {
+        let neighbor_name = if is_vertical { MbNeighborName::A } else { MbNeighborName::B };
+        match slice.get_mb_neighbor(mb_addr, neighbor_name) {
+            Some(mb) => {
+                let addr = get_neighbor_mbs(
+                    slice.sps.pic_width_in_mbs() as u32,
+                    slice.header.first_mb_in_slice,
+                    mb_addr,
+                    neighbor_name,
+                )
+                .unwrap();
+                (addr, mb, get_qp(mb))
+            }
+            None => return,
+        }
+    } else {
+        (mb_addr, q_mb, q_qp)
+    };
+
+    let luma_edge_idx = edge_idx * 2;
+    let chroma_shift_x = 1; // 4:2:0
+    let chroma_shift_y = 1;
+
     for k in 0..8 {
         let (x_q_c, y_q_c) = if is_vertical {
             (edge_idx as u32 * 4, k as u32)
@@ -408,35 +428,7 @@ fn filter_chroma_edge(
         };
 
         // Map to luma coordinates for BS calculation
-        // x_q_c is relative to chroma MB.
-        // Chroma edge 0 corresponds to Luma edge 0.
-        // Chroma edge 1 corresponds to Luma edge 2.
-        let luma_edge_idx = edge_idx * 2;
-
-        // In 4:2:0 (SubWidthC=2, SubHeightC=2), chroma sample (x, y) corresponds to
-        // luma sample (2x, 2y). The bS is derived from the corresponding luma 4x4 block.
         let luma_k = k * 2;
-
-        // Let's use get_bs with luma coordinates.
-        let (p_mb_addr, p_mb, p_qp) = if (is_vertical && x_q_c == 0) || (!is_vertical && y_q_c == 0)
-        {
-            let neighbor_name = if is_vertical { MbNeighborName::A } else { MbNeighborName::B };
-            match slice.get_mb_neighbor(mb_addr, neighbor_name) {
-                Some(mb) => {
-                    let addr = get_neighbor_mbs(
-                        slice.sps.pic_width_in_mbs() as u32,
-                        slice.header.first_mb_in_slice,
-                        mb_addr,
-                        neighbor_name,
-                    )
-                    .unwrap();
-                    (addr, mb, get_qp(mb))
-                }
-                None => return,
-            }
-        } else {
-            (mb_addr, q_mb, q_qp)
-        };
 
         let bs = get_bs(slice, mb_addr, p_mb_addr, luma_edge_idx, luma_k as usize, is_vertical);
         if bs == 0 {
@@ -445,8 +437,6 @@ fn filter_chroma_edge(
 
         // Filtering for both Cb and Cr
         for plane_idx in [ColorPlane::Cb, ColorPlane::Cr] {
-            // Clause 8.7.2: qPz (chroma) derivation
-            // qPz is set equal to the value of QPC that corresponds to the value QPY
             let qp_index_offset = slice.pps.get_chroma_qp_index_offset(plane_idx);
 
             let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
@@ -463,10 +453,6 @@ fn filter_chroma_edge(
 
             let plane = &mut frame.planes[plane_idx as usize];
 
-            // Coords
-            let chroma_shift_x = 1; // 4:2:0
-            let chroma_shift_y = 1;
-
             let abs_x_q = (mb_xy.x >> chroma_shift_x) + x_q_c;
             let abs_y_q = (mb_xy.y >> chroma_shift_y) + y_q_c;
 
@@ -480,7 +466,12 @@ fn filter_chroma_edge(
             } else {
                 let y_off = abs_y_q as usize * stride;
                 let x_off = abs_x_q as usize;
-                (y_off + x_off, y_off - stride + x_off, y_off - 2 * stride + x_off, y_off + stride + x_off)
+                (
+                    y_off + x_off,
+                    y_off - stride + x_off,
+                    y_off - 2 * stride + x_off,
+                    y_off + stride + x_off,
+                )
             };
 
             let p0 = data[p0_idx];

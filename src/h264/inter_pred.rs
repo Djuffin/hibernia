@@ -32,12 +32,27 @@ pub fn interpolate_luma(
 
     let plane_height = ref_plane.cfg.height as i32;
     let plane_width = ref_plane.cfg.width as i32;
-    for y in 0..buf_h {
-        let cy = (y_int + (y as i32) - 2).clamp(0, plane_height - 1);
-        let row = ref_plane.row(cy as isize);
-        for x in 0..buf_w {
-            let cx = (x_int + (x as i32) - 2).clamp(0, plane_width - 1);
-            buffer.data[y][x] = row[cx as usize] as i16;
+
+    if x_int >= 2
+        && x_int + (buf_w as i32) - 2 <= plane_width
+        && y_int >= 2
+        && y_int + (buf_h as i32) - 2 <= plane_height
+    {
+        for y in 0..buf_h {
+            let row = ref_plane.row((y_int + (y as i32) - 2) as isize);
+            let src = &row[(x_int - 2) as usize..(x_int - 2 + buf_w as i32) as usize];
+            for (d, s) in buffer.data[y][..buf_w].iter_mut().zip(src) {
+                *d = *s as i16;
+            }
+        }
+    } else {
+        for y in 0..buf_h {
+            let cy = (y_int + (y as i32) - 2).clamp(0, plane_height - 1);
+            let row = ref_plane.row(cy as isize);
+            for x in 0..buf_w {
+                let cx = (x_int + (x as i32) - 2).clamp(0, plane_width - 1);
+                buffer.data[y][x] = row[cx as usize] as i16;
+            }
         }
     }
 
@@ -45,50 +60,68 @@ pub fn interpolate_luma(
         (0, 0) => {
             // Integer positions
             for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
                 for x in 0..width as usize {
-                    dst[y * dst_stride + x] = buffer.get_integer(x, y) as u8;
+                    d[x] = buffer.data[y + 2][x + 2] as u8;
                 }
             }
         }
         (2, 0) => {
             // Half-pel horizontal (b)
             for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src_row = &buffer.data[y + 2];
                 for x in 0..width as usize {
-                    dst[y * dst_stride + x] =
-                        filter_6tap_and_clip(buffer.get_horizontal_window(x, y));
+                    d[x] = filter_6tap_and_clip(&src_row[x..x + 6]);
                 }
             }
         }
         (0, 2) => {
             // Half-pel vertical (h)
             for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
                 for x in 0..width as usize {
-                    let col = buffer.get_vertical_window(x, y);
-                    dst[y * dst_stride + x] = filter_6tap_and_clip(&col);
+                    let col = [
+                        buffer.data[y][x + 2],
+                        buffer.data[y + 1][x + 2],
+                        buffer.data[y + 2][x + 2],
+                        buffer.data[y + 3][x + 2],
+                        buffer.data[y + 4][x + 2],
+                        buffer.data[y + 5][x + 2],
+                    ];
+                    d[x] = filter_6tap_and_clip(&col);
                 }
             }
         }
         (2, 2) => {
             // Half-pel center (j)
-            // First calculate intermediate horizontal 6-tap results for 6 vertical positions
-            for y in 0..height as usize {
+            let mut intermediate = [0i32; 21 * 21];
+            for y in 0..buf_h {
+                let row = &buffer.data[y];
                 for x in 0..width as usize {
-                    let mut row_results = [0i32; 6];
-                    for i in 0..6 {
-                        row_results[i] = filter_6tap(&buffer.data[y + i][x..x + 6]);
-                    }
-                    dst[y * dst_stride + x] = filter_6tap_center_and_clip(&row_results);
+                    intermediate[y * 21 + x] = filter_6tap(&row[x..x + 6]);
+                }
+            }
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                for x in 0..width as usize {
+                    let val = intermediate[y * 21 + x] - 5 * intermediate[(y + 1) * 21 + x]
+                        + 20 * intermediate[(y + 2) * 21 + x]
+                        + 20 * intermediate[(y + 3) * 21 + x]
+                        - 5 * intermediate[(y + 4) * 21 + x]
+                        + intermediate[(y + 5) * 21 + x];
+                    d[x] = ((val + 512) >> 10).clamp(0, 255) as u8;
                 }
             }
         }
         _ => {
             // Quarter-pel positions
-            // These are linear averages of integer and half-pel positions.
-            // We'll calculate the needed components and average them.
+            // Optimization: precompute b, h, j if needed
+            // For a 4x4 or 16x16 block, it's worth precomputing some values.
+            // But let's start with a simpler optimization: avoid redundant work in get_j etc.
             for y in 0..height as usize {
                 for x in 0..width as usize {
-                    dst[y * dst_stride + x] =
-                        interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
+                    dst[y * dst_stride + x] = interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
                 }
             }
         }
@@ -137,34 +170,55 @@ pub fn interpolate_chroma(
 
     let plane_width = ref_plane.cfg.width as i32;
     let plane_height = ref_plane.cfg.height as i32;
-    for y in 0..height as usize {
-        let cy = (y_int + y as i32).clamp(0, plane_height - 1);
-        let cy1 = (y_int + y as i32 + 1).clamp(0, plane_height - 1);
-        let row = ref_plane.row(cy as isize);
-        let row1 = ref_plane.row(cy1 as isize);
-        for x in 0..width as usize {
-            let cx = (x_int + x as i32).clamp(0, plane_width - 1);
-            let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
+    if x_int >= 0
+        && x_int + width as i32 + 1 <= plane_width
+        && y_int >= 0
+        && y_int + height as i32 + 1 <= plane_height
+    {
+        let w00 = (8 - x_frac) * (8 - y_frac);
+        let w10 = x_frac * (8 - y_frac);
+        let w01 = (8 - x_frac) * y_frac;
+        let w11 = x_frac * y_frac;
 
-            // 2. Fetch Neighbors
-            // Section 8.4.2.2.2: A, B, C, D samples
-            let val_a = row[cx as usize] as i32;
-            let val_b = row[cx1 as usize] as i32;
-            let val_c = row1[cx as usize] as i32;
-            let val_d = row1[cx1 as usize] as i32;
+        for y in 0..height as usize {
+            let row = ref_plane.row((y_int + y as i32) as isize);
+            let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
+            let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+            let x_start = x_int as usize;
+            for x in 0..width as usize {
+                let val_a = row[x_start + x] as i32;
+                let val_b = row[x_start + x + 1] as i32;
+                let val_c = row1[x_start + x] as i32;
+                let val_d = row1[x_start + x + 1] as i32;
 
-            // 3. Bilinear Interpolation
-            // Equation 8-266
-            // pred = ( (8 - xFrac) * (8 - yFrac) * A + xFrac * (8 - yFrac) * B +
-            //          (8 - xFrac) * yFrac * C + xFrac * yFrac * D + 32 ) >> 6
-            let w00 = (8 - x_frac) * (8 - y_frac);
-            let w10 = x_frac * (8 - y_frac);
-            let w01 = (8 - x_frac) * y_frac;
-            let w11 = x_frac * y_frac;
+                let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
+                d[x] = prediction as u8;
+            }
+        }
+    } else {
+        for y in 0..height as usize {
+            let cy = (y_int + y as i32).clamp(0, plane_height - 1);
+            let cy1 = (y_int + y as i32 + 1).clamp(0, plane_height - 1);
+            let row = ref_plane.row(cy as isize);
+            let row1 = ref_plane.row(cy1 as isize);
+            for x in 0..width as usize {
+                let cx = (x_int + x as i32).clamp(0, plane_width - 1);
+                let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
 
-            let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
+                let val_a = row[cx as usize] as i32;
+                let val_b = row[cx1 as usize] as i32;
+                let val_c = row1[cx as usize] as i32;
+                let val_d = row1[cx1 as usize] as i32;
 
-            dst[y * dst_stride + x] = prediction.clamp(0, 255) as u8;
+                let w00 = (8 - x_frac) * (8 - y_frac);
+                let w10 = x_frac * (8 - y_frac);
+                let w01 = (8 - x_frac) * y_frac;
+                let w11 = x_frac * y_frac;
+
+                let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
+
+                dst[y * dst_stride + x] = prediction.clamp(0, 255) as u8;
+            }
         }
     }
 }

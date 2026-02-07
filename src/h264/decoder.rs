@@ -105,7 +105,7 @@ impl Decoder {
     pub fn new() -> Decoder {
         Decoder {
             context: DecoderContext::default(),
-            dpb: DecodedPictureBuffer::new(1),
+            dpb: DecodedPictureBuffer::new(16), // Initialize with maximum possible size
             output_frames: Vec::new(),
             interpolation_buffer: InterpolationBuffer::new(),
             prev_pic_order_cnt_msb: 0,

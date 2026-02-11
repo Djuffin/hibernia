@@ -401,7 +401,7 @@ pub struct PartitionInfo {
 // resolved to a 4x4 grid.
 #[derive(Clone, Debug, Default)]
 pub struct MbMotion {
-    pub partitions: [[PartitionInfo; 4]; 4],
+    pub partitions: [[Option<PartitionInfo>; 4]; 4],
 }
 
 // Table 7-17 - Sub-macroblock types in P macroblock

@@ -646,7 +646,7 @@ fn check_motion_discontinuity(
         match mb {
             Macroblock::P(pmb) => {
                 let (y, x) = super::residual::unscan_4x4(idx);
-                Some(pmb.motion.partitions[y][x])
+                pmb.motion.partitions[y][x]
             }
             _ => None, // Intra/PCM have no motion
         }

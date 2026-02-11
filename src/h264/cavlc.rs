@@ -32,7 +32,6 @@ pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
 const fn init_total_zeros_lut() -> [[(u8, u8); 512]; 16] {
     let mut lut = [[(0, 0); 512]; 16];
 
-    // Note: Rust 1.64+ supports for loops in const fn
     let mut vlc_idx = 1;
     while vlc_idx <= 15 {
         let mut row_idx = 0;

@@ -8,6 +8,13 @@ use super::{ColorPlane, Point};
 use std::cmp::{max, min};
 use v_frame::plane::Plane;
 
+// Boundary Strength (bS) values
+const BS_STRONG: u8 = 4;
+const BS_INTRA: u8 = 3;
+const BS_CODED: u8 = 2;
+const BS_MOTION: u8 = 1;
+const BS_NONE: u8 = 0;
+
 // Table 8-16
 const ALPHA_TABLE: [u8; 52] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 17, 20,
@@ -240,7 +247,7 @@ fn filter_luma_edge(
 
         // Determine Boundary Strength (bS)
         let bs = get_bs(slice, mb_addr, p_mb_addr, edge_idx, k, is_vertical);
-        if bs == 0 {
+        if bs == BS_NONE {
             continue;
         }
 
@@ -290,7 +297,7 @@ fn filter_luma_edge(
                 )
             };
 
-            if bs < 4 {
+            if bs < BS_STRONG {
                 // Calculate tc0
                 let tc0 = TC0_TABLE[(bs - 1) as usize][index_a];
                 let mut tc = tc0 as i32;
@@ -337,7 +344,7 @@ fn filter_luma_edge(
                     data[q1_idx] = q1_new;
                 }
             } else {
-                // Strong filtering (bs == 4)
+                // Strong filtering (bs == BS_STRONG)
                 let ap = (samples[1] as i32 - p0 as i32).abs();
                 let aq = (samples[6] as i32 - q0 as i32).abs();
 
@@ -431,7 +438,7 @@ fn filter_chroma_edge(
         let luma_k = k * 2;
 
         let bs = get_bs(slice, mb_addr, p_mb_addr, luma_edge_idx, luma_k as usize, is_vertical);
-        if bs == 0 {
+        if bs == BS_NONE {
             continue;
         }
 
@@ -483,7 +490,7 @@ fn filter_chroma_edge(
                 && (p1 as i32 - p0 as i32).abs() < beta as i32
                 && (q1 as i32 - q0 as i32).abs() < beta as i32
             {
-                let (p0_new, q0_new) = if bs < 4 {
+                let (p0_new, q0_new) = if bs < BS_STRONG {
                     let tc0 = TC0_TABLE[(bs - 1) as usize][index_a];
                     let tc = tc0 as i32 + 1; // Chroma always adds 1 to tc0
 
@@ -494,7 +501,7 @@ fn filter_chroma_edge(
                     let q0_new = (q0 as i32 - delta_c).clamp(0, 255) as u8;
                     (p0_new, q0_new)
                 } else {
-                    // bS == 4
+                    // bS == BS_STRONG
                     // 8.7.2.4, chromaStyleFilteringFlag = 1
                     let p0_new = ((2 * (p1 as i32) + (p0 as i32) + (q1 as i32) + 2) >> 2)
                         .clamp(0, 255) as u8;
@@ -573,24 +580,24 @@ fn get_bs(
     if mb_p.is_intra() || mb_q.is_intra() {
         // If edge is a macroblock edge ...
         if edge_idx == 0 {
-            return 4;
+            return BS_STRONG;
         }
-        return 3;
+        return BS_INTRA;
     }
 
     // Condition 2: Non-zero transform coefficients
     // Clause 8.7.2.1: check if the 4x4 luma transform block contains non-zero transform coefficient levels.
 
     if has_nonzero_coeffs(mb_p, blk_p_idx as u8) || has_nonzero_coeffs(mb_q, blk_q_idx as u8) {
-        return 2;
+        return BS_CODED;
     }
 
     // Condition 3: Motion vectors / Reference frames
     if check_motion_discontinuity(slice, mb_p, blk_p_idx, mb_q, blk_q_idx) {
-        return 1;
+        return BS_MOTION;
     }
 
-    0
+    BS_NONE
 }
 
 fn get_qp(mb: &Macroblock) -> u8 {

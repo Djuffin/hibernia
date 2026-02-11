@@ -421,7 +421,7 @@ impl Decoder {
                             &residuals,
                             references,
                             &mut self.interpolation_buffer,
-                        );
+                        )?;
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
@@ -435,7 +435,7 @@ impl Decoder {
                             };
                             render_chroma_inter_prediction(
                                 slice, block, mb_loc, plane_name, frame, &residuals, references,
-                            );
+                            )?;
                         }
                     }
                 }
@@ -686,12 +686,13 @@ pub fn render_luma_inter_prediction(
     residuals: &[Block4x4],
     references: &[DpbPicture],
     buffer: &mut InterpolationBuffer,
-) {
+) -> Result<(), DecodingError> {
     let y_plane = &mut frame.planes[0];
 
     for raster_idx in 0..16 {
         let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize].unwrap();
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize]
+            .ok_or_else(|| DecodingError::MisformedData("Missing motion info".to_string()))?;
 
         let ref_idx = partition.ref_idx_l0;
         let mv = partition.mv_l0;
@@ -745,6 +746,7 @@ pub fn render_luma_inter_prediction(
             }
         }
     }
+    Ok(())
 }
 
 pub fn render_chroma_inter_prediction(
@@ -755,7 +757,7 @@ pub fn render_chroma_inter_prediction(
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
     references: &[DpbPicture],
-) {
+) -> Result<(), DecodingError> {
     let chroma_plane = &mut frame.planes[plane as usize];
     let mb_x_chroma = mb_loc.x >> 1;
     let mb_y_chroma = mb_loc.y >> 1;
@@ -763,7 +765,8 @@ pub fn render_chroma_inter_prediction(
     // 1. Prediction (Block by block 2x2)
     for blk_idx in 0..16 {
         let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize].unwrap();
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize]
+            .ok_or_else(|| DecodingError::MisformedData("Missing motion info".to_string()))?;
         let ref_idx = partition.ref_idx_l0;
         let mv = partition.mv_l0;
 
@@ -821,6 +824,7 @@ pub fn render_chroma_inter_prediction(
             }
         }
     }
+    Ok(())
 }
 
 // Section 8.5.8 Derivation process for chroma quantization parameters

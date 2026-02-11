@@ -18,6 +18,21 @@ impl CoeffToken {
 
 pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
 
+// Generates a 16KB Lookup Table (LUT) for `total_zeros` decoding at compile time.
+//
+// What is this LUT?
+// It maps `(vlc_idx, top_9_bits_of_input)` to `(total_zeros, bit_length)`.
+// `vlc_idx` (1..15) is determined by `total_coeffs`.
+// The inner array has 512 entries, covering all possible 9-bit patterns (2^9 = 512).
+//
+// How it works:
+// The table `TABLE9_7AND8` contains variable-length codes.
+// Shorter codes are "expanded" to fill all 512-entry slots that start with that code's prefix.
+// This allows O(1) lookup by simply indexing with the top 9 bits of the bitstream.
+//
+// Memory Cost:
+// 16 tables * 512 entries/table * 2 bytes/entry = 16,384 bytes (16KB).
+// This fits comfortably in L1 cache on modern CPUs.
 const fn init_total_zeros_lut() -> [[(u8, u8); 512]; 16] {
     let mut lut = [[(0, 0); 512]; 16];
     let mut vlc_idx = 1;

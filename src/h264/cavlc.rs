@@ -18,37 +18,71 @@ impl CoeffToken {
 
 pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
 
+// Generates a 16KB Lookup Table (LUT) for `total_zeros` decoding at compile time.
+//
+// What is this LUT?
+// It maps `(vlc_idx, top_9_bits_of_input)` to `(total_zeros, bit_length)`.
+// `vlc_idx` (1..15) is determined by `total_coeffs`.
+// The inner array has 512 entries, covering all possible 9-bit patterns (2^9 = 512).
+//
+// How it works:
+// The table `TABLE9_7AND8` contains variable-length codes.
+// Shorter codes are "expanded" to fill all 512-entry slots that start with that code's prefix.
+// This allows O(1) lookup by simply indexing with the top 9 bits of the bitstream.
+const fn init_total_zeros_lut() -> [[(u8, u8); 512]; 16] {
+    let mut lut = [[(0, 0); 512]; 16];
+
+    let mut vlc_idx = 1;
+    while vlc_idx <= 15 {
+        let mut row_idx = 0;
+        while row_idx < 16 {
+            let row = tables::TABLE9_7AND8[row_idx];
+            let (pattern, len) = match vlc_idx {
+                1 => row.1,
+                2 => row.2,
+                3 => row.3,
+                4 => row.4,
+                5 => row.5,
+                6 => row.6,
+                7 => row.7,
+                8 => row.8,
+                9 => row.9,
+                10 => row.10,
+                11 => row.11,
+                12 => row.12,
+                13 => row.13,
+                14 => row.14,
+                15 => row.15,
+                _ => (0, 0),
+            };
+
+            if len > 0 {
+                let total_zeros = row.0;
+                let shift = 9 - len;
+                let start = (pattern as usize) << shift;
+                let end = ((pattern as usize) + 1) << shift;
+                let mut i = start;
+                while i < end {
+                    lut[vlc_idx][i] = (total_zeros, len);
+                    i += 1;
+                }
+            }
+            row_idx += 1;
+        }
+        vlc_idx += 1;
+    }
+    lut
+}
+
+static TOTAL_ZEROS_LUT: [[(u8, u8); 512]; 16] = init_total_zeros_lut();
+
 // Naive implementation of Tables 9-7, 9-8 lookup for total_zeros patterns
 fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> (u8, u8) {
-    for row in tables::TABLE9_7AND8 {
-        let (pattern, pattern_len) = match vlc_idx {
-            1 => row.1,
-            2 => row.2,
-            3 => row.3,
-            4 => row.4,
-            5 => row.5,
-            6 => row.6,
-            7 => row.7,
-            8 => row.8,
-            9 => row.9,
-            10 => row.10,
-            11 => row.11,
-            12 => row.12,
-            13 => row.13,
-            14 => row.14,
-            15 => row.15,
-            _ => (0, 0),
-        };
-        if pattern_len == 0 {
-            break;
-        }
-        let shift = u16::BITS - pattern_len as u32;
-        let meaningful_bits = bits >> shift;
-        if meaningful_bits == pattern {
-            return (row.0, pattern_len);
-        }
+    if vlc_idx == 0 || vlc_idx > 15 {
+        return (0, 0);
     }
-    (0, 0)
+    let index = (bits >> 7) as usize;
+    TOTAL_ZEROS_LUT[vlc_idx as usize][index]
 }
 
 // Naive implementation of Tables 9-9 total_zeros patterns

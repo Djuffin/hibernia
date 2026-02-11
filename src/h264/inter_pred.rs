@@ -185,39 +185,49 @@ pub fn interpolate_chroma(
             let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
             let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
             let x_start = x_int as usize;
+
+            let mut val_a = row[x_start] as i32;
+            let mut val_c = row1[x_start] as i32;
+
             for x in 0..width as usize {
-                let val_a = row[x_start + x] as i32;
                 let val_b = row[x_start + x + 1] as i32;
-                let val_c = row1[x_start + x] as i32;
                 let val_d = row1[x_start + x + 1] as i32;
 
                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
                 d[x] = prediction as u8;
+
+                val_a = val_b;
+                val_c = val_d;
             }
         }
     } else {
+        let w00 = (8 - x_frac) * (8 - y_frac);
+        let w10 = x_frac * (8 - y_frac);
+        let w01 = (8 - x_frac) * y_frac;
+        let w11 = x_frac * y_frac;
+
         for y in 0..height as usize {
             let cy = (y_int + y as i32).clamp(0, plane_height - 1);
             let cy1 = (y_int + y as i32 + 1).clamp(0, plane_height - 1);
             let row = ref_plane.row(cy as isize);
             let row1 = ref_plane.row(cy1 as isize);
+
+            let cx_start = x_int.clamp(0, plane_width - 1);
+            let mut val_a = row[cx_start as usize] as i32;
+            let mut val_c = row1[cx_start as usize] as i32;
+
             for x in 0..width as usize {
-                let cx = (x_int + x as i32).clamp(0, plane_width - 1);
                 let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
 
-                let val_a = row[cx as usize] as i32;
                 let val_b = row[cx1 as usize] as i32;
-                let val_c = row1[cx as usize] as i32;
                 let val_d = row1[cx1 as usize] as i32;
-
-                let w00 = (8 - x_frac) * (8 - y_frac);
-                let w10 = x_frac * (8 - y_frac);
-                let w01 = (8 - x_frac) * y_frac;
-                let w11 = x_frac * y_frac;
 
                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
 
-                dst[y * dst_stride + x] = prediction.clamp(0, 255) as u8;
+                dst[y * dst_stride + x] = prediction as u8;
+
+                val_a = val_b;
+                val_c = val_d;
             }
         }
     }
@@ -516,4 +526,5 @@ mod tests {
         interpolate_chroma(&plane, 0, 0, 0, 0, 1, 1, MotionVector { x: 1, y: 0 }, &mut dst, 1);
         assert_eq!(dst[0], 108);
     }
+
 }

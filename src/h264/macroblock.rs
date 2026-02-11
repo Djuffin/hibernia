@@ -401,7 +401,7 @@ pub struct PartitionInfo {
 // resolved to a 4x4 grid.
 #[derive(Clone, Debug, Default)]
 pub struct MbMotion {
-    pub partitions: [[PartitionInfo; 4]; 4],
+    pub partitions: [[Option<PartitionInfo>; 4]; 4],
 }
 
 // Table 7-17 - Sub-macroblock types in P macroblock
@@ -431,6 +431,19 @@ impl SubMbType {
             SubMbType::P_L0_8x4 | SubMbType::P_L0_4x8 => 2,
             SubMbType::P_L0_4x4 => 4,
         }
+    }
+}
+
+impl PartitionInfo {
+    pub fn new(ref_idx: u8, mv: MotionVector) -> Self {
+        Self {
+            ref_idx_l0: ref_idx,
+            mv_l0: mv,
+        }
+    }
+
+    pub fn get_ref_idx(&self) -> u8 {
+        self.ref_idx_l0
     }
 }
 

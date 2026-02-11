@@ -691,7 +691,7 @@ pub fn render_luma_inter_prediction(
 
     for raster_idx in 0..16 {
         let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize].unwrap();
 
         let ref_idx = partition.ref_idx_l0;
         let mv = partition.mv_l0;
@@ -763,7 +763,7 @@ pub fn render_chroma_inter_prediction(
     // 1. Prediction (Block by block 2x2)
     for blk_idx in 0..16 {
         let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize].unwrap();
         let ref_idx = partition.ref_idx_l0;
         let mv = partition.mv_l0;
 

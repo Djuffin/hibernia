@@ -126,8 +126,8 @@ impl Residual {
                         true,
                         qp,
                     );
-                    let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
-                    let block = transform_4x4(&idct_4x4_block);
+                    let mut block = unzip_block_4x4(&idct_coefficients);
+                    transform_4x4(&mut block);
                     result.push(block);
                 }
             } else {
@@ -140,8 +140,8 @@ impl Residual {
                         false,
                         qp,
                     );
-                    let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
-                    let block = transform_4x4(&idct_4x4_block);
+                    let mut block = unzip_block_4x4(&idct_coefficients);
+                    transform_4x4(&mut block);
                     result.push(block);
                 }
             }
@@ -172,8 +172,8 @@ impl Residual {
                     true,
                     qp,
                 );
-                let idct_4x4_block = unzip_block_4x4(&idct_coefficients);
-                let block = transform_4x4(&idct_4x4_block);
+                let mut block = unzip_block_4x4(&idct_coefficients);
+                transform_4x4(&mut block);
                 result.push(block);
             }
         }
@@ -390,11 +390,9 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
 }
 
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks
-pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
-    let d = &block.samples;
-    let mut tmp_block = Block4x4::default();
+pub fn transform_4x4(block: &mut Block4x4) {
+    let d = &mut block.samples;
 
-    let f = &mut tmp_block.samples;
     for i in 0..4 {
         // (8-338)
         let e0 = d[i][0] + d[i][2];
@@ -406,26 +404,24 @@ pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
         let e3 = d[i][1] + (d[i][3] >> 1);
 
         // (8-342)
-        f[i][0] = e0 + e3;
+        d[i][0] = e0 + e3;
         // (8-343)
-        f[i][1] = e1 + e2;
+        d[i][1] = e1 + e2;
         // (8-344)
-        f[i][2] = e1 - e2;
+        d[i][2] = e1 - e2;
         // (8-345)
-        f[i][3] = e0 - e3;
+        d[i][3] = e0 - e3;
     }
 
-    let mut result = Block4x4::default();
-    let r = &mut result.samples;
     for j in 0..4 {
         // (8-346)
-        let g0 = f[0][j] + f[2][j];
+        let g0 = d[0][j] + d[2][j];
         // (8-347)
-        let g1 = f[0][j] - f[2][j];
+        let g1 = d[0][j] - d[2][j];
         // (8-348)
-        let g2 = (f[1][j] >> 1) - f[3][j];
+        let g2 = (d[1][j] >> 1) - d[3][j];
         // (8-349)
-        let g3 = f[1][j] + (f[3][j] >> 1);
+        let g3 = d[1][j] + (d[3][j] >> 1);
 
         // (8-350)
         let h0 = g0 + g3;
@@ -436,13 +432,11 @@ pub fn transform_4x4(block: &Block4x4) -> Block4x4 {
         // (8-353)
         let h3 = g0 - g3;
 
-        r[0][j] = (h0 + 32) >> 6;
-        r[1][j] = (h1 + 32) >> 6;
-        r[2][j] = (h2 + 32) >> 6;
-        r[3][j] = (h3 + 32) >> 6;
+        d[0][j] = (h0 + 32) >> 6;
+        d[1][j] = (h1 + 32) >> 6;
+        d[2][j] = (h2 + 32) >> 6;
+        d[3][j] = (h3 + 32) >> 6;
     }
-
-    result
 }
 
 #[cfg(test)]
@@ -493,7 +487,8 @@ mod tests {
         }
 
         level_scale_4x4_block(&mut block, false, false, qp);
-        let output = transform_4x4(&unzip_block_4x4(&block));
+        let mut output = unzip_block_4x4(&block);
+        transform_4x4(&mut output);
         assert_eq!(output.samples, expected.samples);
     }
 

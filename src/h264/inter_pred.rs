@@ -105,23 +105,116 @@ pub fn interpolate_luma(
             for y in 0..height as usize {
                 let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
                 for x in 0..width as usize {
-                    let val = intermediate[y * 21 + x] - 5 * intermediate[(y + 1) * 21 + x]
-                        + 20 * intermediate[(y + 2) * 21 + x]
-                        + 20 * intermediate[(y + 3) * 21 + x]
-                        - 5 * intermediate[(y + 4) * 21 + x]
-                        + intermediate[(y + 5) * 21 + x];
-                    d[x] = ((val + 512) >> 10).clamp(0, 255) as u8;
+                    let col = [
+                        intermediate[y * 21 + x],
+                        intermediate[(y + 1) * 21 + x],
+                        intermediate[(y + 2) * 21 + x],
+                        intermediate[(y + 3) * 21 + x],
+                        intermediate[(y + 4) * 21 + x],
+                        intermediate[(y + 5) * 21 + x],
+                    ];
+                    d[x] = filter_6tap_center_and_clip(&col);
                 }
             }
         }
-        _ => {
-            // Quarter-pel positions
-            // Optimization: precompute b, h, j if needed
-            // For a 4x4 or 16x16 block, it's worth precomputing some values.
-            // But let's start with a simpler optimization: avoid redundant work in get_j etc.
+        // Group 1: b based
+        (1, 0) | (3, 0) => {
             for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let row = &buffer.data[y + 2];
                 for x in 0..width as usize {
-                    dst[y * dst_stride + x] = interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
+                    let b = filter_6tap_and_clip(&row[x..x + 6]);
+                    let val = if x_frac == 1 {
+                        row[x + 2] as u16 // G
+                    } else {
+                        row[x + 3] as u16 // H
+                    };
+                    d[x] = ((val + b as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        // Group 1: h based
+        (0, 1) | (0, 3) => {
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                for x in 0..width as usize {
+                    let col = buffer.get_vertical_window(x, y);
+                    let h = filter_6tap_and_clip(&col);
+                    let val = if y_frac == 1 {
+                        buffer.data[y + 2][x + 2] as u16 // G
+                    } else {
+                        buffer.data[y + 3][x + 2] as u16 // M
+                    };
+                    d[x] = ((val + h as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        // Group 2: b and h
+        (1, 1) | (3, 1) | (1, 3) | (3, 3) => {
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                for x in 0..width as usize {
+                    let b_val = match y_frac {
+                        1 => filter_6tap_and_clip(&buffer.data[y + 2][x..x + 6]), // b
+                        _ => filter_6tap_and_clip(&buffer.data[y + 3][x..x + 6]), // s (b at y+1)
+                    };
+                    let h_val = match x_frac {
+                        1 => filter_6tap_and_clip(&buffer.get_vertical_window(x, y)), // h
+                        _ => filter_6tap_and_clip(&buffer.get_vertical_window(x + 1, y)), // m (h at x+1)
+                    };
+                    d[x] = ((b_val as u16 + h_val as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        // Group 3: j based (needs intermediate)
+        _ => {
+            // (2, 1), (2, 3), (1, 2), (3, 2)
+            let mut intermediate = [0i32; 21 * 21];
+            for y in 0..buf_h {
+                let row = &buffer.data[y];
+                for x in 0..width as usize {
+                    intermediate[y * 21 + x] = filter_6tap(&row[x..x + 6]);
+                }
+            }
+
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                for x in 0..width as usize {
+                    let j_col = [
+                        intermediate[y * 21 + x],
+                        intermediate[(y + 1) * 21 + x],
+                        intermediate[(y + 2) * 21 + x],
+                        intermediate[(y + 3) * 21 + x],
+                        intermediate[(y + 4) * 21 + x],
+                        intermediate[(y + 5) * 21 + x],
+                    ];
+                    let j = filter_6tap_center_and_clip(&j_col);
+
+                    let val2 = match (x_frac, y_frac) {
+                        (2, 1) => {
+                            // f = (b + j + 1) >> 1. b at y.
+                            // b is derived from intermediate row y+2
+                            let b_unclipped = intermediate[(y + 2) * 21 + x];
+                            ((b_unclipped + 16) >> 5).clamp(0, 255) as u8
+                        }
+                        (2, 3) => {
+                            // q = (j + s + 1) >> 1. s (b at y+1).
+                            // s is derived from intermediate row y+3
+                            let s_unclipped = intermediate[(y + 3) * 21 + x];
+                            ((s_unclipped + 16) >> 5).clamp(0, 255) as u8
+                        }
+                        (1, 2) => {
+                            // i = (h + j + 1) >> 1. h at x.
+                            filter_6tap_and_clip(&buffer.get_vertical_window(x, y))
+                        }
+                        (3, 2) => {
+                            // k = (j + m + 1) >> 1. m (h at x+1).
+                            filter_6tap_and_clip(&buffer.get_vertical_window(x + 1, y))
+                        }
+                        _ => unreachable!(),
+                    };
+
+                    d[x] = ((j as u16 + val2 as u16 + 1) >> 1) as u8;
                 }
             }
         }
@@ -257,6 +350,7 @@ impl InterpolationBuffer {
 
     // Returns the horizontal window for the 6-tap filter centered at (x, y) (half-pel position b)
     // The window covers integer pixels (x-2, y) to (x+3, y).
+    #[allow(dead_code)]
     fn get_horizontal_window(&self, x: usize, y: usize) -> &[i16] {
         &self.data[y + Self::PADDING][x..x + 6]
     }
@@ -276,138 +370,12 @@ impl InterpolationBuffer {
     }
 
     // Returns integer sample at (x, y)
+    #[allow(dead_code)]
     fn get_integer(&self, x: usize, y: usize) -> i16 {
         self.data[y + Self::PADDING][x + Self::PADDING]
     }
 }
 
-/*
- * Luma sample interpolation for quarter-pixel positions (Section 8.4.2.2.1, Figure 8-4).
- * Coordinates x_frac, y_frac are in 1/4th pixel units (0..3).
- * Anchor samples: integer (G, H, M), half-pel (b, h, j, m, s).
- */
-fn interpolate_quarter_pel(
-    buffer: &InterpolationBuffer,
-    x: usize,
-    y: usize,
-    x_frac: i8,
-    y_frac: i8,
-) -> u8 {
-    // get_h: Vertical half-sample 'h' at (x, y + 1/2)
-    let get_h = |tx: usize, ty: usize| {
-        let col = buffer.get_vertical_window(tx, ty);
-        filter_6tap_and_clip(&col)
-    };
-
-    // get_b: Horizontal half-sample 'b' at (x + 1/2, y)
-    let get_b = |tx: usize, ty: usize| filter_6tap_and_clip(buffer.get_horizontal_window(tx, ty));
-
-    // get_j: Center half-sample 'j' at (x + 1/2, y + 1/2)
-    let get_j = |tx: usize, ty: usize| {
-        let mut row_results = [0i32; 6];
-        for i in 0..6 {
-            row_results[i] = filter_6tap(&buffer.data[ty + i][tx..tx + 6]);
-        }
-        filter_6tap_center_and_clip(&row_results)
-    };
-
-    // 'G' is the integer sample at (x, y)
-    let g = buffer.get_integer(x, y) as u8;
-
-    match (x_frac, y_frac) {
-        (1, 0) => {
-            // Position 'a' (1/4, 0)
-            // Equation 8-250: a = (G + b + 1) >> 1
-            let b = get_b(x, y);
-            ((g as u16 + b as u16 + 1) >> 1) as u8
-        }
-        (3, 0) => {
-            // Position 'c' (3/4, 0)
-            // Equation 8-251: c = (H + b + 1) >> 1
-            // 'H' is integer sample at (x + 1, y)
-            let b = get_b(x, y);
-            let h_int = buffer.get_integer(x + 1, y) as u8;
-            ((h_int as u16 + b as u16 + 1) >> 1) as u8
-        }
-        (0, 1) => {
-            // Position 'd' (0, 1/4)
-            // Equation 8-252: d = (G + h + 1) >> 1
-            let h = get_h(x, y);
-            ((g as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (0, 3) => {
-            // Position 'n' (0, 3/4)
-            // Equation 8-253: n = (M + h + 1) >> 1
-            // 'M' is integer sample at (x, y + 1)
-            let h = get_h(x, y);
-            let m_int = buffer.get_integer(x, y + 1) as u8;
-            ((m_int as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (2, 1) => {
-            // Position 'f' (1/2, 1/4)
-            // Equation 8-254: f = (b + j + 1) >> 1
-            let b = get_b(x, y);
-            let j = get_j(x, y);
-            ((b as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (2, 3) => {
-            // Position 'q' (1/2, 3/4)
-            // Equation 8-257: q = (j + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            let s = get_b(x, y + 1);
-            let j = get_j(x, y);
-            ((s as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (1, 2) => {
-            // Position 'i' (1/4, 1/2)
-            // Equation 8-255: i = (h + j + 1) >> 1
-            let h = get_h(x, y);
-            let j = get_j(x, y);
-            ((h as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (3, 2) => {
-            // Position 'k' (3/4, 1/2)
-            // Equation 8-256: k = (j + m + 1) >> 1
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let m = get_h(x + 1, y);
-            let j = get_j(x, y);
-            ((m as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (1, 1) => {
-            // Position 'e' (1/4, 1/4)
-            // Equation 8-258: e = (b + h + 1) >> 1
-            let b = get_b(x, y);
-            let h = get_h(x, y);
-            ((b as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (3, 1) => {
-            // Position 'g' (3/4, 1/4)
-            // Equation 8-259: g = (b + m + 1) >> 1
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let b = get_b(x, y);
-            let m = get_h(x + 1, y);
-            ((b as u16 + m as u16 + 1) >> 1) as u8
-        }
-        (1, 3) => {
-            // Position 'p' (1/4, 3/4)
-            // Equation 8-260: p = (h + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            let s = get_b(x, y + 1);
-            let h = get_h(x, y);
-            ((s as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (3, 3) => {
-            // Position 'r' (3/4, 3/4)
-            // Equation 8-261: r = (m + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let s = get_b(x, y + 1);
-            let m = get_h(x + 1, y);
-            ((m as u16 + s as u16 + 1) >> 1) as u8
-        }
-        _ => unreachable!("x_frac={}, y_frac={}", x_frac, y_frac),
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -515,5 +483,255 @@ mod tests {
         let mut dst = [0u8; 1];
         interpolate_chroma(&plane, 0, 0, 0, 0, 1, 1, MotionVector { x: 1, y: 0 }, &mut dst, 1);
         assert_eq!(dst[0], 108);
+    }
+
+    fn reference_interpolate_quarter_pel(
+        buffer: &InterpolationBuffer,
+        x: usize,
+        y: usize,
+        x_frac: i8,
+        y_frac: i8,
+    ) -> u8 {
+        let get_h = |tx: usize, ty: usize| {
+            let col = buffer.get_vertical_window(tx, ty);
+            filter_6tap_and_clip(&col)
+        };
+
+        let get_b =
+            |tx: usize, ty: usize| filter_6tap_and_clip(buffer.get_horizontal_window(tx, ty));
+
+        let get_j = |tx: usize, ty: usize| {
+            let mut row_results = [0i32; 6];
+            for i in 0..6 {
+                row_results[i] = filter_6tap(&buffer.data[ty + i][tx..tx + 6]);
+            }
+            filter_6tap_center_and_clip(&row_results)
+        };
+
+        let g = buffer.get_integer(x, y) as u8;
+
+        match (x_frac, y_frac) {
+            (1, 0) => {
+                let b = get_b(x, y);
+                ((g as u16 + b as u16 + 1) >> 1) as u8
+            }
+            (3, 0) => {
+                let b = get_b(x, y);
+                let h_int = buffer.get_integer(x + 1, y) as u8;
+                ((h_int as u16 + b as u16 + 1) >> 1) as u8
+            }
+            (0, 1) => {
+                let h = get_h(x, y);
+                ((g as u16 + h as u16 + 1) >> 1) as u8
+            }
+            (0, 3) => {
+                let h = get_h(x, y);
+                let m_int = buffer.get_integer(x, y + 1) as u8;
+                ((m_int as u16 + h as u16 + 1) >> 1) as u8
+            }
+            (2, 1) => {
+                let b = get_b(x, y);
+                let j = get_j(x, y);
+                ((b as u16 + j as u16 + 1) >> 1) as u8
+            }
+            (2, 3) => {
+                let s = get_b(x, y + 1);
+                let j = get_j(x, y);
+                ((s as u16 + j as u16 + 1) >> 1) as u8
+            }
+            (1, 2) => {
+                let h = get_h(x, y);
+                let j = get_j(x, y);
+                ((h as u16 + j as u16 + 1) >> 1) as u8
+            }
+            (3, 2) => {
+                let m = get_h(x + 1, y);
+                let j = get_j(x, y);
+                ((m as u16 + j as u16 + 1) >> 1) as u8
+            }
+            (1, 1) => {
+                let b = get_b(x, y);
+                let h = get_h(x, y);
+                ((b as u16 + h as u16 + 1) >> 1) as u8
+            }
+            (3, 1) => {
+                let b = get_b(x, y);
+                let m = get_h(x + 1, y);
+                ((b as u16 + m as u16 + 1) >> 1) as u8
+            }
+            (1, 3) => {
+                let s = get_b(x, y + 1);
+                let h = get_h(x, y);
+                ((s as u16 + h as u16 + 1) >> 1) as u8
+            }
+            (3, 3) => {
+                let s = get_b(x, y + 1);
+                let m = get_h(x + 1, y);
+                ((m as u16 + s as u16 + 1) >> 1) as u8
+            }
+            _ => unreachable!("x_frac={}, y_frac={}", x_frac, y_frac),
+        }
+    }
+
+    fn reference_interpolate_luma(
+        ref_plane: &Plane<u8>,
+        mb_x: u32,
+        mb_y: u32,
+        blk_x: u8,
+        blk_y: u8,
+        width: u8,
+        height: u8,
+        mv: MotionVector,
+        dst: &mut [u8],
+        dst_stride: usize,
+        buffer: &mut InterpolationBuffer,
+    ) {
+        let x_int = (mb_x as i32) + (blk_x as i32) + (mv.x >> 2) as i32;
+        let y_int = (mb_y as i32) + (blk_y as i32) + (mv.y >> 2) as i32;
+        let x_frac = (mv.x & 3) as i8;
+        let y_frac = (mv.y & 3) as i8;
+
+        let buf_w = (width as usize) + 5;
+        let buf_h = (height as usize) + 5;
+
+        let plane_height = ref_plane.cfg.height as i32;
+        let plane_width = ref_plane.cfg.width as i32;
+
+        if x_int >= 2
+            && x_int + (buf_w as i32) - 2 <= plane_width
+            && y_int >= 2
+            && y_int + (buf_h as i32) - 2 <= plane_height
+        {
+            for y in 0..buf_h {
+                let row = ref_plane.row((y_int + (y as i32) - 2) as isize);
+                let src = &row[(x_int - 2) as usize..(x_int - 2 + buf_w as i32) as usize];
+                for (d, s) in buffer.data[y][..buf_w].iter_mut().zip(src) {
+                    *d = *s as i16;
+                }
+            }
+        } else {
+            for y in 0..buf_h {
+                let cy = (y_int + (y as i32) - 2).clamp(0, plane_height - 1);
+                let row = ref_plane.row(cy as isize);
+                for x in 0..buf_w {
+                    let cx = (x_int + (x as i32) - 2).clamp(0, plane_width - 1);
+                    buffer.data[y][x] = row[cx as usize] as i16;
+                }
+            }
+        }
+
+        match (x_frac, y_frac) {
+            (0, 0) => {
+                for y in 0..height as usize {
+                    let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                    for x in 0..width as usize {
+                        d[x] = buffer.data[y + 2][x + 2] as u8;
+                    }
+                }
+            }
+            (2, 0) => {
+                for y in 0..height as usize {
+                    let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                    let src_row = &buffer.data[y + 2];
+                    for x in 0..width as usize {
+                        d[x] = filter_6tap_and_clip(&src_row[x..x + 6]);
+                    }
+                }
+            }
+            (0, 2) => {
+                for y in 0..height as usize {
+                    let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                    for x in 0..width as usize {
+                        let col = [
+                            buffer.data[y][x + 2],
+                            buffer.data[y + 1][x + 2],
+                            buffer.data[y + 2][x + 2],
+                            buffer.data[y + 3][x + 2],
+                            buffer.data[y + 4][x + 2],
+                            buffer.data[y + 5][x + 2],
+                        ];
+                        d[x] = filter_6tap_and_clip(&col);
+                    }
+                }
+            }
+            (2, 2) => {
+                let mut intermediate = [0i32; 21 * 21];
+                for y in 0..buf_h {
+                    let row = &buffer.data[y];
+                    for x in 0..width as usize {
+                        intermediate[y * 21 + x] = filter_6tap(&row[x..x + 6]);
+                    }
+                }
+                for y in 0..height as usize {
+                    let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                    for x in 0..width as usize {
+                        let val = intermediate[y * 21 + x] - 5 * intermediate[(y + 1) * 21 + x]
+                            + 20 * intermediate[(y + 2) * 21 + x]
+                            + 20 * intermediate[(y + 3) * 21 + x]
+                            - 5 * intermediate[(y + 4) * 21 + x]
+                            + intermediate[(y + 5) * 21 + x];
+                        d[x] = ((val + 512) >> 10).clamp(0, 255) as u8;
+                    }
+                }
+            }
+            _ => {
+                for y in 0..height as usize {
+                    for x in 0..width as usize {
+                        dst[y * dst_stride + x] =
+                            reference_interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_quarter_pel_positions() {
+        // Create a deterministic random plane
+        let mut plane = Plane::new(32, 32, 0, 0, 16, 16);
+        let mut seed = 12345u64;
+        let mut rng = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 33) as u8
+        };
+        for v in plane.data.iter_mut() {
+            *v = rng();
+        }
+
+        let mut buffer = InterpolationBuffer::new();
+        let mut buffer_ref = InterpolationBuffer::new();
+        let mut dst = [0u8; 16];
+        let mut dst_ref = [0u8; 16];
+
+        // Iterate all 16 subpixel positions
+        for y_frac in 0..4 {
+            for x_frac in 0..4 {
+                let mv = MotionVector { x: (x_frac as i16), y: (y_frac as i16) };
+
+                // Run optimized interpolate_luma
+                interpolate_luma(&plane, 2, 2, 0, 0, 4, 4, mv, &mut dst, 4, &mut buffer);
+
+                // Run reference interpolate_luma
+                reference_interpolate_luma(
+                    &plane,
+                    2,
+                    2,
+                    0,
+                    0,
+                    4,
+                    4,
+                    mv,
+                    &mut dst_ref,
+                    4,
+                    &mut buffer_ref,
+                );
+
+                assert_eq!(
+                    dst, dst_ref,
+                    "Mismatch at frac ({}, {})",
+                    x_frac, y_frac
+                );
+            }
+        }
     }
 }

@@ -1,0 +1,872 @@
+   Compiling hibernia v0.1.0 (/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.82s
+     Running unittests src/lib.rs (target/debug/deps/hibernia-f3de2b8cf9ed5b16)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/hibernia-42745354b413c26b)
+
+running 1 test
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=206
+DEBUG PIXEL: win_b=[206, 207, 206, 206, 212, 217]
+DEBUG PIXEL: win_h=[196, 196, 206, 206, 206, 206]
+DEBUG PIXEL: res=206
+DEBUG: Frame 2 MB 0 Type P(PMb { mb_type: P_8x8ref0, motion: MbMotion { partitions: [[PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 0, y: 11 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }], [PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 0, y: 11 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }], [PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 0, y: 7 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 7, y: 4 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 7, y: 4 } }], [PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 0, y: 7 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 6, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 7, y: 4 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 7, y: 4 } }]] }, coded_block_pattern: CodedBlockPattern(5), mb_qp_delta: 0, qp: 0, transform_size_8x8_flag: false, residual: Some(Residual { prediction_mode: None, coded_block_pattern: CodedBlockPattern(5), qp: 0, dc_level16x16: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ac_level16x16: [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], ac_level16x16_nc: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], luma_level4x4: [[0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, -2, 2, -1, 0, 3, -1, -3, 1, 2, -1, 1, 0, -1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, -1, -1, 0, 0, 1, 0, 2, -1, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], luma_level4x4_nc: [2, 0, 11, 1, 0, 0, 0, 0, 6, 0, 1, 0, 0, 0, 0, 0], chroma_cb_dc_level: [0, 0, 0, 0], chroma_cr_dc_level: [0, 0, 0, 0], chroma_cb_ac_level: [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], chroma_cr_ac_level: [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], chroma_cb_level4x4_nc: [0, 0, 0, 0], chroma_cr_level4x4_nc: [0, 0, 0, 0] }) })
+DEBUG: List Modification: RefPicListModifications { list0: [], list1: [] }
+DEBUG: Ref List 0: [0, 1]
+DEBUG: References: [DpbPicture { picture: Picture { frame: Frame { planes: [Plane { data: [128, ...], cfg: PlaneConfig { stride: 256, alloc_height: 176, width: 176, height: 144, xdec: 0, ydec: 0, xpad: 16, ypad: 16, xorigin: 64, yorigin: 16 } }, Plane { data: [128, ...], cfg: PlaneConfig { stride: 192, alloc_height: 88, width: 88, height: 72, xdec: 1, ydec: 1, xpad: 8, ypad: 8, xorigin: 64, yorigin: 8 } }, Plane { data: [128, ...], cfg: PlaneConfig { stride: 192, alloc_height: 88, width: 88, height: 72, xdec: 1, ydec: 1, xpad: 8, ypad: 8, xorigin: 64, yorigin: 8 } }] }, frame_num: 0, pic_order_cnt: 0 }, marking: UsedForShortTermReference, is_idr: true, structure: Frame, needed_for_output: true }, DpbPicture { picture: Picture { frame: Frame { planes: [Plane { data: [128, ...], cfg: PlaneConfig { stride: 256, alloc_height: 176, width: 176, height: 144, xdec: 0, ydec: 0, xpad: 16, ypad: 16, xorigin: 64, yorigin: 16 } }, Plane { data: [128, ...], cfg: PlaneConfig { stride: 192, alloc_height: 88, width: 88, height: 72, xdec: 1, ydec: 1, xpad: 8, ypad: 8, xorigin: 64, yorigin: 8 } }, Plane { data: [128, ...], cfg: PlaneConfig { stride: 192, alloc_height: 88, width: 88, height: 72, xdec: 1, ydec: 1, xpad: 8, ypad: 8, xorigin: 64, yorigin: 8 } }] }, frame_num: 1, pic_order_cnt: 1 }, marking: UsedForShortTermReference, is_idr: false, structure: Frame, needed_for_output: true }]
+DEBUG: Frame 2 MB 1 Type P(PMb { mb_type: P_L0_L0_8x16, motion: MbMotion { partitions: [[PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }], [PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }], [PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }], [PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 0, mv_l0: MotionVector { x: 5, y: 5 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }, PartitionInfo { ref_idx_l0: 1, mv_l0: MotionVector { x: 7, y: 3 } }]] }, coded_block_pattern: CodedBlockPattern(0), mb_qp_delta: 0, qp: 0, transform_size_8x8_flag: false, residual: None })
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=206
+DEBUG PIXEL: win_b=[206, 207, 206, 206, 212, 217]
+DEBUG PIXEL: win_h=[196, 196, 206, 206, 206, 206]
+DEBUG PIXEL: res=206
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=204
+DEBUG PIXEL: win_b=[166, 186, 204, 207, 207, 207]
+DEBUG PIXEL: win_h=[204, 204, 204, 204, 204, 204]
+DEBUG PIXEL: res=207
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=207
+DEBUG PIXEL: win_b=[181, 201, 207, 207, 207, 210]
+DEBUG PIXEL: win_h=[207, 207, 207, 207, 207, 206]
+DEBUG PIXEL: res=207
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=208
+DEBUG PIXEL: win_b=[184, 203, 208, 208, 210, 215]
+DEBUG PIXEL: win_h=[207, 207, 208, 207, 203, 200]
+DEBUG PIXEL: res=208
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=208
+DEBUG PIXEL: win_b=[199, 208, 208, 209, 214, 218]
+DEBUG PIXEL: win_h=[208, 208, 208, 205, 201, 201]
+DEBUG PIXEL: res=208
+DEBUG PIXEL: x_frac=0, y_frac=3
+DEBUG PIXEL: g=209
+DEBUG PIXEL: win_b=[208, 207, 209, 213, 215, 220]
+DEBUG PIXEL: win_h=[209, 209, 209, 209, 209, 209]
+DEBUG PIXEL: res=209
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=209
+DEBUG PIXEL: win_b=[208, 207, 209, 213, 215, 220]
+DEBUG PIXEL: win_h=[209, 209, 209, 209, 209, 209]
+DEBUG PIXEL: res=210
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=201
+DEBUG PIXEL: win_b=[182, 188, 201, 206, 210, 212]
+DEBUG PIXEL: win_h=[201, 201, 201, 201, 201, 202]
+DEBUG PIXEL: res=203
+DEBUG PIXEL: x_frac=1, y_frac=3
+DEBUG PIXEL: g=191
+DEBUG PIXEL: win_b=[171, 184, 191, 203, 207, 211]
+DEBUG PIXEL: win_h=[191, 191, 191, 191, 192, 192]
+DEBUG PIXEL: res=194
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=180
+DEBUG PIXEL: win_b=[161, 168, 180, 191, 200, 206]
+DEBUG PIXEL: win_h=[180, 180, 180, 183, 178, 181]
+DEBUG PIXEL: res=189
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=192
+DEBUG PIXEL: win_b=[164, 180, 192, 196, 220, 238]
+DEBUG PIXEL: win_h=[192, 192, 192, 185, 193, 193]
+DEBUG PIXEL: res=195
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=180
+DEBUG PIXEL: win_b=[161, 168, 180, 191, 200, 206]
+DEBUG PIXEL: win_h=[180, 180, 180, 183, 178, 181]
+DEBUG PIXEL: res=189
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=206
+DEBUG PIXEL: win_b=[182, 199, 206, 217, 221, 211]
+DEBUG PIXEL: win_h=[213, 213, 206, 195, 200, 201]
+DEBUG PIXEL: res=209
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=178
+DEBUG PIXEL: win_b=[170, 176, 178, 192, 200, 210]
+DEBUG PIXEL: win_h=[178, 178, 178, 195, 201, 204]
+DEBUG PIXEL: res=181
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=162
+DEBUG PIXEL: win_b=[165, 164, 162, 173, 188, 190]
+DEBUG PIXEL: win_h=[163, 163, 162, 161, 192, 201]
+DEBUG PIXEL: res=169
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=162
+DEBUG PIXEL: win_b=[164, 165, 162, 163, 185, 203]
+DEBUG PIXEL: win_h=[162, 162, 162, 187, 200, 205]
+DEBUG PIXEL: res=161
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=175
+DEBUG PIXEL: win_b=[165, 167, 175, 192, 203, 205]
+DEBUG PIXEL: win_h=[165, 165, 175, 197, 205, 204]
+DEBUG PIXEL: res=179
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=195
+DEBUG PIXEL: win_b=[179, 188, 195, 202, 205, 205]
+DEBUG PIXEL: win_h=[179, 179, 195, 203, 206, 206]
+DEBUG PIXEL: res=197
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=164
+DEBUG PIXEL: win_b=[164, 164, 164, 164, 164, 165]
+DEBUG PIXEL: win_h=[164, 164, 164, 164, 165, 182]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=182
+DEBUG PIXEL: win_b=[170, 171, 182, 190, 197, 171]
+DEBUG PIXEL: win_h=[182, 182, 182, 197, 204, 208]
+DEBUG PIXEL: res=188
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=179
+DEBUG PIXEL: win_b=[170, 170, 179, 188, 198, 184]
+DEBUG PIXEL: win_h=[179, 179, 179, 193, 203, 209]
+DEBUG PIXEL: res=188
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=188
+DEBUG PIXEL: win_b=[170, 175, 188, 198, 159, 165]
+DEBUG PIXEL: win_h=[188, 188, 188, 188, 202, 207]
+DEBUG PIXEL: res=199
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=199
+DEBUG PIXEL: win_b=[171, 179, 199, 179, 157, 168]
+DEBUG PIXEL: win_h=[199, 199, 199, 209, 210, 208]
+DEBUG PIXEL: res=197
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=199
+DEBUG PIXEL: win_b=[171, 179, 199, 179, 157, 168]
+DEBUG PIXEL: win_h=[199, 199, 199, 209, 210, 208]
+DEBUG PIXEL: res=197
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=168
+DEBUG PIXEL: win_b=[164, 166, 168, 169, 183, 202]
+DEBUG PIXEL: win_h=[168, 168, 168, 167, 171, 187]
+DEBUG PIXEL: res=169
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=169
+DEBUG PIXEL: win_b=[166, 168, 169, 179, 198, 207]
+DEBUG PIXEL: win_h=[169, 169, 169, 175, 188, 200]
+DEBUG PIXEL: res=171
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=166
+DEBUG PIXEL: win_b=[163, 164, 166, 168, 169, 179]
+DEBUG PIXEL: win_h=[166, 166, 166, 166, 163, 164]
+DEBUG PIXEL: res=167
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=167
+DEBUG PIXEL: win_b=[164, 165, 167, 169, 180, 196]
+DEBUG PIXEL: win_h=[167, 167, 167, 164, 168, 184]
+DEBUG PIXEL: res=167
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=171
+DEBUG PIXEL: win_b=[167, 168, 171, 184, 201, 208]
+DEBUG PIXEL: win_h=[171, 171, 171, 179, 193, 203]
+DEBUG PIXEL: res=174
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=168
+DEBUG PIXEL: win_b=[165, 167, 168, 171, 184, 201]
+DEBUG PIXEL: win_h=[168, 168, 168, 168, 173, 187]
+DEBUG PIXEL: res=171
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[162, 164, 165, 163, 167, 180]
+DEBUG PIXEL: win_h=[165, 165, 165, 162, 167, 188]
+DEBUG PIXEL: res=164
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[162, 164, 165, 164, 166, 176]
+DEBUG PIXEL: win_h=[165, 165, 165, 163, 167, 186]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[162, 164, 165, 164, 166, 176]
+DEBUG PIXEL: win_h=[165, 165, 165, 165, 163, 167]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[162, 164, 165, 165, 165, 172]
+DEBUG PIXEL: win_h=[165, 165, 165, 165, 165, 178]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[164, 165, 165, 165, 172, 189]
+DEBUG PIXEL: win_h=[165, 165, 165, 162, 167, 187]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[161, 163, 165, 165, 165, 167]
+DEBUG PIXEL: win_h=[165, 165, 165, 166, 165, 174]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[161, 163, 165, 165, 165, 167]
+DEBUG PIXEL: win_h=[165, 165, 165, 166, 165, 174]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=162
+DEBUG PIXEL: win_b=[159, 161, 162, 164, 164, 164]
+DEBUG PIXEL: win_h=[162, 162, 162, 162, 162, 162]
+DEBUG PIXEL: res=163
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=164
+DEBUG PIXEL: win_b=[155, 162, 164, 166, 166, 166]
+DEBUG PIXEL: win_h=[164, 164, 164, 164, 164, 164]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=163
+DEBUG PIXEL: win_b=[154, 157, 163, 165, 166, 166]
+DEBUG PIXEL: win_h=[163, 163, 163, 163, 163, 163]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=2, y_frac=1
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[157, 163, 165, 166, 166, 166]
+DEBUG PIXEL: win_h=[165, 165, 165, 165, 165, 165]
+DEBUG PIXEL: res=166
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=192
+DEBUG PIXEL: win_b=[178, 187, 192, 171, 179, 150]
+DEBUG PIXEL: win_h=[192, 192, 192, 214, 235, 227]
+DEBUG PIXEL: res=176
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=187
+DEBUG PIXEL: win_b=[252, 230, 187, 182, 194, 176]
+DEBUG PIXEL: win_h=[187, 187, 187, 192, 198, 201]
+DEBUG PIXEL: res=188
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=236
+DEBUG PIXEL: win_b=[255, 252, 236, 211, 188, 200]
+DEBUG PIXEL: win_h=[236, 236, 236, 216, 198, 195]
+DEBUG PIXEL: res=218
+DEBUG PIXEL: x_frac=3, y_frac=1
+DEBUG PIXEL: g=245
+DEBUG PIXEL: win_b=[252, 251, 245, 225, 205, 193]
+DEBUG PIXEL: win_h=[255, 255, 245, 212, 201, 209]
+DEBUG PIXEL: res=224
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=243
+DEBUG PIXEL: win_b=[254, 251, 243, 240, 224, 209]
+DEBUG PIXEL: win_h=[243, 243, 243, 214, 207, 199]
+DEBUG PIXEL: res=241
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=225
+DEBUG PIXEL: win_b=[246, 247, 225, 212, 207, 202]
+DEBUG PIXEL: win_h=[249, 249, 225, 212, 202, 198]
+DEBUG PIXEL: res=221
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=243
+DEBUG PIXEL: win_b=[249, 247, 243, 221, 211, 206]
+DEBUG PIXEL: win_h=[243, 243, 243, 243, 212, 201]
+DEBUG PIXEL: res=228
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=228
+DEBUG PIXEL: win_b=[249, 247, 228, 213, 208, 201]
+DEBUG PIXEL: win_h=[228, 228, 228, 215, 205, 201]
+DEBUG PIXEL: res=224
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=243
+DEBUG PIXEL: win_b=[251, 250, 243, 224, 212, 207]
+DEBUG PIXEL: win_h=[243, 243, 243, 219, 203, 205]
+DEBUG PIXEL: res=229
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=255
+DEBUG PIXEL: win_b=[253, 255, 255, 255, 246, 227]
+DEBUG PIXEL: win_h=[255, 255, 255, 250, 220, 208]
+DEBUG PIXEL: res=255
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=255
+DEBUG PIXEL: win_b=[251, 253, 255, 255, 255, 249]
+DEBUG PIXEL: win_h=[255, 255, 255, 255, 253, 226]
+DEBUG PIXEL: res=255
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=255
+DEBUG PIXEL: win_b=[251, 253, 255, 255, 255, 252]
+DEBUG PIXEL: win_h=[255, 255, 255, 255, 254, 227]
+DEBUG PIXEL: res=255
+DEBUG PIXEL: x_frac=3, y_frac=1
+DEBUG PIXEL: g=255
+DEBUG PIXEL: win_b=[252, 253, 255, 255, 252, 237]
+DEBUG PIXEL: win_h=[255, 255, 255, 255, 255, 236]
+DEBUG PIXEL: res=255
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=252
+DEBUG PIXEL: win_b=[254, 254, 252, 252, 253, 254]
+DEBUG PIXEL: win_h=[252, 252, 252, 252, 254, 251]
+DEBUG PIXEL: res=252
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=252
+DEBUG PIXEL: win_b=[254, 254, 252, 252, 254, 254]
+DEBUG PIXEL: win_h=[252, 252, 252, 252, 254, 252]
+DEBUG PIXEL: res=252
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[254, 254, 254, 253, 253, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 254, 254, 252]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[254, 254, 254, 253, 253, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 254, 254, 252]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[254, 254, 254, 254, 253, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 254, 254, 253]
+DEBUG PIXEL: res=253
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[254, 254, 254, 254, 253, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 254, 254, 253]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[254, 254, 254, 254, 253, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 254, 254, 247]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[254, 254, 254, 254, 253, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 254, 254, 254]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=253
+DEBUG PIXEL: win_b=[252, 252, 253, 254, 254, 253]
+DEBUG PIXEL: win_h=[253, 253, 253, 253, 253, 254]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=253
+DEBUG PIXEL: win_b=[252, 252, 253, 254, 254, 253]
+DEBUG PIXEL: win_h=[253, 253, 253, 253, 253, 254]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=0, y_frac=3
+DEBUG PIXEL: g=253
+DEBUG PIXEL: win_b=[251, 253, 253, 253, 254, 253]
+DEBUG PIXEL: win_h=[253, 253, 253, 253, 254, 254]
+DEBUG PIXEL: res=253
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=252
+DEBUG PIXEL: win_b=[252, 252, 252, 254, 255, 253]
+DEBUG PIXEL: win_h=[253, 253, 252, 254, 246, 221]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[252, 253, 254, 254, 253, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 254, 255, 244]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=253
+DEBUG PIXEL: win_b=[252, 252, 253, 254, 254, 253]
+DEBUG PIXEL: win_h=[253, 253, 253, 252, 254, 246]
+DEBUG PIXEL: res=253
+DEBUG PIXEL: x_frac=1, y_frac=3
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[252, 252, 254, 255, 254, 254]
+DEBUG PIXEL: win_h=[254, 254, 254, 255, 245, 216]
+DEBUG PIXEL: res=255
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=254
+DEBUG PIXEL: win_b=[252, 253, 254, 254, 253, 255]
+DEBUG PIXEL: win_h=[254, 254, 254, 255, 254, 238]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=253
+DEBUG PIXEL: win_b=[253, 253, 253, 254, 255, 255]
+DEBUG PIXEL: win_h=[252, 252, 253, 253, 245, 231]
+DEBUG PIXEL: res=254
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=252
+DEBUG PIXEL: win_b=[253, 252, 252, 253, 254, 254]
+DEBUG PIXEL: win_h=[252, 252, 252, 253, 253, 245]
+DEBUG PIXEL: res=253
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=223
+DEBUG PIXEL: win_b=[245, 229, 223, 223, 216, 214]
+DEBUG PIXEL: win_h=[223, 223, 223, 201, 209, 221]
+DEBUG PIXEL: res=215
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[215, 206, 214, 213, 213, 217]
+DEBUG PIXEL: win_h=[214, 214, 214, 197, 210, 217]
+DEBUG PIXEL: res=210
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=210
+DEBUG PIXEL: win_b=[209, 206, 210, 208, 236, 228]
+DEBUG PIXEL: win_h=[210, 210, 210, 198, 214, 212]
+DEBUG PIXEL: res=208
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=206
+DEBUG PIXEL: win_b=[239, 209, 206, 210, 208, 236]
+DEBUG PIXEL: win_h=[206, 206, 206, 204, 216, 210]
+DEBUG PIXEL: res=202
+DEBUG PIXEL: x_frac=3, y_frac=1
+DEBUG PIXEL: g=210
+DEBUG PIXEL: win_b=[209, 206, 210, 208, 236, 228]
+DEBUG PIXEL: win_h=[210, 210, 210, 198, 214, 212]
+DEBUG PIXEL: res=205
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=206
+DEBUG PIXEL: win_b=[215, 204, 206, 205, 225, 228]
+DEBUG PIXEL: win_h=[206, 206, 206, 206, 203, 217]
+DEBUG PIXEL: res=205
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=198
+DEBUG PIXEL: win_b=[208, 204, 198, 202, 214, 212]
+DEBUG PIXEL: win_h=[210, 210, 198, 214, 212, 190]
+DEBUG PIXEL: res=210
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=208
+DEBUG PIXEL: win_b=[225, 213, 208, 203, 203, 209]
+DEBUG PIXEL: win_h=[208, 208, 208, 217, 207, 204]
+DEBUG PIXEL: res=204
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=217
+DEBUG PIXEL: win_b=[213, 217, 217, 218, 211, 209]
+DEBUG PIXEL: win_h=[203, 203, 217, 206, 192, 194]
+DEBUG PIXEL: res=218
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=212
+DEBUG PIXEL: win_b=[215, 213, 212, 214, 216, 212]
+DEBUG PIXEL: win_h=[212, 212, 212, 203, 205, 203]
+DEBUG PIXEL: res=213
+DEBUG PIXEL: x_frac=0, y_frac=3
+DEBUG PIXEL: g=213
+DEBUG PIXEL: win_b=[213, 212, 213, 215, 215, 217]
+DEBUG PIXEL: win_h=[213, 213, 213, 213, 193, 184]
+DEBUG PIXEL: res=214
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[211, 212, 214, 216, 215, 217]
+DEBUG PIXEL: win_h=[214, 214, 214, 199, 185, 188]
+DEBUG PIXEL: res=215
+DEBUG PIXEL: x_frac=1, y_frac=3
+DEBUG PIXEL: g=215
+DEBUG PIXEL: win_b=[212, 213, 215, 216, 216, 217]
+DEBUG PIXEL: win_h=[215, 215, 215, 215, 199, 181]
+DEBUG PIXEL: res=216
+DEBUG PIXEL: x_frac=2, y_frac=1
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[211, 212, 214, 216, 215, 217]
+DEBUG PIXEL: win_h=[214, 214, 214, 199, 185, 188]
+DEBUG PIXEL: res=213
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[211, 212, 214, 216, 215, 217]
+DEBUG PIXEL: win_h=[214, 214, 214, 199, 185, 188]
+DEBUG PIXEL: res=206
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=206
+DEBUG PIXEL: win_b=[209, 205, 206, 214, 221, 215]
+DEBUG PIXEL: win_h=[206, 206, 206, 184, 178, 186]
+DEBUG PIXEL: res=212
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=215
+DEBUG PIXEL: win_b=[213, 214, 215, 216, 216, 216]
+DEBUG PIXEL: win_h=[215, 215, 215, 205, 184, 180]
+DEBUG PIXEL: res=214
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[210, 211, 214, 217, 218, 219]
+DEBUG PIXEL: win_h=[214, 214, 214, 214, 198, 182]
+DEBUG PIXEL: res=217
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[210, 211, 214, 217, 218, 219]
+DEBUG PIXEL: win_h=[214, 214, 214, 198, 182, 182]
+DEBUG PIXEL: res=211
+DEBUG PIXEL: x_frac=3, y_frac=1
+DEBUG PIXEL: g=208
+DEBUG PIXEL: win_b=[211, 209, 208, 211, 217, 219]
+DEBUG PIXEL: win_h=[208, 208, 208, 192, 190, 194]
+DEBUG PIXEL: res=207
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[210, 211, 214, 217, 217, 218]
+DEBUG PIXEL: win_h=[214, 214, 214, 205, 187, 187]
+DEBUG PIXEL: res=214
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=210
+DEBUG PIXEL: win_b=[209, 210, 210, 211, 214, 216]
+DEBUG PIXEL: win_h=[210, 210, 210, 211, 214, 211]
+DEBUG PIXEL: res=210
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=209
+DEBUG PIXEL: win_b=[214, 215, 209, 210, 210, 212]
+DEBUG PIXEL: win_h=[209, 209, 209, 209, 213, 216]
+DEBUG PIXEL: res=210
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=218
+DEBUG PIXEL: win_b=[209, 208, 218, 214, 213, 213]
+DEBUG PIXEL: win_h=[218, 218, 218, 216, 218, 220]
+DEBUG PIXEL: res=216
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=218
+DEBUG PIXEL: win_b=[208, 211, 218, 214, 213, 213]
+DEBUG PIXEL: win_h=[218, 218, 218, 216, 218, 220]
+DEBUG PIXEL: res=218
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=215
+DEBUG PIXEL: win_b=[212, 218, 215, 213, 213, 214]
+DEBUG PIXEL: win_h=[215, 215, 215, 215, 217, 219]
+DEBUG PIXEL: res=215
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=211
+DEBUG PIXEL: win_b=[214, 208, 211, 218, 214, 213]
+DEBUG PIXEL: win_h=[211, 211, 211, 215, 217, 217]
+DEBUG PIXEL: res=217
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=215
+DEBUG PIXEL: win_b=[220, 214, 215, 216, 216, 215]
+DEBUG PIXEL: win_h=[211, 211, 215, 217, 217, 218]
+DEBUG PIXEL: res=217
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=219
+DEBUG PIXEL: win_b=[213, 216, 219, 219, 221, 219]
+DEBUG PIXEL: win_h=[217, 217, 219, 220, 222, 220]
+DEBUG PIXEL: res=219
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=216
+DEBUG PIXEL: win_b=[215, 215, 216, 216, 216, 214]
+DEBUG PIXEL: win_h=[217, 217, 216, 218, 220, 221]
+DEBUG PIXEL: res=217
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=217
+DEBUG PIXEL: win_b=[216, 217, 217, 218, 217, 208]
+DEBUG PIXEL: win_h=[217, 217, 217, 219, 221, 223]
+DEBUG PIXEL: res=218
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=213
+DEBUG PIXEL: win_b=[214, 214, 213, 216, 214, 202]
+DEBUG PIXEL: win_h=[213, 213, 213, 213, 216, 213]
+DEBUG PIXEL: res=214
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=215
+DEBUG PIXEL: win_b=[214, 214, 215, 219, 216, 199]
+DEBUG PIXEL: win_h=[215, 215, 215, 215, 211, 206]
+DEBUG PIXEL: res=215
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=215
+DEBUG PIXEL: win_b=[214, 214, 215, 219, 216, 199]
+DEBUG PIXEL: win_h=[215, 215, 215, 215, 211, 206]
+DEBUG PIXEL: res=218
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=195
+DEBUG PIXEL: win_b=[219, 214, 195, 187, 184, 177]
+DEBUG PIXEL: win_h=[199, 199, 195, 190, 176, 164]
+DEBUG PIXEL: res=192
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=187
+DEBUG PIXEL: win_b=[205, 192, 187, 175, 161, 158]
+DEBUG PIXEL: win_h=[187, 187, 187, 186, 173, 165]
+DEBUG PIXEL: res=179
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=171
+DEBUG PIXEL: win_b=[191, 185, 171, 159, 158, 164]
+DEBUG PIXEL: win_h=[171, 171, 171, 171, 175, 171]
+DEBUG PIXEL: res=168
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=168
+DEBUG PIXEL: win_b=[190, 182, 168, 158, 160, 166]
+DEBUG PIXEL: win_h=[168, 168, 168, 168, 175, 171]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=179
+DEBUG PIXEL: win_b=[196, 189, 179, 165, 158, 162]
+DEBUG PIXEL: win_h=[179, 179, 179, 179, 179, 176]
+DEBUG PIXEL: res=172
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=160
+DEBUG PIXEL: win_b=[185, 172, 160, 159, 167, 164]
+DEBUG PIXEL: win_h=[160, 160, 160, 160, 160, 174]
+DEBUG PIXEL: res=158
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=169
+DEBUG PIXEL: win_b=[190, 182, 169, 158, 162, 166]
+DEBUG PIXEL: win_h=[169, 169, 169, 169, 169, 176]
+DEBUG PIXEL: res=160
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=187
+DEBUG PIXEL: win_b=[205, 194, 187, 176, 163, 158]
+DEBUG PIXEL: win_h=[187, 187, 187, 187, 185, 173]
+DEBUG PIXEL: res=182
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=182
+DEBUG PIXEL: win_b=[200, 191, 182, 169, 159, 161]
+DEBUG PIXEL: win_h=[182, 182, 182, 183, 177, 171]
+DEBUG PIXEL: res=173
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=182
+DEBUG PIXEL: win_b=[200, 191, 182, 169, 159, 161]
+DEBUG PIXEL: win_h=[182, 182, 182, 183, 177, 171]
+DEBUG PIXEL: res=179
+DEBUG PIXEL: x_frac=0, y_frac=3
+DEBUG PIXEL: g=173
+DEBUG PIXEL: win_b=[193, 185, 173, 161, 162, 166]
+DEBUG PIXEL: win_h=[173, 173, 173, 173, 173, 176]
+DEBUG PIXEL: res=173
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=179
+DEBUG PIXEL: win_b=[197, 189, 179, 166, 160, 165]
+DEBUG PIXEL: win_h=[179, 179, 179, 180, 176, 173]
+DEBUG PIXEL: res=176
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=176
+DEBUG PIXEL: win_b=[195, 185, 176, 162, 158, 161]
+DEBUG PIXEL: win_h=[176, 176, 176, 176, 177, 174]
+DEBUG PIXEL: res=166
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=185
+DEBUG PIXEL: win_b=[211, 195, 185, 176, 162, 158]
+DEBUG PIXEL: win_h=[185, 185, 185, 185, 183, 171]
+DEBUG PIXEL: res=179
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=185
+DEBUG PIXEL: win_b=[211, 195, 185, 176, 162, 158]
+DEBUG PIXEL: win_h=[185, 185, 185, 185, 183, 171]
+DEBUG PIXEL: res=179
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=179
+DEBUG PIXEL: win_b=[200, 187, 179, 166, 159, 160]
+DEBUG PIXEL: win_h=[179, 179, 179, 179, 180, 179]
+DEBUG PIXEL: res=173
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=166
+DEBUG PIXEL: win_b=[187, 179, 166, 159, 162, 166]
+DEBUG PIXEL: win_h=[166, 166, 166, 165, 168, 171]
+DEBUG PIXEL: res=163
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=179
+DEBUG PIXEL: win_b=[188, 184, 179, 168, 163, 167]
+DEBUG PIXEL: win_h=[180, 180, 179, 171, 165, 164]
+DEBUG PIXEL: res=171
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=158
+DEBUG PIXEL: win_b=[182, 169, 158, 160, 166, 169]
+DEBUG PIXEL: win_h=[158, 158, 158, 161, 169, 171]
+DEBUG PIXEL: res=159
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=159
+DEBUG PIXEL: win_b=[183, 169, 159, 162, 165, 168]
+DEBUG PIXEL: win_h=[159, 159, 159, 164, 170, 169]
+DEBUG PIXEL: res=159
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=166
+DEBUG PIXEL: win_b=[189, 180, 166, 159, 163, 166]
+DEBUG PIXEL: win_h=[166, 166, 166, 169, 171, 169]
+DEBUG PIXEL: res=160
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=160
+DEBUG PIXEL: win_b=[183, 170, 160, 162, 166, 168]
+DEBUG PIXEL: win_h=[160, 160, 160, 166, 170, 169]
+DEBUG PIXEL: res=161
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=161
+DEBUG PIXEL: win_b=[174, 162, 161, 165, 168, 171]
+DEBUG PIXEL: win_h=[161, 161, 161, 161, 167, 169]
+DEBUG PIXEL: res=162
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=166
+DEBUG PIXEL: win_b=[189, 180, 166, 159, 163, 166]
+DEBUG PIXEL: win_h=[166, 166, 166, 169, 171, 169]
+DEBUG PIXEL: res=160
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=183
+DEBUG PIXEL: win_b=[200, 191, 183, 170, 160, 162]
+DEBUG PIXEL: win_h=[183, 183, 183, 181, 172, 166]
+DEBUG PIXEL: res=174
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=174
+DEBUG PIXEL: win_b=[194, 185, 174, 162, 161, 165]
+DEBUG PIXEL: win_h=[174, 174, 174, 175, 173, 169]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=177
+DEBUG PIXEL: win_b=[196, 188, 177, 165, 161, 158]
+DEBUG PIXEL: win_h=[177, 177, 177, 178, 173, 169]
+DEBUG PIXEL: res=168
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=177
+DEBUG PIXEL: win_b=[196, 188, 177, 165, 161, 158]
+DEBUG PIXEL: win_h=[177, 177, 177, 178, 173, 169]
+DEBUG PIXEL: res=178
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=172
+DEBUG PIXEL: win_b=[186, 181, 172, 166, 167, 171]
+DEBUG PIXEL: win_h=[172, 172, 172, 172, 169, 167]
+DEBUG PIXEL: res=167
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=185
+DEBUG PIXEL: win_b=[188, 188, 185, 181, 177, 173]
+DEBUG PIXEL: win_h=[196, 196, 185, 171, 166, 164]
+DEBUG PIXEL: res=184
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=183
+DEBUG PIXEL: win_b=[191, 187, 183, 175, 167, 169]
+DEBUG PIXEL: win_h=[183, 183, 183, 172, 165, 163]
+DEBUG PIXEL: res=178
+DEBUG PIXEL: x_frac=1, y_frac=2
+DEBUG PIXEL: g=178
+DEBUG PIXEL: win_b=[188, 184, 178, 169, 166, 166]
+DEBUG PIXEL: win_h=[178, 178, 178, 172, 168, 165]
+DEBUG PIXEL: res=174
+DEBUG PIXEL: x_frac=2, y_frac=1
+DEBUG PIXEL: g=184
+DEBUG PIXEL: win_b=[192, 188, 184, 178, 169, 166]
+DEBUG PIXEL: win_h=[184, 184, 184, 184, 172, 164]
+DEBUG PIXEL: res=183
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=183
+DEBUG PIXEL: win_b=[191, 187, 183, 173, 167, 167]
+DEBUG PIXEL: win_h=[183, 183, 183, 180, 171, 166]
+DEBUG PIXEL: res=181
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=180
+DEBUG PIXEL: win_b=[188, 183, 180, 173, 167, 165]
+DEBUG PIXEL: win_h=[180, 180, 180, 171, 166, 165]
+DEBUG PIXEL: res=179
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=180
+DEBUG PIXEL: win_b=[188, 183, 180, 173, 167, 165]
+DEBUG PIXEL: win_h=[180, 180, 180, 171, 166, 165]
+DEBUG PIXEL: res=175
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=168
+DEBUG PIXEL: win_b=[181, 175, 168, 166, 164, 162]
+DEBUG PIXEL: win_h=[168, 168, 168, 169, 165, 164]
+DEBUG PIXEL: res=167
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=185
+DEBUG PIXEL: win_b=[191, 190, 185, 182, 177, 170]
+DEBUG PIXEL: win_h=[185, 185, 185, 171, 166, 170]
+DEBUG PIXEL: res=183
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=190
+DEBUG PIXEL: win_b=[175, 185, 190, 191, 186, 183]
+DEBUG PIXEL: win_h=[190, 190, 190, 188, 200, 204]
+DEBUG PIXEL: res=191
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=182
+DEBUG PIXEL: win_b=[189, 184, 182, 176, 169, 166]
+DEBUG PIXEL: win_h=[182, 182, 182, 170, 165, 164]
+DEBUG PIXEL: res=181
+DEBUG PIXEL: x_frac=1, y_frac=3
+DEBUG PIXEL: g=191
+DEBUG PIXEL: win_b=[184, 189, 191, 188, 184, 181]
+DEBUG PIXEL: win_h=[191, 191, 191, 186, 194, 197]
+DEBUG PIXEL: res=185
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=165
+DEBUG PIXEL: win_b=[173, 170, 165, 160, 157, 156]
+DEBUG PIXEL: win_h=[166, 166, 165, 164, 159, 156]
+DEBUG PIXEL: res=164
+DEBUG PIXEL: x_frac=0, y_frac=3
+DEBUG PIXEL: g=161
+DEBUG PIXEL: win_b=[171, 163, 161, 169, 172, 170]
+DEBUG PIXEL: win_h=[161, 161, 161, 161, 164, 169]
+DEBUG PIXEL: res=161
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=161
+DEBUG PIXEL: win_b=[172, 167, 161, 165, 171, 171]
+DEBUG PIXEL: win_h=[161, 161, 161, 166, 164, 162]
+DEBUG PIXEL: res=164
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=169
+DEBUG PIXEL: win_b=[163, 161, 169, 172, 170, 169]
+DEBUG PIXEL: win_h=[169, 169, 169, 168, 168, 171]
+DEBUG PIXEL: res=172
+DEBUG PIXEL: x_frac=3, y_frac=3
+DEBUG PIXEL: g=163
+DEBUG PIXEL: win_b=[170, 168, 163, 161, 162, 162]
+DEBUG PIXEL: win_h=[163, 163, 163, 163, 168, 175]
+DEBUG PIXEL: res=161
+DEBUG PIXEL: x_frac=1, y_frac=3
+DEBUG PIXEL: g=170
+DEBUG PIXEL: win_b=[163, 166, 170, 169, 164, 161]
+DEBUG PIXEL: win_h=[170, 170, 170, 169, 169, 172]
+DEBUG PIXEL: res=169
+DEBUG PIXEL: x_frac=3, y_frac=0
+DEBUG PIXEL: g=164
+DEBUG PIXEL: win_b=[168, 166, 164, 165, 164, 173]
+DEBUG PIXEL: win_h=[164, 164, 164, 164, 164, 164]
+DEBUG PIXEL: res=165
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=189
+DEBUG PIXEL: win_b=[189, 189, 189, 189, 189, 189]
+DEBUG PIXEL: win_h=[190, 189, 189, 190, 190, 190]
+DEBUG PIXEL: res=189
+DEBUG PIXEL: x_frac=3, y_frac=1
+DEBUG PIXEL: g=205
+DEBUG PIXEL: win_b=[203, 205, 205, 205, 206, 205]
+DEBUG PIXEL: win_h=[215, 206, 205, 193, 199, 182]
+DEBUG PIXEL: res=201
+DEBUG PIXEL: x_frac=1, y_frac=0
+DEBUG PIXEL: g=172
+DEBUG PIXEL: win_b=[172, 170, 172, 176, 206, 207]
+DEBUG PIXEL: win_h=[174, 154, 172, 173, 182, 189]
+DEBUG PIXEL: res=172
+DEBUG PIXEL: x_frac=2, y_frac=1
+DEBUG PIXEL: g=209
+DEBUG PIXEL: win_b=[214, 216, 209, 201, 202, 202]
+DEBUG PIXEL: win_h=[189, 187, 209, 209, 207, 204]
+DEBUG PIXEL: res=205
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=205
+DEBUG PIXEL: win_b=[206, 205, 205, 193, 184, 209]
+DEBUG PIXEL: win_h=[202, 203, 205, 203, 201, 204]
+DEBUG PIXEL: res=203
+DEBUG PIXEL: x_frac=3, y_frac=2
+DEBUG PIXEL: g=214
+DEBUG PIXEL: win_b=[176, 206, 214, 169, 173, 197]
+DEBUG PIXEL: win_h=[177, 186, 214, 204, 216, 213]
+DEBUG PIXEL: res=188
+DEBUG PIXEL: x_frac=1, y_frac=1
+DEBUG PIXEL: g=211
+DEBUG PIXEL: win_b=[199, 210, 211, 213, 214, 214]
+DEBUG PIXEL: win_h=[201, 206, 211, 210, 206, 205]
+DEBUG PIXEL: res=212
+DEBUG PIXEL: x_frac=2, y_frac=3
+DEBUG PIXEL: g=209
+DEBUG PIXEL: win_b=[210, 207, 209, 212, 199, 198]
+DEBUG PIXEL: win_h=[209, 209, 209, 209, 209, 209]
+DEBUG PIXEL: res=212
+DEBUG PIXEL: x_frac=3, y_frac=1
+DEBUG PIXEL: g=197
+DEBUG PIXEL: win_b=[211, 206, 197, 196, 197, 207]
+DEBUG PIXEL: win_h=[197, 197, 197, 197, 197, 197]
+DEBUG PIXEL: res=196
+DEBUG PIXEL: x_frac=1, y_frac=3
+DEBUG PIXEL: g=152
+DEBUG PIXEL: win_b=[188, 162, 152, 150, 185, 170]
+DEBUG PIXEL: win_h=[152, 152, 152, 152, 152, 152]
+DEBUG PIXEL: res=149
+DEBUG PIXEL: x_frac=2, y_frac=1
+DEBUG PIXEL: g=197
+DEBUG PIXEL: win_b=[216, 234, 197, 182, 217, 229]
+DEBUG PIXEL: win_h=[197, 197, 197, 197, 197, 197]
+DEBUG PIXEL: res=180
+DEBUG PIXEL: x_frac=0, y_frac=1
+DEBUG PIXEL: g=146
+DEBUG PIXEL: win_b=[199, 163, 146, 145, 173, 179]
+DEBUG PIXEL: win_h=[146, 146, 146, 146, 146, 146]
+DEBUG PIXEL: res=146
+DEBUG PIXEL: x_frac=3, y_frac=1
+DEBUG PIXEL: g=149
+DEBUG PIXEL: win_b=[168, 172, 149, 152, 163, 170]
+DEBUG PIXEL: win_h=[149, 149, 149, 149, 149, 149]
+DEBUG PIXEL: res=149
+DEBUG PIXEL: x_frac=0, y_frac=3
+DEBUG PIXEL: g=199
+DEBUG PIXEL: win_b=[188, 206, 199, 195, 222, 236]
+DEBUG PIXEL: win_h=[196, 197, 199, 202, 204, 205]
+DEBUG PIXEL: res=202
+Error: "Frame #2 mismatch: Y-plane mismatch at 4,0 (MB:0) : 223 != 224\nU-plane mismatch at 2,0 (MB:0) : 119 != 118\nV-plane mismatch at 5,0 (MB:0) width_in_mb:11 : 130 != 131\n"
+test tests::test_BA2_Sony_F ... FAILED
+
+failures:
+
+failures:
+    tests::test_BA2_Sony_F
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 6.99s
+
+error: test failed, to rerun pass `--bin hibernia`

@@ -333,6 +333,7 @@ impl Decoder {
             let mb_addr = first_mb_addr + i as u32;
             let mb_loc = slice.get_mb_location(mb_addr);
 
+
             if let Some(mb) = slice.get_mb(mb_addr) {
                 match mb {
                     Macroblock::PCM(block) => {

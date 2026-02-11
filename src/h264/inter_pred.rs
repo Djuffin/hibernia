@@ -121,7 +121,18 @@ pub fn interpolate_luma(
             // But let's start with a simpler optimization: avoid redundant work in get_j etc.
             for y in 0..height as usize {
                 for x in 0..width as usize {
-                    dst[y * dst_stride + x] = interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
+                    let val = interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
+                    if mb_x == 16 && mb_y == 0 && blk_x == 4 && blk_y == 0 && x == 2 && y == 0 {
+                         let g = buffer.get_integer(x, y);
+                         let win_b = buffer.get_horizontal_window(x, y);
+                         let win_h = buffer.get_vertical_window(x, y);
+                         println!("DEBUG PIXEL: x_frac={}, y_frac={}", x_frac, y_frac);
+                         println!("DEBUG PIXEL: g={}", g);
+                         println!("DEBUG PIXEL: win_b={:?}", win_b);
+                         println!("DEBUG PIXEL: win_h={:?}", win_h);
+                         println!("DEBUG PIXEL: res={}", val);
+                    }
+                    dst[y * dst_stride + x] = val;
                 }
             }
         }

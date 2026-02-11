@@ -642,41 +642,32 @@ fn check_motion_discontinuity(
     // Only P slices with L0 are fully supported currently.
     // Get PartitionInfo for the 4x4 blocks.
 
-    let get_part = |mb: &Macroblock, idx: usize| -> Option<super::macroblock::PartitionInfo> {
+    let get_part = |mb: &Macroblock, idx: usize| -> super::macroblock::PartitionInfo {
         match mb {
             Macroblock::P(pmb) => {
                 let (y, x) = super::residual::unscan_4x4(idx);
-                pmb.motion.partitions[y][x]
+                pmb.motion.partitions[y][x].unwrap_or_default()
             }
-            _ => None, // Intra/PCM have no motion
+            _ => super::macroblock::PartitionInfo::default(), // Intra/PCM have no motion
         }
     };
 
-    let p_part = get_part(mb_p, blk_p_idx);
-    let q_part = get_part(mb_q, blk_q_idx);
+    let pp = get_part(mb_p, blk_p_idx);
+    let qq = get_part(mb_q, blk_q_idx);
 
-    match (p_part, q_part) {
-        (Some(pp), Some(qq)) => {
-            // Check ref index
-            let ref_p = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize);
-            let ref_q = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize);
+    // Check ref index
+    let ref_p = slice.ref_pic_list0.get(pp.get_ref_idx() as usize);
+    let ref_q = slice.ref_pic_list0.get(qq.get_ref_idx() as usize);
 
-            if ref_p != ref_q {
-                return true;
-            }
-            // Check MV difference >= 4 (quarter pel units)
-            let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
-            let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
-
-            if mv_diff_x >= 4 || mv_diff_y >= 4 {
-                return true;
-            }
-            false
-        }
-        // One Inter, one Intra/PCM.
-        // (Intra is usually handled in Condition 1, but this covers structural mismatches).
-        (Some(_), None) | (None, Some(_)) => true,
-        // Both invalid/missing.
-        (None, None) => false,
+    if ref_p != ref_q {
+        return true;
     }
+    // Check MV difference >= 4 (quarter pel units)
+    let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
+    let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
+
+    if mv_diff_x >= 4 || mv_diff_y >= 4 {
+        return true;
+    }
+    false
 }

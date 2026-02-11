@@ -434,6 +434,19 @@ impl SubMbType {
     }
 }
 
+impl PartitionInfo {
+    pub fn new(ref_idx: u8, mv: MotionVector) -> Self {
+        Self {
+            ref_idx_l0: ref_idx,
+            mv_l0: mv,
+        }
+    }
+
+    pub fn get_ref_idx(&self) -> u8 {
+        self.ref_idx_l0
+    }
+}
+
 // Holds data for a P_8x8 sub-macroblock
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SubMacroblock {

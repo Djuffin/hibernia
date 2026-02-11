@@ -185,39 +185,49 @@ pub fn interpolate_chroma(
             let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
             let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
             let x_start = x_int as usize;
+
+            let mut val_a = row[x_start] as i32;
+            let mut val_c = row1[x_start] as i32;
+
             for x in 0..width as usize {
-                let val_a = row[x_start + x] as i32;
                 let val_b = row[x_start + x + 1] as i32;
-                let val_c = row1[x_start + x] as i32;
                 let val_d = row1[x_start + x + 1] as i32;
 
                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
                 d[x] = prediction as u8;
+
+                val_a = val_b;
+                val_c = val_d;
             }
         }
     } else {
+        let w00 = (8 - x_frac) * (8 - y_frac);
+        let w10 = x_frac * (8 - y_frac);
+        let w01 = (8 - x_frac) * y_frac;
+        let w11 = x_frac * y_frac;
+
         for y in 0..height as usize {
             let cy = (y_int + y as i32).clamp(0, plane_height - 1);
             let cy1 = (y_int + y as i32 + 1).clamp(0, plane_height - 1);
             let row = ref_plane.row(cy as isize);
             let row1 = ref_plane.row(cy1 as isize);
+
+            let cx_start = x_int.clamp(0, plane_width - 1);
+            let mut val_a = row[cx_start as usize] as i32;
+            let mut val_c = row1[cx_start as usize] as i32;
+
             for x in 0..width as usize {
-                let cx = (x_int + x as i32).clamp(0, plane_width - 1);
                 let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
 
-                let val_a = row[cx as usize] as i32;
                 let val_b = row[cx1 as usize] as i32;
-                let val_c = row1[cx as usize] as i32;
                 let val_d = row1[cx1 as usize] as i32;
-
-                let w00 = (8 - x_frac) * (8 - y_frac);
-                let w10 = x_frac * (8 - y_frac);
-                let w01 = (8 - x_frac) * y_frac;
-                let w11 = x_frac * y_frac;
 
                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
 
-                dst[y * dst_stride + x] = prediction.clamp(0, 255) as u8;
+                dst[y * dst_stride + x] = prediction as u8;
+
+                val_a = val_b;
+                val_c = val_d;
             }
         }
     }
@@ -515,5 +525,54 @@ mod tests {
         let mut dst = [0u8; 1];
         interpolate_chroma(&plane, 0, 0, 0, 0, 1, 1, MotionVector { x: 1, y: 0 }, &mut dst, 1);
         assert_eq!(dst[0], 108);
+    }
+
+    #[test]
+    fn test_interpolate_chroma_boundary() {
+        // Plane size 16x16.
+        // Try to access at bottom right, requiring boundary checks.
+        let mut plane = Plane::new(16, 16, 0, 0, 16, 16);
+        // Fill everything with 100, including padding.
+        plane.data.fill(100);
+
+        // Make padding different to ensure we are clamping.
+        // Padding starts after visible data.
+        // But layout is row-major with stride.
+        // stride = 16 + 16 + 16 = 48.
+        // 16 padding left, 16 width, 16 padding right.
+        // 16 padding top, 16 height, 16 padding bottom.
+        // Accessing x=16 (out of bounds) should map to x=15.
+        // Let's set x=15 to 100, and x=16 (in padding) to 50.
+        // We need to modify row 0 (in visible coordinates).
+        // Row 0 is at offset: padding_top * stride + padding_left = 16 * 48 + 16.
+        // x=15 is at offset + 15.
+        // x=16 is at offset + 16.
+
+        // Let's use mut_slice/mut_row to be safe.
+        // We can't access padding easily via slice APIs.
+        // But we can access `data` directly.
+        let stride = plane.cfg.stride;
+        let start = plane.cfg.yorigin * stride + plane.cfg.xorigin;
+        // x=15
+        plane.data[start + 15] = 100;
+        // x=16 (padding)
+        plane.data[start + 16] = 50;
+
+        let mut dst = [0u8; 16];
+        // mb_x=14, width=2. Block at 14, 15.
+        // MV (+0.5) shifts sampling to 14.5, 15.5.
+        // For x=1 (pixel 15), we need 15 and 16.
+        // 16 should be clamped to 15 (value 100).
+        // If not clamped, it takes 16 (value 50).
+        // Average of 100 and 100 is 100.
+        // Average of 100 and 50 is 75.
+
+        interpolate_chroma(&plane, 14, 0, 0, 0, 2, 2, MotionVector { x: 4, y: 0 }, &mut dst, 2);
+
+        // dst[0] is for x=0 (pixel 14). interpolates 14 and 15.
+        // dst[1] is for x=1 (pixel 15). interpolates 15 and 16(clamped).
+
+        // Check dst[1].
+        assert_eq!(dst[1], 100);
     }
 }

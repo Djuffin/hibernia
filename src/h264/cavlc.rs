@@ -29,10 +29,6 @@ pub(crate) type BitPattern = (/* bit pattern */ u16, /* length */ u8);
 // The table `TABLE9_7AND8` contains variable-length codes.
 // Shorter codes are "expanded" to fill all 512-entry slots that start with that code's prefix.
 // This allows O(1) lookup by simply indexing with the top 9 bits of the bitstream.
-//
-// Memory Cost:
-// 16 tables * 512 entries/table * 2 bytes/entry = 16,384 bytes (16KB).
-// This fits comfortably in L1 cache on modern CPUs.
 const fn init_total_zeros_lut() -> [[(u8, u8); 512]; 16] {
     let mut lut = [[(0, 0); 512]; 16];
     let mut vlc_idx = 1;

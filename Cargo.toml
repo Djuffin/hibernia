@@ -18,3 +18,7 @@ criterion = "0.5"
 [[bench]]
 name = "decoding"
 harness = false
+
+[[bench]]
+name = "inter_pred"
+harness = false

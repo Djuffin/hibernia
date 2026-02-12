@@ -114,17 +114,173 @@ pub fn interpolate_luma(
                 }
             }
         }
-        _ => {
-            // Quarter-pel positions
-            // Optimization: precompute b, h, j if needed
-            // For a 4x4 or 16x16 block, it's worth precomputing some values.
-            // But let's start with a simpler optimization: avoid redundant work in get_j etc.
+        (1, 0) => {
+            // Position 'a' (1/4, 0)
+            // Equation 8-250: a = (G + b + 1) >> 1
             for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src_row = &buffer.data[y + 2];
                 for x in 0..width as usize {
-                    dst[y * dst_stride + x] = interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
+                    let g = src_row[x + 2];
+                    let b = filter_6tap_and_clip(&src_row[x..x + 6]);
+                    d[x] = ((g as u16 + b as u16 + 1) >> 1) as u8;
                 }
             }
         }
+        (3, 0) => {
+            // Position 'c' (3/4, 0)
+            // Equation 8-251: c = (H + b + 1) >> 1
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src_row = &buffer.data[y + 2];
+                for x in 0..width as usize {
+                    let h = src_row[x + 3];
+                    let b = filter_6tap_and_clip(&src_row[x..x + 6]);
+                    d[x] = ((h as u16 + b as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        (0, 1) => {
+            // Position 'd' (0, 1/4)
+            // Equation 8-252: d = (G + h + 1) >> 1
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                for x in 0..width as usize {
+                    let g = buffer.data[y + 2][x + 2];
+                    let h = filter_6tap_vertical_and_clip(buffer, x, y);
+                    d[x] = ((g as u16 + h as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        (0, 3) => {
+            // Position 'n' (0, 3/4)
+            // Equation 8-253: n = (M + h + 1) >> 1
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                for x in 0..width as usize {
+                    let m = buffer.data[y + 3][x + 2];
+                    let h = filter_6tap_vertical_and_clip(buffer, x, y);
+                    d[x] = ((m as u16 + h as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        (1, 1) => {
+            // Position 'e' (1/4, 1/4)
+            // Equation 8-258: e = (b + h + 1) >> 1
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src_row = &buffer.data[y + 2];
+                for x in 0..width as usize {
+                    let b = filter_6tap_and_clip(&src_row[x..x + 6]);
+                    let h = filter_6tap_vertical_and_clip(buffer, x, y);
+                    d[x] = ((b as u16 + h as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        (3, 1) => {
+            // Position 'g' (3/4, 1/4)
+            // Equation 8-259: g = (b + m + 1) >> 1
+            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src_row = &buffer.data[y + 2];
+                for x in 0..width as usize {
+                    let b = filter_6tap_and_clip(&src_row[x..x + 6]);
+                    let m = filter_6tap_vertical_and_clip(buffer, x + 1, y);
+                    d[x] = ((b as u16 + m as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        (1, 3) => {
+            // Position 'p' (1/4, 3/4)
+            // Equation 8-260: p = (h + s + 1) >> 1
+            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src_row_next = &buffer.data[y + 3];
+                for x in 0..width as usize {
+                    let h = filter_6tap_vertical_and_clip(buffer, x, y);
+                    let s = filter_6tap_and_clip(&src_row_next[x..x + 6]);
+                    d[x] = ((h as u16 + s as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        (3, 3) => {
+            // Position 'r' (3/4, 3/4)
+            // Equation 8-261: r = (m + s + 1) >> 1
+            for y in 0..height as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src_row_next = &buffer.data[y + 3];
+                for x in 0..width as usize {
+                    let m = filter_6tap_vertical_and_clip(buffer, x + 1, y);
+                    let s = filter_6tap_and_clip(&src_row_next[x..x + 6]);
+                    d[x] = ((m as u16 + s as u16 + 1) >> 1) as u8;
+                }
+            }
+        }
+        // Cases needing j (center half-sample)
+        (2, 1) | (2, 3) | (1, 2) | (3, 2) => {
+            let mut intermediate = [0i32; 21 * 21];
+            for y in 0..buf_h {
+                let row = &buffer.data[y];
+                for x in 0..width as usize {
+                    intermediate[y * 21 + x] = filter_6tap(&row[x..x + 6]);
+                }
+            }
+
+            match (x_frac, y_frac) {
+                (2, 1) => {
+                    // Position 'f' (1/2, 1/4)
+                    // Equation 8-254: f = (b + j + 1) >> 1
+                    for y in 0..height as usize {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                        for x in 0..width as usize {
+                            let b = clip_intermediate(intermediate[y * 21 + x]);
+                            let j = get_j_from_intermediate(&intermediate, x, y);
+                            d[x] = ((b as u16 + j as u16 + 1) >> 1) as u8;
+                        }
+                    }
+                }
+                (2, 3) => {
+                    // Position 'q' (1/2, 3/4)
+                    // Equation 8-257: q = (j + s + 1) >> 1
+                    for y in 0..height as usize {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                        for x in 0..width as usize {
+                            let j = get_j_from_intermediate(&intermediate, x, y);
+                            let s = clip_intermediate(intermediate[(y + 1) * 21 + x]);
+                            d[x] = ((j as u16 + s as u16 + 1) >> 1) as u8;
+                        }
+                    }
+                }
+                (1, 2) => {
+                    // Position 'i' (1/4, 1/2)
+                    // Equation 8-255: i = (h + j + 1) >> 1
+                    for y in 0..height as usize {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                        for x in 0..width as usize {
+                            let h = filter_6tap_vertical_and_clip(buffer, x, y);
+                            let j = get_j_from_intermediate(&intermediate, x, y);
+                            d[x] = ((h as u16 + j as u16 + 1) >> 1) as u8;
+                        }
+                    }
+                }
+                (3, 2) => {
+                    // Position 'k' (3/4, 1/2)
+                    // Equation 8-256: k = (j + m + 1) >> 1
+                    for y in 0..height as usize {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                        for x in 0..width as usize {
+                            let j = get_j_from_intermediate(&intermediate, x, y);
+                            let m = filter_6tap_vertical_and_clip(buffer, x + 1, y);
+                            d[x] = ((j as u16 + m as u16 + 1) >> 1) as u8;
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!("x_frac={}, y_frac={}", x_frac, y_frac),
     }
 }
 
@@ -233,22 +389,46 @@ pub fn interpolate_chroma(
     }
 }
 
-#[inline]
+#[inline(always)]
 fn filter_6tap(p: &[i16]) -> i32 {
     (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32) + 20 * (p[3] as i32) - 5 * (p[4] as i32)
         + (p[5] as i32)
 }
 
-#[inline]
+#[inline(always)]
 fn filter_6tap_and_clip(p: &[i16]) -> u8 {
     let val = filter_6tap(p);
     ((val + 16) >> 5).clamp(0, 255) as u8
 }
 
-#[inline]
-fn filter_6tap_center_and_clip(p: &[i32]) -> u8 {
-    let val = p[0] - 5 * p[1] + 20 * p[2] + 20 * p[3] - 5 * p[4] + p[5];
+#[inline(always)]
+fn filter_6tap_vertical_and_clip(buffer: &InterpolationBuffer, x: usize, y: usize) -> u8 {
+    let col = x + 2;
+    let val = (buffer.data[y][col] as i32)
+        - 5 * (buffer.data[y + 1][col] as i32)
+        + 20 * (buffer.data[y + 2][col] as i32)
+        + 20 * (buffer.data[y + 3][col] as i32)
+        - 5 * (buffer.data[y + 4][col] as i32)
+        + (buffer.data[y + 5][col] as i32);
+    ((val + 16) >> 5).clamp(0, 255) as u8
+}
+
+#[inline(always)]
+fn get_j_from_intermediate(intermediate: &[i32], x: usize, y: usize) -> u8 {
+    // 21 is the width of intermediate buffer (InterploationBuffer::data width)
+    let stride = 21;
+    let val = intermediate[y * stride + x]
+        - 5 * intermediate[(y + 1) * stride + x]
+        + 20 * intermediate[(y + 2) * stride + x]
+        + 20 * intermediate[(y + 3) * stride + x]
+        - 5 * intermediate[(y + 4) * stride + x]
+        + intermediate[(y + 5) * stride + x];
     ((val + 512) >> 10).clamp(0, 255) as u8
+}
+
+#[inline(always)]
+fn clip_intermediate(val: i32) -> u8 {
+    ((val + 16) >> 5).clamp(0, 255) as u8
 }
 
 /// Buffer for storing integer pixels with padding for 6-tap filtering.
@@ -259,163 +439,8 @@ pub struct InterpolationBuffer {
 }
 
 impl InterpolationBuffer {
-    const PADDING: usize = 2;
-
     pub fn new() -> Self {
         Self { data: [[0; 21]; 21] }
-    }
-
-    // Returns the horizontal window for the 6-tap filter centered at (x, y) (half-pel position b)
-    // The window covers integer pixels (x-2, y) to (x+3, y).
-    fn get_horizontal_window(&self, x: usize, y: usize) -> &[i16] {
-        &self.data[y + Self::PADDING][x..x + 6]
-    }
-
-    // Returns the vertical window for the 6-tap filter centered at (x, y) (half-pel position h)
-    // The window covers integer pixels (x, y-2) to (x, y+3).
-    fn get_vertical_window(&self, x: usize, y: usize) -> [i16; 6] {
-        let col = x + Self::PADDING;
-        [
-            self.data[y][col],
-            self.data[y + 1][col],
-            self.data[y + 2][col],
-            self.data[y + 3][col],
-            self.data[y + 4][col],
-            self.data[y + 5][col],
-        ]
-    }
-
-    // Returns integer sample at (x, y)
-    fn get_integer(&self, x: usize, y: usize) -> i16 {
-        self.data[y + Self::PADDING][x + Self::PADDING]
-    }
-}
-
-/*
- * Luma sample interpolation for quarter-pixel positions (Section 8.4.2.2.1, Figure 8-4).
- * Coordinates x_frac, y_frac are in 1/4th pixel units (0..3).
- * Anchor samples: integer (G, H, M), half-pel (b, h, j, m, s).
- */
-fn interpolate_quarter_pel(
-    buffer: &InterpolationBuffer,
-    x: usize,
-    y: usize,
-    x_frac: i8,
-    y_frac: i8,
-) -> u8 {
-    // get_h: Vertical half-sample 'h' at (x, y + 1/2)
-    let get_h = |tx: usize, ty: usize| {
-        let col = buffer.get_vertical_window(tx, ty);
-        filter_6tap_and_clip(&col)
-    };
-
-    // get_b: Horizontal half-sample 'b' at (x + 1/2, y)
-    let get_b = |tx: usize, ty: usize| filter_6tap_and_clip(buffer.get_horizontal_window(tx, ty));
-
-    // get_j: Center half-sample 'j' at (x + 1/2, y + 1/2)
-    let get_j = |tx: usize, ty: usize| {
-        let mut row_results = [0i32; 6];
-        for i in 0..6 {
-            row_results[i] = filter_6tap(&buffer.data[ty + i][tx..tx + 6]);
-        }
-        filter_6tap_center_and_clip(&row_results)
-    };
-
-    // 'G' is the integer sample at (x, y)
-    let g = buffer.get_integer(x, y) as u8;
-
-    match (x_frac, y_frac) {
-        (1, 0) => {
-            // Position 'a' (1/4, 0)
-            // Equation 8-250: a = (G + b + 1) >> 1
-            let b = get_b(x, y);
-            ((g as u16 + b as u16 + 1) >> 1) as u8
-        }
-        (3, 0) => {
-            // Position 'c' (3/4, 0)
-            // Equation 8-251: c = (H + b + 1) >> 1
-            // 'H' is integer sample at (x + 1, y)
-            let b = get_b(x, y);
-            let h_int = buffer.get_integer(x + 1, y) as u8;
-            ((h_int as u16 + b as u16 + 1) >> 1) as u8
-        }
-        (0, 1) => {
-            // Position 'd' (0, 1/4)
-            // Equation 8-252: d = (G + h + 1) >> 1
-            let h = get_h(x, y);
-            ((g as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (0, 3) => {
-            // Position 'n' (0, 3/4)
-            // Equation 8-253: n = (M + h + 1) >> 1
-            // 'M' is integer sample at (x, y + 1)
-            let h = get_h(x, y);
-            let m_int = buffer.get_integer(x, y + 1) as u8;
-            ((m_int as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (2, 1) => {
-            // Position 'f' (1/2, 1/4)
-            // Equation 8-254: f = (b + j + 1) >> 1
-            let b = get_b(x, y);
-            let j = get_j(x, y);
-            ((b as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (2, 3) => {
-            // Position 'q' (1/2, 3/4)
-            // Equation 8-257: q = (j + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            let s = get_b(x, y + 1);
-            let j = get_j(x, y);
-            ((s as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (1, 2) => {
-            // Position 'i' (1/4, 1/2)
-            // Equation 8-255: i = (h + j + 1) >> 1
-            let h = get_h(x, y);
-            let j = get_j(x, y);
-            ((h as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (3, 2) => {
-            // Position 'k' (3/4, 1/2)
-            // Equation 8-256: k = (j + m + 1) >> 1
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let m = get_h(x + 1, y);
-            let j = get_j(x, y);
-            ((m as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (1, 1) => {
-            // Position 'e' (1/4, 1/4)
-            // Equation 8-258: e = (b + h + 1) >> 1
-            let b = get_b(x, y);
-            let h = get_h(x, y);
-            ((b as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (3, 1) => {
-            // Position 'g' (3/4, 1/4)
-            // Equation 8-259: g = (b + m + 1) >> 1
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let b = get_b(x, y);
-            let m = get_h(x + 1, y);
-            ((b as u16 + m as u16 + 1) >> 1) as u8
-        }
-        (1, 3) => {
-            // Position 'p' (1/4, 3/4)
-            // Equation 8-260: p = (h + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            let s = get_b(x, y + 1);
-            let h = get_h(x, y);
-            ((s as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (3, 3) => {
-            // Position 'r' (3/4, 3/4)
-            // Equation 8-261: r = (m + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let s = get_b(x, y + 1);
-            let m = get_h(x + 1, y);
-            ((m as u16 + s as u16 + 1) >> 1) as u8
-        }
-        _ => unreachable!("x_frac={}, y_frac={}", x_frac, y_frac),
     }
 }
 

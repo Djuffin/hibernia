@@ -411,7 +411,7 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     None
 }
 
-pub fn remove_emulation_if_needed(input: &[u8]) -> Cow<[u8]> {
+pub fn remove_emulation_if_needed(input: &[u8]) -> Cow<'_, [u8]> {
     let mut zeros = 0;
     let mut result = Vec::<u8>::new();
     for (byte_index, byte) in input.iter().enumerate() {

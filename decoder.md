@@ -32,28 +32,46 @@ The redesign splits the monolithic `Decoder` into two distinct layers:
 
 ### 3.1. Transport Layer: `NalParser`
 
-A new `NalParser` struct will be introduced to handle Annex B stream parsing. It will implement `Iterator` and yield `Result<NalUnit>`.
+A new `NalParser` struct will be introduced to handle Annex B stream parsing. It will implement `Iterator` and yield `Result<Vec<u8>, std::io::Error>`.
 
 ```rust
-pub enum NalUnit<'a> {
-    Borrowed(&'a [u8]),
-    Owned(Vec<u8>),
-}
-
 pub struct NalParser<R> {
     reader: R,
-    buffer: Vec<u8>,
+    // Buffer for reading chunks from the reader
+    chunk_buffer: Vec<u8>,
+    // Buffer for accumulating the current NAL unit
+    nal_buffer: Vec<u8>,
+}
+
+impl<R: BufRead> NalParser<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            chunk_buffer: vec![0; 4096], // Default chunk size
+            nal_buffer: Vec::new(),
+        }
+    }
 }
 
 impl<R: BufRead> Iterator for NalParser<R> {
-    type Item = Result<Vec<u8>, std::io::Error>; // or Cow<'a, [u8]> if possible
+    type Item = Result<Vec<u8>, std::io::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Implementation to find start codes (0x000001 or 0x00000001)
-        // and extract NAL units.
+        // 1. Read bytes from `reader` into `chunk_buffer`.
+        // 2. Scan `chunk_buffer` for start codes (0x000001 or 0x00000001).
+        // 3. Accumulate bytes into `nal_buffer` until a start code is found.
+        // 4. When a start code is found:
+        //    a. Yield the accumulated `nal_buffer` as a NAL unit.
+        //    b. Clear `nal_buffer` and continue processing.
+        // 5. Handle EOF: Yield any remaining bytes in `nal_buffer` if valid.
     }
 }
 ```
+
+**Key Design Decisions:**
+- **`BufRead` Trait**: Requires the reader to be buffered, allowing efficient byte-by-byte or chunk scanning.
+- **State Maintenance**: The parser maintains state across `next()` calls to handle start codes that might be split across read chunks.
+- **Allocation**: Returns `Vec<u8>` for simplicity initially. Future optimization can use `Cow` or a custom buffer pool to reduce allocations.
 
 ### 3.2. Decoding Layer: `Decoder`
 
@@ -88,8 +106,16 @@ impl Decoder {
 ## 4. Detailed Refactoring Plan
 
 ### Phase 1: NAL Parser Extraction
-1.  **Create `src/h264/nal_parser.rs`**: Implement `NalParser` that takes a `BufRead` (or `Read` and buffers internally) and yields `Vec<u8>` containing NAL units (including headers, stripping start codes).
-2.  **Test `NalParser`**: Ensure it correctly handles various start code formats and edge cases (split across reads).
+1.  **Create `src/h264/nal_parser.rs`**:
+    - Implement `NalParser` struct with `BufRead` generic.
+    - Implement `Iterator` for `NalParser`.
+    - Logic should handle:
+        - Searching for 3-byte (0x000001) and 4-byte (0x00000001) start codes.
+        - Accumulating data between start codes.
+        - Correctly handling EOF.
+2.  **Test `NalParser`**:
+    - **Unit Tests**: Test with various byte patterns, split start codes across chunks, empty streams, and streams without start codes.
+    - **Integration Test**: Verify it can correctly parse known H.264 files.
 
 ### Phase 2: Decoder Core Refactoring
 1.  **Refactor `Decoder::decode`**:

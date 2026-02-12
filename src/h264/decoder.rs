@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::cmp::{max, min, Ordering};
 use std::io::Read;
 
@@ -72,7 +73,7 @@ impl DecoderContext {
 pub struct Decoder {
     context: DecoderContext,
     dpb: DecodedPictureBuffer,
-    output_frames: Vec<VideoFrame>,
+    output_frames: VecDeque<VideoFrame>,
     interpolation_buffer: InterpolationBuffer,
     poc_state: PocState,
 }
@@ -99,141 +100,139 @@ impl Decoder {
         Decoder {
             context: DecoderContext::default(),
             dpb: DecodedPictureBuffer::new(),
-            output_frames: Vec::new(),
+            output_frames: VecDeque::new(),
             interpolation_buffer: InterpolationBuffer::new(),
             poc_state: PocState::new(),
         }
     }
 
-    pub fn decode(&mut self, data: &[u8]) -> Result<(), DecodingError> {
+    pub fn decode(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
         use nal::NalUnitType;
-        let mut input = parser::BitReader::new(data);
+        
+        let nal_vec = parser::remove_emulation_if_needed(nal_data);
+        let rbsp_data = if nal_vec.is_empty() {
+            nal_data
+        } else {
+            nal_vec.as_slice()
+        };
+        
+        let mut input = parser::BitReader::new(rbsp_data);
         let parse_error_handler = DecodingError::MisformedData;
-        loop {
-            if input.remaining() < 4 * 8 {
-                info!("End of data");
-                break;
-            }
-            info!("---------------------------------------------------");
-            let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
-            assert!(input.is_aligned());
-            info!("NAL {:?}", nal);
-            let cur_byte_index = (input.position() / 8) as usize;
-            let nal_size_bytes =
-                if let Some(bytes) = parser::count_bytes_till_start_code(&data[cur_byte_index..]) {
-                    bytes
-                } else {
-                    data.len() - cur_byte_index
-                };
-            let nal_buffer = &data[cur_byte_index..cur_byte_index + nal_size_bytes];
-            let nal_vec = parser::remove_emulation_if_needed(nal_buffer);
-            let mut unit_input = if nal_vec.is_empty() {
-                parser::BitReader::new(nal_buffer)
-            } else {
-                parser::BitReader::new(nal_vec.as_slice())
-            };
-            input.skip((nal_size_bytes * 8) as u32).map_err(parse_error_handler)?;
 
-            match nal.nal_unit_type {
-                NalUnitType::Unspecified => {}
-                NalUnitType::SliceDataA => {}
-                NalUnitType::SliceDataB => {}
-                NalUnitType::SliceDataC => {}
-                NalUnitType::IDRSlice | NalUnitType::NonIDRSlice => {
-                    let mut slice =
-                        parser::parse_slice_header(&self.context, &nal, &mut unit_input)
-                            .map_err(parse_error_handler)?;
+        info!("---------------------------------------------------");
+        let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
+        assert!(input.is_aligned());
+        info!("NAL {:?}", nal);
 
-                    info!("{:?} {:#?}", nal.nal_unit_type, slice);
-                    let frame = VideoFrame::new_with_padding(
-                        slice.sps.pic_width(),
-                        slice.sps.pic_height(),
-                        v_frame::pixel::ChromaSampling::Cs420,
-                        16,
-                    );
-
-                    let disposition = if nal.nal_unit_type == NalUnitType::IDRSlice {
-                        ReferenceDisposition::Idr
-                    } else if nal.nal_ref_idc != 0 {
-                        ReferenceDisposition::NonIdrReference
-                    } else {
-                        ReferenceDisposition::NonReference
-                    };
-
-                    let pic_order_cnt = self.poc_state.calculate_poc(&slice, disposition);
-
-                    let pic = Picture { frame, frame_num: slice.header.frame_num, pic_order_cnt };
-                    let dpb_pic = DpbPicture {
-                        picture: pic,
-                        marking: if nal.nal_ref_idc != 0 {
-                            super::dpb::DpbMarking::UsedForShortTermReference
-                        } else {
-                            super::dpb::DpbMarking::UnusedForReference
-                        },
-                        is_idr: nal.nal_unit_type == NalUnitType::IDRSlice,
-                        structure: super::dpb::DpbPictureStructure::Frame,
-                        needed_for_output: true,
-                    };
-                    let pictures = self.dpb.store_picture(dpb_pic);
-                    self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
-
-                    parser::parse_slice_data(&mut unit_input, &mut slice)
+        match nal.nal_unit_type {
+            NalUnitType::Unspecified => {}
+            NalUnitType::SliceDataA => {}
+            NalUnitType::SliceDataB => {}
+            NalUnitType::SliceDataC => {}
+            NalUnitType::IDRSlice | NalUnitType::NonIDRSlice => {
+                let mut slice =
+                    parser::parse_slice_header(&self.context, &nal, &mut input)
                         .map_err(parse_error_handler)?;
-                    info!("Blocks: {:#?}", slice.get_macroblock_count());
-                    self.process_slice(&mut slice)?;
-                    // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
-                    // as "unused for reference" and sets the current frame's frame_num and POC to 0.
-                    let has_mmco5 = self.dpb.mark_references(&slice.header, disposition, &slice.sps);
-                    self.poc_state.update_mmco5_state(
-                        has_mmco5,
-                        disposition != ReferenceDisposition::NonReference,
-                    );
-                }
-                NalUnitType::SupplementalEnhancementInfo => {}
-                NalUnitType::SeqParameterSet => {
-                    let sps = parser::parse_sps(&mut unit_input).map_err(parse_error_handler)?;
-                    info!("SPS: {:#?}", sps);
-                    assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
 
-                    // Update DPB size based on SPS and VUI parameters
-                    let mut max_dpb_size = max(sps.max_num_ref_frames as usize, 1);
-                    if let Some(vui) = &sps.vui_parameters {
-                        if vui.bitstream_restriction_flag {
-                            max_dpb_size = max(max_dpb_size, vui.max_dec_frame_buffering as usize);
-                        }
-                    }
-                    self.dpb.set_max_size(max_dpb_size);
+                info!("{:?} {:#?}", nal.nal_unit_type, slice);
+                let frame = VideoFrame::new_with_padding(
+                    slice.sps.pic_width(),
+                    slice.sps.pic_height(),
+                    v_frame::pixel::ChromaSampling::Cs420,
+                    16,
+                );
 
-                    self.context.put_sps(sps);
-                }
-                NalUnitType::PicParameterSet => {
-                    let pps = parser::parse_pps(&mut unit_input).map_err(parse_error_handler)?;
-                    info!("PPS: {:#?}", pps);
-                    self.context.put_pps(pps);
-                }
-                NalUnitType::AccessUnitDelimiter => {}
-                NalUnitType::EndOfSeq => {}
-                NalUnitType::EndOfStream => {}
-                NalUnitType::FillerData => {}
-                NalUnitType::SeqParameterSetExtension => {}
-                NalUnitType::Prefix => {}
-                NalUnitType::SubsetSeqParameterSet => {}
-                NalUnitType::DepthParameterSet => {}
-                NalUnitType::CodedSliceAux => {}
-                NalUnitType::CodedSliceExtension => {}
-                NalUnitType::CodedSliceExtensionForDepthView => {}
-                NalUnitType::Reserved => {}
+                let disposition = if nal.nal_unit_type == NalUnitType::IDRSlice {
+                    ReferenceDisposition::Idr
+                } else if nal.nal_ref_idc != 0 {
+                    ReferenceDisposition::NonIdrReference
+                } else {
+                    ReferenceDisposition::NonReference
+                };
+
+                let pic_order_cnt = self.poc_state.calculate_poc(&slice, disposition);
+
+                let pic = Picture { frame, frame_num: slice.header.frame_num, pic_order_cnt };
+                let dpb_pic = DpbPicture {
+                    picture: pic,
+                    marking: if nal.nal_ref_idc != 0 {
+                        super::dpb::DpbMarking::UsedForShortTermReference
+                    } else {
+                        super::dpb::DpbMarking::UnusedForReference
+                    },
+                    is_idr: nal.nal_unit_type == NalUnitType::IDRSlice,
+                    structure: super::dpb::DpbPictureStructure::Frame,
+                    needed_for_output: true,
+                };
+                let pictures = self.dpb.store_picture(dpb_pic);
+                self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
+
+                parser::parse_slice_data(&mut input, &mut slice)
+                    .map_err(parse_error_handler)?;
+                info!("Blocks: {:#?}", slice.get_macroblock_count());
+                self.process_slice(&mut slice)?;
+                // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
+                // as "unused for reference" and sets the current frame's frame_num and POC to 0.
+                let has_mmco5 = self.dpb.mark_references(&slice.header, disposition, &slice.sps);
+                self.poc_state.update_mmco5_state(
+                    has_mmco5,
+                    disposition != ReferenceDisposition::NonReference,
+                );
             }
+            NalUnitType::SupplementalEnhancementInfo => {}
+            NalUnitType::SeqParameterSet => {
+                let sps = parser::parse_sps(&mut input).map_err(parse_error_handler)?;
+                info!("SPS: {:#?}", sps);
+                assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
+
+                // Update DPB size based on SPS and VUI parameters
+                let mut max_dpb_size = max(sps.max_num_ref_frames as usize, 1);
+                if let Some(vui) = &sps.vui_parameters {
+                    if vui.bitstream_restriction_flag {
+                        max_dpb_size = max(max_dpb_size, vui.max_dec_frame_buffering as usize);
+                    }
+                }
+                self.dpb.set_max_size(max_dpb_size);
+
+                self.context.put_sps(sps);
+            }
+            NalUnitType::PicParameterSet => {
+                let pps = parser::parse_pps(&mut input).map_err(parse_error_handler)?;
+                info!("PPS: {:#?}", pps);
+                self.context.put_pps(pps);
+            }
+            NalUnitType::AccessUnitDelimiter => {}
+            NalUnitType::EndOfSeq => {}
+            NalUnitType::EndOfStream => {}
+            NalUnitType::FillerData => {}
+            NalUnitType::SeqParameterSetExtension => {}
+            NalUnitType::Prefix => {}
+            NalUnitType::SubsetSeqParameterSet => {}
+            NalUnitType::DepthParameterSet => {}
+            NalUnitType::CodedSliceAux => {}
+            NalUnitType::CodedSliceExtension => {}
+            NalUnitType::CodedSliceExtensionForDepthView => {}
+            NalUnitType::Reserved => {}
         }
+        
         Ok(())
     }
 
-    pub fn get_frame_buffer(&self) -> &[VideoFrame] {
-        self.output_frames.as_slice()
+    /// Retrieves the next available frame from the decoder's output queue.
+    /// Returns `Some(VideoFrame)` if a frame is available, or `None` if the queue is empty.
+    pub fn retrieve_frame(&mut self) -> Option<VideoFrame> {
+        self.output_frames.pop_front()
     }
 
-    pub fn clear_frame_buffer(&mut self) {
-        self.output_frames.clear();
+    /// Flushes the decoder, forcing any remaining frames in the DPB to be output.
+    /// This is necessary because some frames may be held in the DPB (Decoded Picture Buffer)
+    /// for reference or reordering (e.g., B-frames) and won't be output immediately.
+    /// This should be called at the end of the stream.
+    /// Call `retrieve_frame` repeatedly after flushing until it returns `None`.
+    pub fn flush(&mut self) -> Result<(), DecodingError> {
+        let pictures = self.dpb.flush();
+        self.output_frames.extend(pictures.into_iter().map(|p| p.picture.frame));
+        Ok(())
     }
 
     fn process_slice(&mut self, slice: &mut Slice) -> Result<(), DecodingError> {

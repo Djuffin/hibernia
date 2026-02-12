@@ -78,23 +78,50 @@ pub fn compare_y4m_buffers(actual_y4m_data: &[u8], expected_y4m_data: &[u8]) -> 
     let actual_h = actual_decoder.get_height();
     let actual_w = actual_decoder.get_width();
     if (expected_w, expected_h) != (actual_w, actual_h) {
-        return Err(format!("Unexpected size of frames. {actual_w}x{actual_h} vs expected {expected_w}x{expected_h}"));
+        return Err(format!(
+            "Unexpected size of frames. {actual_w}x{actual_h} vs expected {expected_w}x{expected_h}"
+        ));
     }
 
     let mut frame_idx = 0;
-    while let (Ok(actual_frame), Ok(expected_frame)) =
-        (actual_decoder.read_frame(), expected_decoder.read_frame())
-    {
-        let compare_result = compare_frames(expected_w, expected_h, &actual_frame, &expected_frame);
-        if !compare_result.is_empty() {
-            return Err(format!("Frame #{frame_idx} mismatch: {compare_result}"));
-        }
-        frame_idx += 1;
-    }
+    loop {
+        let actual_frame_res = actual_decoder.read_frame();
+        let expected_frame_res = expected_decoder.read_frame();
 
-    if let Err(y4m::Error::EOF) = actual_decoder.read_frame() {
-    } else {
-        return Err(format!("Unexpected number of frames. {frame_idx}"));
+        match (actual_frame_res, expected_frame_res) {
+            (Ok(actual_frame), Ok(expected_frame)) => {
+                let compare_result =
+                    compare_frames(expected_w, expected_h, &actual_frame, &expected_frame);
+                if !compare_result.is_empty() {
+                    return Err(format!("Frame #{frame_idx} mismatch: {compare_result}"));
+                }
+                frame_idx += 1;
+            }
+            (Err(y4m::Error::EOF), Err(y4m::Error::EOF)) => {
+                break;
+            }
+            (Ok(_), Err(y4m::Error::EOF)) => {
+                return Err(format!(
+                    "Actual has more frames than expected. Expected {frame_idx} frames."
+                ));
+            }
+            (Err(y4m::Error::EOF), Ok(_)) => {
+                return Err(format!(
+                    "Expected has more frames than actual. Actual had {frame_idx} frames."
+                ));
+            }
+            (Err(e1), Err(e2)) => {
+                return Err(format!(
+                    "Both decoders errored at frame {frame_idx}: Actual: {e1:?} | Expected: {e2:?}"
+                ));
+            }
+            (Err(e), _) => {
+                return Err(format!("Actual decoder errored at frame {frame_idx}: {e:?}"));
+            }
+            (_, Err(e)) => {
+                return Err(format!("Expected decoder errored at frame {frame_idx}: {e:?}"));
+            }
+        }
     }
 
     Ok(())

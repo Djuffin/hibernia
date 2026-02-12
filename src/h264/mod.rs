@@ -5,6 +5,7 @@ pub mod dpb;
 pub mod inter_pred;
 pub mod macroblock;
 pub mod nal;
+pub mod nal_parser;
 pub mod parser;
 pub mod poc;
 pub mod pps;

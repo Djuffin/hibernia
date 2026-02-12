@@ -324,6 +324,22 @@ impl DecodedPictureBuffer {
             }
         }
     }
+
+    pub fn flush(&mut self) -> Vec<DpbPicture> {
+        let mut output = Vec::new();
+        let mut i = 0;
+        while i < self.pictures.len() {
+            if self.pictures[i].needed_for_output {
+                let mut pic = self.pictures.remove(i);
+                pic.needed_for_output = false;
+                output.push(pic);
+            } else {
+                i += 1;
+            }
+        }
+        output.sort_by_key(|p| p.picture.pic_order_cnt);
+        output
+    }
 }
 
 fn calculate_pic_num_x(

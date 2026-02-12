@@ -221,13 +221,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     pub fn test_SVA_BA2_D() -> Result<(), String> {
         // Decoding of I or P slices. Each picture contains only one slice.
         // deblocking filter process enabled.
         // pic_order_cnt_type is equal to 2.
-        // TODO: This test fails with a 1-pixel mismatch in Frame 15 (127 vs 128)
-        // after refactoring to streaming architecture. Likely a minor timing/rounding difference.
         test_decoding_against_gold("data/SVA_BA2_D.264", "data/SVA_BA2_D_rec.y4m")
     }
 

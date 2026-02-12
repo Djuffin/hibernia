@@ -108,22 +108,19 @@ impl Decoder {
 
     pub fn decode(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
         use nal::NalUnitType;
-        let nal_cow = parser::remove_emulation_if_needed(nal_data);
-        let mut input = parser::BitReader::new(&nal_cow);
-        let parse_error_handler = DecodingError::MisformedData;
 
-        // Parse NAL header manually (since we don't have start code)
-        let forbidden = input.u(1).map_err(|_| DecodingError::MisformedData("Empty NAL".into()))?;
+        if nal_data.is_empty() {
+            return Err(DecodingError::MisformedData("Empty NAL".into()));
+        }
+
+        let header_byte = nal_data[0];
+        let forbidden = (header_byte & 0x80) >> 7;
         if forbidden != 0 {
             return Err(DecodingError::MisformedData("Forbidden bit set".into()));
         }
-        let ref_idc = input
-            .u(2)
-            .map_err(|_| DecodingError::MisformedData("Ref Idc error".into()))?;
-        let unit_type_val = input
-            .u(5)
-            .map_err(|_| DecodingError::MisformedData("Unit type error".into()))?;
-        let unit_type = NalUnitType::try_from(unit_type_val)
+        let ref_idc = (header_byte & 0x60) >> 5;
+        let unit_type_val = header_byte & 0x1F;
+        let unit_type = NalUnitType::try_from(unit_type_val as u32)
             .map_err(|e| DecodingError::MisformedData(e))?;
 
         let nal = nal::NalHeader {
@@ -139,6 +136,14 @@ impl Decoder {
             NalUnitType::SliceDataB => {}
             NalUnitType::SliceDataC => {}
             NalUnitType::IDRSlice | NalUnitType::NonIDRSlice => {
+                let nal_vec = parser::remove_emulation_if_needed(&nal_data[1..]);
+                let mut input = if nal_vec.is_empty() {
+                    parser::BitReader::new(&nal_data[1..])
+                } else {
+                    parser::BitReader::new(&nal_vec)
+                };
+                let parse_error_handler = DecodingError::MisformedData;
+
                 let mut slice = parser::parse_slice_header(&self.context, &nal, &mut input)
                     .map_err(parse_error_handler)?;
 
@@ -193,6 +198,14 @@ impl Decoder {
             }
             NalUnitType::SupplementalEnhancementInfo => {}
             NalUnitType::SeqParameterSet => {
+                let nal_vec = parser::remove_emulation_if_needed(&nal_data[1..]);
+                let mut input = if nal_vec.is_empty() {
+                    parser::BitReader::new(&nal_data[1..])
+                } else {
+                    parser::BitReader::new(&nal_vec)
+                };
+                let parse_error_handler = DecodingError::MisformedData;
+
                 let sps = parser::parse_sps(&mut input).map_err(parse_error_handler)?;
                 info!("SPS: {:#?}", sps);
                 assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
@@ -209,6 +222,14 @@ impl Decoder {
                 self.context.put_sps(sps);
             }
             NalUnitType::PicParameterSet => {
+                let nal_vec = parser::remove_emulation_if_needed(&nal_data[1..]);
+                let mut input = if nal_vec.is_empty() {
+                    parser::BitReader::new(&nal_data[1..])
+                } else {
+                    parser::BitReader::new(&nal_vec)
+                };
+                let parse_error_handler = DecodingError::MisformedData;
+
                 let pps = parser::parse_pps(&mut input).map_err(parse_error_handler)?;
                 info!("PPS: {:#?}", pps);
                 self.context.put_pps(pps);

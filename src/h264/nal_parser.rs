@@ -50,6 +50,8 @@ impl<R: BufRead> Iterator for NalParser<R> {
 
             let mut consumed = buf.len();
             let mut found = false;
+            let mut zeros_at_start = 0;
+
             for (i, &byte) in buf.iter().enumerate() {
                 if byte == 0 {
                     self.zeros += 1;
@@ -57,6 +59,7 @@ impl<R: BufRead> Iterator for NalParser<R> {
                     if self.zeros >= 2 {
                         found = true;
                         consumed = i + 1;
+                        zeros_at_start = self.zeros;
                         self.zeros = 0;
                         break;
                     } else {
@@ -72,7 +75,7 @@ impl<R: BufRead> Iterator for NalParser<R> {
 
             if found {
                 if self.found_first_start_code {
-                    let trim = 3;
+                    let trim = zeros_at_start + 1;
                     let new_len = self.nal_buffer.len().saturating_sub(trim);
                     self.nal_buffer.truncate(new_len);
                     let nal = std::mem::take(&mut self.nal_buffer);

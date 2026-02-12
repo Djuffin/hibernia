@@ -6,10 +6,16 @@ pub struct PocState {
     // POC Type 0 state
     prev_pic_order_cnt_msb: i32,
     prev_pic_order_cnt_lsb: i32,
+    /// Set to true if the previous *reference* picture included an MMCO 5 operation.
+    /// Used for state resets in POC Type 0 (Section 8.2.1.1).
+    prev_ref_has_mmco5: bool,
 
     // POC Type 1 & 2 state
     prev_frame_num: i32,
     prev_frame_num_offset: i32,
+    /// Set to true if the previous picture (reference or non-reference) included an MMCO 5 operation.
+    /// Used for state resets in POC Type 1 and 2 (Sections 8.2.1.2 and 8.2.1.3).
+    prev_has_mmco5: bool,
 }
 
 impl PocState {
@@ -27,10 +33,21 @@ impl PocState {
         }
     }
 
+    pub fn update_mmco5_state(&mut self, has_mmco5: bool, is_reference: bool) {
+        self.prev_has_mmco5 = has_mmco5;
+        if is_reference {
+            self.prev_ref_has_mmco5 = has_mmco5;
+        }
+    }
+
     #[inline]
     fn calculate_poc_type0(&mut self, slice: &Slice, disposition: ReferenceDisposition) -> i32 {
         // Section 8.2.1.1 Decoding process for picture order count type 0
         let (prev_msb, prev_lsb) = if disposition == ReferenceDisposition::Idr {
+            (0, 0)
+        } else if self.prev_ref_has_mmco5 {
+            // Section 8.2.1.1: If the previous reference picture included MMCO 5,
+            // prevPicOrderCntMsb = 0 and prevPicOrderCntLsb = TopFieldOrderCnt of prev ref picture (0)
             (0, 0)
         } else {
             (self.prev_pic_order_cnt_msb, self.prev_pic_order_cnt_lsb)
@@ -68,6 +85,10 @@ impl PocState {
         // Section 8.2.1.2 Decoding process for picture order count type 1
         let (prev_frame_num_offset, prev_frame_num) = if disposition == ReferenceDisposition::Idr {
             (0, 0)
+        } else if self.prev_has_mmco5 {
+            // Section 8.2.1.2: If the previous picture included MMCO 5, prevFrameNumOffset = 0
+            // and the previous picture is considered to have frame_num = 0.
+            (0, 0)
         } else {
             (self.prev_frame_num_offset, self.prev_frame_num)
         };
@@ -85,16 +106,10 @@ impl PocState {
             0
         };
 
-        let abs_frame_num = if slice.header.pic_parameter_set_id == 0 && abs_frame_num > 0 {
-            // nal_ref_idc == 0 check is tricky here without NAL header
-            // Assuming nal_ref_idc is not 0 for this logic or handled elsewhere
-            // Actually, spec says: if( nal_ref_idc == 0 && absFrameNum > 0 ) absFrameNum = absFrameNum - 1
-            // But we don't have nal_ref_idc easily here? It is passed in 'disposition'.
-            if disposition == ReferenceDisposition::NonReference && abs_frame_num > 0 {
-                abs_frame_num - 1
-            } else {
-                abs_frame_num
-            }
+        // Section 8.2.1.2: if( nal_ref_idc == 0 && absFrameNum > 0 ) absFrameNum = absFrameNum - 1
+        let abs_frame_num = if disposition == ReferenceDisposition::NonReference && abs_frame_num > 0
+        {
+            abs_frame_num - 1
         } else {
             abs_frame_num
         };
@@ -141,8 +156,13 @@ impl PocState {
         let (frame_num_offset, temp_pic_order_cnt) = if disposition == ReferenceDisposition::Idr {
             (0, 0)
         } else {
-            let prev_frame_num = self.prev_frame_num;
-            let prev_frame_num_offset = self.prev_frame_num_offset;
+            let (prev_frame_num, prev_frame_num_offset) = if self.prev_has_mmco5 {
+                // Section 8.2.1.3: If the previous picture included MMCO 5, prevFrameNumOffset = 0
+                // and the previous picture is considered to have frame_num = 0.
+                (0, 0)
+            } else {
+                (self.prev_frame_num, self.prev_frame_num_offset)
+            };
             let frame_num = slice.header.frame_num as i32;
 
             let frame_num_offset = if prev_frame_num > frame_num {
@@ -265,5 +285,35 @@ mod tests {
         // prev_frame_num (0) > frame_num (1) is False. Offset stays 16.
         // POC = 2 * (16 + 1) = 34.
         assert_eq!(poc, 34);
+    }
+
+    #[test]
+    fn test_poc_mmco5_reset() {
+        let mut poc_state = PocState::new();
+        let mut slice = prepare_slice();
+        slice.sps.pic_order_cnt_type = 0;
+        slice.sps.log2_max_pic_order_cnt_lsb_minus4 = 4; // max_lsb = 16
+
+        // IDR
+        poc_state.calculate_poc(&slice, ReferenceDisposition::Idr);
+
+        // Frame 0 (Ref)
+        slice.header.pic_order_cnt_lsb = Some(0);
+        poc_state.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
+
+        // Frame 2 (Ref) with MMCO 5
+        slice.header.pic_order_cnt_lsb = Some(2);
+        poc_state.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
+        // Simulate MMCO 5 execution
+        poc_state.update_mmco5_state(true, true);
+
+        // Next Frame (Ref)
+        slice.header.pic_order_cnt_lsb = Some(4);
+        let poc = poc_state.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
+        // Since prev_ref_has_mmco5 is true:
+        // prev_msb = 0, prev_lsb = 0
+        // msb = 0 (no wrapping)
+        // POC = 0 + 4 = 4
+        assert_eq!(poc, 4);
     }
 }

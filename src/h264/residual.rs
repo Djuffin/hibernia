@@ -1,19 +1,23 @@
 use std::result;
 
+use bytemuck::{Pod, Zeroable};
 use log::info;
 use smallvec::SmallVec;
+use wide::{f32x4, i32x4};
 
 use super::{
     macroblock::{self, CodedBlockPattern, MbPredictionMode},
     tables, ColorPlane,
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
+#[repr(C, align(16))]
 pub struct Block4x4 {
     pub samples: [[i32; 4]; 4],
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
+#[repr(C, align(16))]
 pub struct Block2x2 {
     pub samples: [[i32; 2]; 2],
 }
@@ -314,11 +318,36 @@ pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
     }
 }
 
+#[inline]
+fn transpose_4x4(r0: &mut i32x4, r1: &mut i32x4, r2: &mut i32x4, r3: &mut i32x4) {
+    // Cast to f32x4 to utilize the accelerated transpose implementation in the wide crate.
+    // This is a zero-cost bitwise operation as both types have the same size and alignment.
+    let data = [
+        bytemuck::cast(*r0),
+        bytemuck::cast(*r1),
+        bytemuck::cast(*r2),
+        bytemuck::cast(*r3),
+    ];
+    let transposed = f32x4::transpose(data);
+    *r0 = bytemuck::cast(transposed[0]);
+    *r1 = bytemuck::cast(transposed[1]);
+    *r2 = bytemuck::cast(transposed[2]);
+    *r3 = bytemuck::cast(transposed[3]);
+}
+
+#[inline]
+fn hadamard4_simd(r0: i32x4, r1: i32x4, r2: i32x4, r3: i32x4) -> (i32x4, i32x4, i32x4, i32x4) {
+    let a01 = r0 + r1;
+    let s01 = r0 - r1;
+    let a23 = r2 + r3;
+    let s23 = r2 - r3;
+    (a01 + a23, a01 - a23, s01 - s23, s01 + s23)
+}
+
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
 pub fn transform_dc(block: &Block4x4) -> Block4x4 {
-    let b = &block.samples;
-    let mut result = Block4x4::default();
-    let r = &mut result.samples;
+    let mut result = *block;
+    let b: &mut [i32x4; 4] = bytemuck::cast_mut(&mut result.samples);
 
     /*
     Equation 8-320 (Inverse Hadamard Transform)
@@ -328,52 +357,52 @@ pub fn transform_dc(block: &Block4x4) -> Block4x4 {
         [ 1 -1  1 -1 ]   [ b30 b31 b32 b33 ]   [ 1 -1  1 -1 ]
     */
 
-    // This is a temporary storage for the intermediate matrix after first multiplication
-    let mut f = [[0i32; 4]; 4];
+    let (v0, v1, v2, v3) = hadamard4_simd(b[0], b[1], b[2], b[3]);
 
-    // Calculate the result of the first multiplication using only +/-.
-    for j in 0..4 {
-        let b0 = b[0][j];
-        let b1 = b[1][j];
-        let b2 = b[2][j];
-        let b3 = b[3][j];
+    let mut t0 = v0;
+    let mut t1 = v1;
+    let mut t2 = v2;
+    let mut t3 = v3;
+    transpose_4x4(&mut t0, &mut t1, &mut t2, &mut t3);
 
-        f[0][j] = b0 + b1 + b2 + b3;
-        f[1][j] = b0 + b1 - b2 - b3;
-        f[2][j] = b0 - b1 - b2 + b3;
-        f[3][j] = b0 - b1 + b2 - b3;
-    }
+    let (v0, v1, v2, v3) = hadamard4_simd(t0, t1, t2, t3);
 
-    // Calculate the final result using the intermediate 'f' matrix.
-    for i in 0..4 {
-        let f0 = f[i][0];
-        let f1 = f[i][1];
-        let f2 = f[i][2];
-        let f3 = f[i][3];
+    let mut r0 = v0;
+    let mut r1 = v1;
+    let mut r2 = v2;
+    let mut r3 = v3;
+    transpose_4x4(&mut r0, &mut r1, &mut r2, &mut r3);
 
-        r[i][0] = f0 + f1 + f2 + f3;
-        r[i][1] = f0 + f1 - f2 - f3;
-        r[i][2] = f0 - f1 - f2 + f3;
-        r[i][3] = f0 - f1 + f2 - f3;
-    }
+    b[0] = r0;
+    b[1] = r1;
+    b[2] = r2;
+    b[3] = r3;
 
     result
 }
 
 // Section 8.5.11.1 Transformation process for chroma DC transform coefficients
 pub fn transform_chroma_dc(block: &Block2x2) -> Block2x2 {
-    let c = &block.samples;
+    let v: i32x4 = bytemuck::cast(*block);
+    let v_arr = v.as_array();
 
     // This is a 2x2 Hadamard transform: f = H * c * H
     // Equation 8-324
     // H =  [1  1]
     //      [1 -1]
-    let hc00 = c[0][0] + c[1][0];
-    let hc01 = c[0][1] + c[1][1];
-    let hc10 = c[0][0] - c[1][0];
-    let hc11 = c[0][1] - c[1][1];
+    let v_top = i32x4::from([v_arr[0], v_arr[1], v_arr[0], v_arr[1]]);
+    let v_bot = i32x4::from([v_arr[2], v_arr[3], v_arr[2], v_arr[3]]);
+    let hc = v_top + (v_bot * i32x4::from([1, 1, -1, -1]));
 
-    Block2x2 { samples: [[hc00 + hc01, hc00 - hc01], [hc10 + hc11, hc10 - hc11]] }
+    let hc_arr = hc.as_array();
+    let hc_left = i32x4::from([hc_arr[0], hc_arr[2], hc_arr[0], hc_arr[2]]);
+    let hc_right = i32x4::from([hc_arr[1], hc_arr[3], hc_arr[1], hc_arr[3]]);
+    let r = hc_left + (hc_right * i32x4::from([1, 1, -1, -1]));
+
+    let r_arr = r.as_array();
+    // r_arr is [hc00+hc01, hc10+hc11, hc00-hc01, hc10-hc11]
+    // which is [r00, r10, r01, r11]
+    bytemuck::cast([r_arr[0], r_arr[2], r_arr[1], r_arr[3]])
 }
 
 pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
@@ -395,54 +424,47 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
     result
 }
 
+#[inline]
+fn transform4_simd(r0: i32x4, r1: i32x4, r2: i32x4, r3: i32x4) -> (i32x4, i32x4, i32x4, i32x4) {
+    let e0 = r0 + r2;
+    let e1 = r0 - r2;
+    let e2 = (r1 >> 1) - r3;
+    let e3 = r1 + (r3 >> 1);
+
+    (e0 + e3, e1 + e2, e1 - e2, e0 - e3)
+}
+
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks
 pub fn transform_4x4(block: &mut Block4x4) {
-    let d = &mut block.samples;
+    let d: &mut [i32x4; 4] = bytemuck::cast_mut(&mut block.samples);
 
-    for i in 0..4 {
-        // (8-338)
-        let e0 = d[i][0] + d[i][2];
-        // (8-339)
-        let e1 = d[i][0] - d[i][2];
-        // (8-340)
-        let e2 = (d[i][1] >> 1) - d[i][3];
-        // (8-341)
-        let e3 = d[i][1] + (d[i][3] >> 1);
+    // D_v = H_core * D (Vertical pass)
+    let (v0, v1, v2, v3) = transform4_simd(d[0], d[1], d[2], d[3]);
 
-        // (8-342)
-        d[i][0] = e0 + e3;
-        // (8-343)
-        d[i][1] = e1 + e2;
-        // (8-344)
-        d[i][2] = e1 - e2;
-        // (8-345)
-        d[i][3] = e0 - e3;
-    }
+    // Transpose D_v to D_v^T
+    let mut t0 = v0;
+    let mut t1 = v1;
+    let mut t2 = v2;
+    let mut t3 = v3;
+    transpose_4x4(&mut t0, &mut t1, &mut t2, &mut t3);
 
-    for j in 0..4 {
-        // (8-346)
-        let g0 = d[0][j] + d[2][j];
-        // (8-347)
-        let g1 = d[0][j] - d[2][j];
-        // (8-348)
-        let g2 = (d[1][j] >> 1) - d[3][j];
-        // (8-349)
-        let g3 = d[1][j] + (d[3][j] >> 1);
+    // D_vh^T = H_core * D_v^T (Horizontal pass on transposed matrix)
+    let (v0, v1, v2, v3) = transform4_simd(t0, t1, t2, t3);
 
-        // (8-350)
-        let h0 = g0 + g3;
-        // (8-351)
-        let h1 = g1 + g2;
-        // (8-352)
-        let h2 = g1 - g2;
-        // (8-353)
-        let h3 = g0 - g3;
+    // Apply offset/shift
+    let offset = i32x4::from([32; 4]);
+    let mut r0 = (v0 + offset) >> 6;
+    let mut r1 = (v1 + offset) >> 6;
+    let mut r2 = (v2 + offset) >> 6;
+    let mut r3 = (v3 + offset) >> 6;
 
-        d[0][j] = (h0 + 32) >> 6;
-        d[1][j] = (h1 + 32) >> 6;
-        d[2][j] = (h2 + 32) >> 6;
-        d[3][j] = (h3 + 32) >> 6;
-    }
+    // Transpose back (H_core * D_v^T)^T = D_v * H_core^T = H_core * D * H_core^T
+    transpose_4x4(&mut r0, &mut r1, &mut r2, &mut r3);
+
+    d[0] = r0;
+    d[1] = r1;
+    d[2] = r2;
+    d[3] = r3;
 }
 
 #[cfg(test)]

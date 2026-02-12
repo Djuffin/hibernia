@@ -14,7 +14,7 @@ use super::macroblock::{
     Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName, MbPredictionMode, MotionVector,
     PMb, PartitionInfo,
 };
-use super::residual::{level_scale_4x4_block, transform_4x4, unzip_block_4x4, Block4x4};
+use super::residual::{level_scale_4x4_block, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;

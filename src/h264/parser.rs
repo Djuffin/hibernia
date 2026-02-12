@@ -765,8 +765,11 @@ pub fn parse_slice_header(
         if pps.bottom_field_pic_order_in_frame_present_flag && !header.field_pic_flag {
             read_value!(input, header.delta_pic_order_cnt_bottom, se);
         }
-    } else {
-        todo!();
+    } else if sps.pic_order_cnt_type == 1 && !sps.delta_pic_order_always_zero_flag {
+        read_value!(input, header.delta_pic_order_cnt[0], se);
+        if pps.bottom_field_pic_order_in_frame_present_flag && !header.field_pic_flag {
+            read_value!(input, header.delta_pic_order_cnt[1], se);
+        }
     }
     if pps.redundant_pic_cnt_present_flag {
         read_value!(input, header.redundant_pic_cnt, ue);

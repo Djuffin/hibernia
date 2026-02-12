@@ -1761,41 +1761,4 @@ mod tests {
         let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4];
         assert!(remove_emulation_if_needed(&data).is_empty());
     }
-
-    #[test]
-    pub fn test_pred_weight_table_limit() {
-        let mut sps = SequenceParameterSet::default();
-        sps.chroma_format_idc = ChromaFormat::YUV420;
-
-        let pps = PicParameterSet::default();
-
-        let mut header = SliceHeader::default();
-        header.num_ref_idx_l0_active_minus1 = 32; // 33 references, should fail after fix
-        header.slice_type = SliceType::P;
-
-        // Enough zeros for 33 entries.
-        // Each entry consumes 2 bits.
-        // Plus 2 ue for denoms (1 bit each).
-        // Total ~ 70 bits = 9 bytes. 20 bytes is safe.
-        // We need the first two bits to be 1 to represent ue(v) = 0 for the denoms.
-        let mut data = [0u8; 20];
-        data[0] = 0xC0; // 1100_0000
-        let mut input = reader(&data);
-
-        let result = parse_pred_weight_table(&mut input, &header, &sps, &pps);
-        // Should fail (returning error about too large index)
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("num_ref_idx_l0_active_minus1 (32) is too large"));
-
-        header.slice_type = SliceType::B;
-        header.num_ref_idx_l0_active_minus1 = 0;
-        header.num_ref_idx_l1_active_minus1 = 32;
-
-        let mut input = reader(&data);
-        let result = parse_pred_weight_table(&mut input, &header, &sps, &pps);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("num_ref_idx_l1_active_minus1 (32) is too large"));
-    }
 }

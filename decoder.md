@@ -77,6 +77,8 @@ impl Decoder {
     pub fn retrieve_frame(&mut self) -> Option<VideoFrame>;
 
     /// Flushes the decoder, forcing any remaining frames in the DPB to be output.
+    /// This is necessary because some frames may be held in the DPB (Decoded Picture Buffer)
+    /// for reference or reordering (e.g., B-frames) and won't be output immediately.
     /// This should be called at the end of the stream.
     /// Call `retrieve_frame` repeatedly after flushing until it returns `None`.
     pub fn flush(&mut self) -> Result<(), DecodingError>;
@@ -91,12 +93,16 @@ impl Decoder {
 
 ### Phase 2: Decoder Core Refactoring
 1.  **Refactor `Decoder::decode`**:
-    - Rename current `decode` to `decode_nal` (or simply `decode` as proposed).
     - Remove the loop that searches for start codes. It should assume the input `&[u8]` is a single NAL unit.
     - Decouple output: instead of accumulating in `output_frames` and waiting for `get_frame_buffer`, implement an internal queue (e.g., `VecDeque`) and expose `retrieve_frame` to pop from it.
-2.  **Handle Emulation Prevention**:
-    - Ideally, `decode` should handle emulation prevention removal.
-    - Current `remove_emulation_if_needed` returns `Vec<u8>`. Optimize this to return `Cow<[u8]>` to avoid allocation when not needed.
+2.  **Implement `Decoder::retrieve_frame`**:
+    - Add a `VecDeque<VideoFrame>` field to `Decoder`.
+    - `decode` pushes completed frames to this queue.
+    - `retrieve_frame` pops frames from this queue.
+3.  **Implement `Decoder::flush`**:
+    - Iterate over remaining pictures in the DPB that are marked as "needed for output".
+    - Push them to the output queue.
+    - Clear internal state as appropriate.
 
 ### Phase 3: Migration
 1.  **Update `src/main.rs`**:

@@ -5,6 +5,19 @@ use v_frame::plane::Plane;
 
 /// Section 8.4.2.2.1 Luma sample interpolation process.
 /// This function interpolates a block of luma samples with quarter-sample accuracy.
+///
+/// Inputs:
+/// - `ref_plane`: Reference picture luma plane.
+/// - `mb_x`, `mb_y`: Macroblock coordinates.
+/// - `blk_x`, `blk_y`: Block coordinates within the macroblock.
+/// - `width`, `height`: Block dimensions.
+/// - `mv`: Motion vector (in quarter-sample units).
+/// - `dst`: Destination buffer.
+/// - `dst_stride`: Destination stride.
+/// - `buffer`: Scratch buffer for interpolation.
+///
+/// The process produces fractional sample values 'a' through 'r' (and integer samples 'G')
+/// depending on the fractional part of the motion vector, as described in Table 8-10.
 pub fn interpolate_luma(
     ref_plane: &Plane<u8>,
     mb_x: u32,
@@ -18,6 +31,7 @@ pub fn interpolate_luma(
     dst_stride: usize,
     buffer: &mut InterpolationBuffer,
 ) {
+    // Equation 8-223, 8-224: Full sample units (Int) and Equation 8-225, 8-226: Fractional units (Frac)
     let x_int = (mb_x as i32) + (blk_x as i32) + (mv.x >> 2) as i32;
     let y_int = (mb_y as i32) + (blk_y as i32) + (mv.y >> 2) as i32;
     let x_frac = (mv.x & 3) as i8;
@@ -25,14 +39,16 @@ pub fn interpolate_luma(
 
     // To implement the 6-tap filter for a block of size (width x height),
     // we need a window of (width + 5) x (height + 5) integer pixels.
-    // Specifically, for 6-tap filter at pos G, we need E, F, G, H, I, J.
-    // That is 2 pixels to the left/top and 3 pixels to the right/bottom.
+    // Specifically, for 6-tap filter at pos G (integer), we need E, F, G, H, I, J (1D view).
+    // That is 2 pixels to the left/top and 3 pixels to the right/bottom relative to the top-left 'G'.
     let buf_w = (width as usize) + 5;
     let buf_h = (height as usize) + 5;
 
     let plane_height = ref_plane.cfg.height as i32;
     let plane_width = ref_plane.cfg.width as i32;
 
+    // Load integer samples into the scratch buffer with boundary checks.
+    // Corresponds to fetching samples A through U (in 2D) for the filter process.
     if x_int >= 2
         && x_int + (buf_w as i32) - 2 <= plane_width
         && y_int >= 2
@@ -46,6 +62,7 @@ pub fn interpolate_luma(
             }
         }
     } else {
+        // Slow path: clamping for boundary pixels (Section 8.4.2.2.1, RefLayerFrame behavior)
         for y in 0..buf_h {
             let cy = (y_int + (y as i32) - 2).clamp(0, plane_height - 1);
             let row = ref_plane.row(cy as isize);
@@ -58,10 +75,11 @@ pub fn interpolate_luma(
 
     match (x_frac, y_frac) {
         (0, 0) => {
-            // Integer positions
+            // Integer positions (G)
             for y in 0..height as usize {
                 let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
                 for x in 0..width as usize {
+                    // Offset +2 to skip the padding (E, F)
                     d[x] = buffer.data[y + 2][x + 2] as u8;
                 }
             }
@@ -82,24 +100,35 @@ pub fn interpolate_luma(
 
             // Accessors for integer and half-pel positions
             let data: &[[i16; 21]; 21] = &buffer.data;
+            // G, H, M are integer samples at different offsets
             macro_rules! G { ($x:expr, $y:expr) => { data[$y + 2][$x + 2] as u16 } }
             macro_rules! H { ($x:expr, $y:expr) => { data[$y + 2][$x + 3] as u16 } }
             macro_rules! M { ($x:expr, $y:expr) => { data[$y + 3][$x + 2] as u16 } }
             
+            // Half-sample interpolation using 6-tap filter (Equation 8-241, 8-243)
+            // b = (E - 5F + 20G + 20H - 5I + J + 16) >> 5
             macro_rules! b { ($x:expr, $y:expr) => { filter_6tap_and_clip(&data[$y + 2][$x..$x + 6]) as u16 } }
+            // s is 'b' but for the next row (vertical shift) - wait, no, s is vertical filtering of M-line?
+            // Actually: 
+            // 'b' is horizontal interpolation at y (samples E..J at y)
+            // 'h' is vertical interpolation at x (samples A..U at x)
+            // 's' is horizontal interpolation at y+1 (samples E..J at y+1) -> used for 'p', 'r'
+            // 'm' is vertical interpolation at x+1 (samples A..U at x+1) -> used for 'g', 'k'
             macro_rules! s { ($x:expr, $y:expr) => { filter_6tap_and_clip(&data[$y + 3][$x..$x + 6]) as u16 } }
             
+            // h = (A - 5C + 20G + 20M - 5R + T + 16) >> 5 (Vertical filtering)
             macro_rules! h { ($x:expr, $y:expr) => { filter_6tap_vertical_and_clip(buffer, $x, $y) as u16 } }
             macro_rules! m { ($x:expr, $y:expr) => { filter_6tap_vertical_and_clip(buffer, $x + 1, $y) as u16 } }
             
+            // Averaging for quarter-sample positions (Equation 8-250 to 8-252)
             macro_rules! avg { ($val1:expr, $val2:expr) => { (($val1 + $val2 + 1) >> 1) as u8 } }
 
             match (x_frac, y_frac) {
                 // Half-pel positions (except j)
-                (2, 0) => interpolate!(|x, y| b!(x, y) as u8),
-                (0, 2) => interpolate!(|x, y| h!(x, y) as u8),
+                (2, 0) => interpolate!(|x, y| b!(x, y) as u8), // b
+                (0, 2) => interpolate!(|x, y| h!(x, y) as u8), // h
                 
-                // Quarter-pel positions
+                // Quarter-pel positions (Table 8-12)
                 (1, 0) => interpolate!(|x, y| avg!(G!(x, y), b!(x, y))), // a
                 (3, 0) => interpolate!(|x, y| avg!(H!(x, y), b!(x, y))), // c
                 (0, 1) => interpolate!(|x, y| avg!(G!(x, y), h!(x, y))), // d
@@ -110,17 +139,21 @@ pub fn interpolate_luma(
                 (3, 3) => interpolate!(|x, y| avg!(m!(x, y), s!(x, y))), // r
 
                 // Cases needing j (center half-sample)
+                // j is generated by applying the 6-tap filter vertically to the result 
+                // of applying the 6-tap filter horizontally (or vice versa). (Equation 8-247)
                 (2, 2) | (2, 1) | (2, 3) | (1, 2) | (3, 2) => {
                     let mut intermediate = [0i32; 21 * 21];
                     for y in 0..buf_h {
                         let row = &buffer.data[y];
                         for x in 0..width as usize {
+                            // Compute horizontal filter first (unclipped)
                             intermediate[y * 21 + x] = filter_6tap(&row[x..x + 6]);
                         }
                     }
 
+                    // Compute j by filtering 'intermediate' vertically.
+                    // Also clips 'b' and 's' from 'intermediate' for efficiency.
                     macro_rules! j { ($x:expr, $y:expr) => { get_j_from_intermediate(&intermediate, $x, $y) as u16 } }
-                    // Optimization: Use intermediate buffer for horizontal half-samples
                     macro_rules! b_opt { ($x:expr, $y:expr) => { clip_intermediate(intermediate[($y + 2) * 21 + $x]) as u16 } }
                     macro_rules! s_opt { ($x:expr, $y:expr) => { clip_intermediate(intermediate[($y + 3) * 21 + $x]) as u16 } }
 
@@ -170,6 +203,11 @@ pub fn interpolate_chroma(
     // Luma MV is in 1/4 pixel units.
     // 1 chroma pixel = 2 luma pixels.
     // So 1 unit of Luma MV = 1/4 luma pixel = 1/8 chroma pixel.
+    // This corresponds to Equation 8-227, 8-228, 8-229, 8-230 for 4:2:0:
+    // xIntC = ( xAL / SubWidthC ) + ( mvCLX[ 0 ] >> 3 ) + xC
+    // yIntC = ( yAL / SubHeightC ) + ( mvCLX[ 1 ] >> 3 ) + yC
+    // xFracC = mvCLX[ 0 ] & 7
+    // yFracC = mvCLX[ 1 ] & 7
 
     // Integer part of the position (in chroma samples)
     let x_int = (mb_x as i32) + (blk_x as i32) + (mv.x >> 3) as i32;
@@ -186,6 +224,8 @@ pub fn interpolate_chroma(
         && y_int >= 0
         && y_int + height as i32 + 1 <= plane_height
     {
+        // Equation 8-270: Bilinear interpolation
+        // The weights (8-xFrac) and xFrac are used for linear interpolation.
         let w00 = (8 - x_frac) * (8 - y_frac);
         let w10 = x_frac * (8 - y_frac);
         let w01 = (8 - x_frac) * y_frac;
@@ -204,6 +244,8 @@ pub fn interpolate_chroma(
                 let val_b = row[x_start + x + 1] as i32;
                 let val_d = row1[x_start + x + 1] as i32;
 
+                // Equation 8-270:
+                // predPartLXC[x, y] = ( (8-xFrac)*(8-yFrac)*A + xFrac*(8-yFrac)*B + ... + 32 ) >> 6
                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
                 d[x] = prediction as u8;
 
@@ -212,6 +254,7 @@ pub fn interpolate_chroma(
             }
         }
     } else {
+        // Handle boundary conditions by clamping sample coordinates
         let w00 = (8 - x_frac) * (8 - y_frac);
         let w10 = x_frac * (8 - y_frac);
         let w01 = (8 - x_frac) * y_frac;
@@ -244,18 +287,24 @@ pub fn interpolate_chroma(
     }
 }
 
+/// Applies the 6-tap filter specified in Equation 8-246.
+/// Filter coefficients: [1, -5, 20, 20, -5, 1].
+/// This returns the unscaled/unclipped intermediate value.
 #[inline(always)]
 fn filter_6tap(p: &[i16]) -> i32 {
     (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32) + 20 * (p[3] as i32) - 5 * (p[4] as i32)
         + (p[5] as i32)
 }
 
+/// Applies the 6-tap filter and clips the result to 8-bit range [0, 255].
+/// Corresponds to Equations 8-243, 8-244, 8-248, 8-249 (final clipping for half-sample values).
 #[inline(always)]
 fn filter_6tap_and_clip(p: &[i16]) -> u8 {
     let val = filter_6tap(p);
     ((val + 16) >> 5).clamp(0, 255) as u8
 }
 
+/// Helper to apply vertical 6-tap filter on the interpolation buffer.
 #[inline(always)]
 fn filter_6tap_vertical_and_clip(buffer: &InterpolationBuffer, x: usize, y: usize) -> u8 {
     let col = x + 2;
@@ -268,6 +317,14 @@ fn filter_6tap_vertical_and_clip(buffer: &InterpolationBuffer, x: usize, y: usiz
     ((val + 16) >> 5).clamp(0, 255) as u8
 }
 
+/// Computes the 'j' sample (center half-pel) using the intermediate horizontal filter results.
+/// This corresponds to Equation 8-247, but operating on the intermediate values
+/// (which are essentially the result of the first 6-tap filter pass).
+/// Note the shift is >> 10 because it accumulates two >> 5 equivalent scalings (minus one >> 5).
+/// Actually, intermediate is unscaled (sum of 6 taps).
+/// Vertical filter is also sum of 6 taps.
+/// Total weight is 32*32 = 1024. So >> 10 is correct.
+/// Rounding offset is 512 (which is 1024/2).
 #[inline(always)]
 fn get_j_from_intermediate(intermediate: &[i32], x: usize, y: usize) -> u8 {
     // 21 is the width of intermediate buffer (InterploationBuffer::data width)
@@ -281,6 +338,8 @@ fn get_j_from_intermediate(intermediate: &[i32], x: usize, y: usize) -> u8 {
     ((val + 512) >> 10).clamp(0, 255) as u8
 }
 
+/// Clips an intermediate 6-tap filter result to 8-bit.
+/// Used when we have precomputed horizontal filter results and need 'b' or 's' (horizontal half-pels).
 #[inline(always)]
 fn clip_intermediate(val: i32) -> u8 {
     ((val + 16) >> 5).clamp(0, 255) as u8

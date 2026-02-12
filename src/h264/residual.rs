@@ -273,8 +273,10 @@ pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, skip_dc: bool, q
         let d = if skip_dc && idx == 0 {
             *c
         } else if qp >= 24 {
+            // Equation 8-336
             (*c * level_scale_4x4(is_inter, m, idx)) << (qp / 6 - 4)
         } else {
+            // Equation 8-337
             (*c * level_scale_4x4(is_inter, m, idx) + (1 << (3 - qp / 6))) >> (4 - qp / 6)
         };
         *c = d;
@@ -288,8 +290,10 @@ pub fn dc_scale_4x4_block(block: &mut Block4x4, qp: u8) {
     for row in block.samples.iter_mut() {
         for c in row.iter_mut() {
             let d = if qp >= 36 {
+                // Equation 8-321
                 (*c * level_scale_4x4(is_inter, m, 0)) << (qp / 6 - 6)
             } else {
+                // Equation 8-322
                 (*c * level_scale_4x4(is_inter, m, 0) + (1 << (5 - qp / 6))) >> (6 - qp / 6)
             };
             *c = d;
@@ -303,6 +307,7 @@ pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
     let is_inter = false;
     for row in block.samples.iter_mut() {
         for c in row.iter_mut() {
+            // Equation 8-326 (approximated)
             let d = (*c * level_scale_4x4(is_inter, m, 0) << (qp / 6)) >> 5;
             *c = d;
         }
@@ -316,6 +321,7 @@ pub fn transform_dc(block: &Block4x4) -> Block4x4 {
     let r = &mut result.samples;
 
     /*
+    Equation 8-320 (Inverse Hadamard Transform)
     r = [ 1  1  1  1 ]   [ b00 b01 b02 b03 ]   [ 1  1  1  1 ]
         [ 1  1 -1 -1 ] * [ b10 b11 b12 b13 ] * [ 1  1 -1 -1 ]
         [ 1 -1 -1  1 ]   [ b20 b21 b22 b23 ]   [ 1 -1 -1  1 ]
@@ -358,8 +364,8 @@ pub fn transform_dc(block: &Block4x4) -> Block4x4 {
 pub fn transform_chroma_dc(block: &Block2x2) -> Block2x2 {
     let c = &block.samples;
 
-    // This is a 2x2 Hadamard transform: f = H * c * H, where
-    //
+    // This is a 2x2 Hadamard transform: f = H * c * H
+    // Equation 8-324
     // H =  [1  1]
     //      [1 -1]
     let hc00 = c[0][0] + c[1][0];

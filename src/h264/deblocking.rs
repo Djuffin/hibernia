@@ -230,7 +230,9 @@ fn filter_luma_edge(
     let stride = plane.cfg.stride;
     let data = plane.data_origin_mut();
 
+    // Equation 8-453: qp_av calculation
     let qp_av = (p_qp as i32 + q_qp as i32 + 1) >> 1;
+    // Equation 8-454: indexA, Equation 8-455: indexB
     let index_a = (qp_av + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
     let index_b = (qp_av + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
 
@@ -251,7 +253,7 @@ fn filter_luma_edge(
             continue;
         }
 
-        // Load samples p3..p0, q0..q3
+        // Load samples p3..p0, q0..q3 (8 samples total)
         let mut samples = [0u8; 8];
         if is_vertical {
             let row_off = abs_y_q as usize * stride;
@@ -268,7 +270,7 @@ fn filter_luma_edge(
 
         let (p0, q0) = (samples[3], samples[4]);
 
-        // Check filter condition
+        // Check filter condition (Equation 8-460, alpha/beta from 8-456/8-457)
         if (p0 as i32 - q0 as i32).abs() < alpha as i32
             && (samples[2] as i32 - p0 as i32).abs() < beta as i32
             && (samples[5] as i32 - q0 as i32).abs() < beta as i32
@@ -298,13 +300,15 @@ fn filter_luma_edge(
             };
 
             if bs < BS_STRONG {
-                // Calculate tc0
+                // Section 8.7.2.3 Filtering process for edges with bS < 4
+                // Calculate tc0 (Table 8-17)
                 let tc0 = TC0_TABLE[(bs - 1) as usize][index_a];
                 let mut tc = tc0 as i32;
 
                 let ap = (samples[1] as i32 - p0 as i32).abs();
                 let aq = (samples[6] as i32 - q0 as i32).abs();
 
+                // Equation 8-465
                 if ap < beta as i32 {
                     tc += 1;
                 }
@@ -313,56 +317,69 @@ fn filter_luma_edge(
                 }
 
                 // Weak filtering
+                // Equation 8-467: Delta
                 let delta =
                     (((q0 as i32 - p0 as i32) << 2) + (samples[2] as i32 - samples[5] as i32) + 4)
                         >> 3;
                 let delta_c = delta.clamp(-tc, tc);
 
+                // Equation 8-468, 8-469
                 let p0_new = (p0 as i32 + delta_c).clamp(0, 255) as u8;
                 let q0_new = (q0 as i32 - delta_c).clamp(0, 255) as u8;
 
-                // Write back
+                // Write back p0, q0
                 data[p0_idx] = p0_new;
                 data[q0_idx] = q0_new;
 
-                // Filter p1 (Section 8.7.2.3)
+                // Filter p1 (Section 8.7.2.3) if condition met
                 if ap < beta as i32 {
                     let p2 = samples[1] as i32;
                     let p1 = samples[2] as i32;
+                    // Equation 8-470
                     let delta_p1 = (p2 + ((p0 as i32 + q0 as i32 + 1) >> 1) - (p1 << 1)) >> 1;
+                    // Equation 8-470 (application)
                     let p1_new =
                         (p1 + delta_p1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
                     data[p1_idx] = p1_new;
                 }
 
+                // Filter q1
                 if aq < beta as i32 {
                     let q2 = samples[6] as i32;
                     let q1 = samples[5] as i32;
+                    // Equation 8-472
                     let delta_q1 = (q2 + ((p0 as i32 + q0 as i32 + 1) >> 1) - (q1 << 1)) >> 1;
+                    // Equation 8-472 (application)
                     let q1_new =
                         (q1 + delta_q1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
                     data[q1_idx] = q1_new;
                 }
             } else {
-                // Strong filtering (bs == BS_STRONG)
+                // Section 8.7.2.4 Filtering process for edges with bS equal to 4
+                // Strong filtering
                 let ap = (samples[1] as i32 - p0 as i32).abs();
                 let aq = (samples[6] as i32 - q0 as i32).abs();
 
+                // Equation 8-476
                 let small_diff = (p0 as i32 - q0 as i32).abs() < ((alpha as i32 >> 2) + 2);
 
                 if ap < beta as i32 && small_diff {
-                    // Filter p0, p1, p2
+                    // Strong filter for p0, p1, p2
                     let p2 = samples[1] as i32;
                     let p1 = samples[2] as i32;
                     let p0 = samples[3] as i32;
                     let q0 = samples[4] as i32;
                     let q1 = samples[5] as i32;
 
+                    // Equation 8-477
                     data[p0_idx] = ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(0, 255) as u8;
+                    // Equation 8-478
                     data[p1_idx] = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
+                    // Equation 8-479
                     data[p2_idx] = ((2 * samples[0] as i32 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(0, 255) as u8;
                 } else {
                     // Weak filter p0 only (same as bs < 4 but with tc0=0)
+                    // Equation 8-480
                     let p1 = samples[2] as i32;
                     let p0 = samples[3] as i32;
                     let q1 = samples[5] as i32;
@@ -370,16 +387,22 @@ fn filter_luma_edge(
                 }
 
                 if aq < beta as i32 && small_diff {
+                    // Strong filter for q0, q1, q2
                     let q2 = samples[6] as i32;
                     let q1 = samples[5] as i32;
                     let q0 = samples[4] as i32;
                     let p0 = samples[3] as i32;
                     let p1 = samples[2] as i32;
 
+                    // Equation 8-484
                     data[q0_idx] = ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
+                    // Equation 8-485
                     data[q1_idx] = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
+                    // Equation 8-486
                     data[q2_idx] = ((2 * samples[7] as i32 + 3 * q2 + q1 + q0 + p0 + 4) >> 3).clamp(0, 255) as u8;
                 } else {
+                    // Weak filter q0 only
+                    // Equation 8-487
                     let q1 = samples[5] as i32;
                     let q0 = samples[4] as i32;
                     let p1 = samples[2] as i32;
@@ -446,6 +469,7 @@ fn filter_chroma_edge(
         for plane_idx in [ColorPlane::Cb, ColorPlane::Cr] {
             let qp_index_offset = slice.pps.get_chroma_qp_index_offset(plane_idx);
 
+            // Equation 8-453 (qPav) and Clause 8.5.8 (QPC)
             let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
             let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0);
             let qp_av_c = (qp_p_c + qp_q_c + 1) >> 1;
@@ -486,23 +510,27 @@ fn filter_chroma_edge(
             let p1 = data[p1_idx];
             let q1 = data[q1_idx];
 
+            // Equation 8-460
             if (p0 as i32 - q0 as i32).abs() < alpha as i32
                 && (p1 as i32 - p0 as i32).abs() < beta as i32
                 && (q1 as i32 - q0 as i32).abs() < beta as i32
             {
                 let (p0_new, q0_new) = if bs < BS_STRONG {
                     let tc0 = TC0_TABLE[(bs - 1) as usize][index_a];
-                    let tc = tc0 as i32 + 1; // Chroma always adds 1 to tc0
+                    let tc = tc0 as i32 + 1; // Chroma always adds 1 to tc0 (Equation 8-466)
 
+                    // Equation 8-467
                     let delta = (((q0 as i32 - p0 as i32) << 2) + (p1 as i32 - q1 as i32) + 4) >> 3;
                     let delta_c = delta.clamp(-tc, tc);
 
+                    // Equation 8-468, Equation 8-469
                     let p0_new = (p0 as i32 + delta_c).clamp(0, 255) as u8;
                     let q0_new = (q0 as i32 - delta_c).clamp(0, 255) as u8;
                     (p0_new, q0_new)
                 } else {
                     // bS == BS_STRONG
                     // 8.7.2.4, chromaStyleFilteringFlag = 1
+                    // Equation 8-480 (p0_new), Equation 8-487 (q0_new)
                     let p0_new = ((2 * (p1 as i32) + (p0 as i32) + (q1 as i32) + 2) >> 2)
                         .clamp(0, 255) as u8;
                     let q0_new = ((2 * (q1 as i32) + (q0 as i32) + (p1 as i32) + 2) >> 2)

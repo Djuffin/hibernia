@@ -786,11 +786,13 @@ pub fn render_luma_4x4_intra_prediction(
     target: &mut Plane,
     residuals: &[Block4x4],
 ) {
+    // Equations 8-53, 8-54, etc.: (A + 2*B + C + 2) >> 2
     #[inline]
     fn weighted_avg(double: u8, single_a: u8, single_b: u8) -> u8 {
         ((2 * (double as u16) + (single_a as u16) + (single_b as u16) + 2) >> 2) as u8
     }
 
+    // Standard average: (A + B + 1) >> 1
     #[inline]
     fn avg(a: u8, b: u8) -> u8 {
         (((a as u16) + (b as u16) + 1) >> 1) as u8
@@ -814,6 +816,7 @@ pub fn render_luma_4x4_intra_prediction(
         match mode {
             Intra_4x4_SamplePredMode::Vertical => {
                 // Section 8.3.1.2.1 Specification of Intra_4x4_Vertical prediction mode
+                // Equation 8-46: pred4x4L[x, y] = p[x, -1]
                 let src = ctx.top4();
                 for row in target_slice.rows_iter_mut().take(4) {
                     row[0..4].copy_from_slice(src);
@@ -821,6 +824,7 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Horizontal => {
                 // Section 8.3.1.2.2 Specification of Intra_4x4_Horizontal prediction mode
+                // Equation 8-47: pred4x4L[x, y] = p[-1, y]
                 let src = ctx.left4();
                 for (idx, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     row[0..4].fill(src[idx]);
@@ -844,13 +848,14 @@ pub fn render_luma_4x4_intra_prediction(
                     None
                 };
 
+                // Equations 8-48 to 8-51: averaging top and/or left neighbors
                 let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
                 if sum_a.is_some() && sum_b.is_some() {
                     sum = (sum + 4) >> 3;
                 } else if sum_a.is_some() != sum_b.is_some() {
                     sum = (sum + 2) >> 2;
                 } else {
-                    sum = 1 << 7;
+                    sum = 1 << 7; // Default 128 for 8-bit
                 }
 
                 for row in target_slice.rows_iter_mut().take(4) {
@@ -864,8 +869,10 @@ pub fn render_luma_4x4_intra_prediction(
                     for (x, value) in row.iter_mut().take(4).enumerate() {
                         let i = x + y;
                         *value = if i == 6 {
+                            // Equation 8-52
                             weighted_avg(top_row[7], top_row[7], top_row[6])
                         } else {
+                            // Equation 8-53
                             weighted_avg(top_row[i + 1], top_row[i], top_row[i + 2])
                         };
                     }
@@ -873,6 +880,7 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Right => {
                 // Section 8.3.1.2.5 Specification of Intra_4x4_Diagonal_Down_Right prediction mode
+                // Equations 8-54 to 8-56
                 let top = &ctx.top_row;
                 let left = &ctx.left_column;
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
@@ -893,6 +901,7 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Vertical_Right => {
                 // Section 8.3.1.2.6 Specification of Intra_4x4_Vertical_Right prediction mode
+                // Equations 8-57 to 8-60
                 let left = &ctx.left_column;
                 let top = &ctx.top_row;
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
@@ -913,6 +922,7 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Horizontal_Down => {
                 // Section 8.3.1.2.7 Specification of Intra_4x4_Horizontal_Down prediction mode
+                // Equations 8-61 to 8-64
                 let left = &ctx.left_column;
                 let top = &ctx.top_row;
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
@@ -930,6 +940,7 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Vertical_Left => {
                 // Section 8.3.1.2.8 Specification of Intra_4x4_Vertical_Left prediction mode
+                // Equations 8-65, 8-66
                 let top_row = &ctx.top_row[1..];
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
@@ -944,6 +955,7 @@ pub fn render_luma_4x4_intra_prediction(
             }
             Intra_4x4_SamplePredMode::Horizontal_Up => {
                 // Section 8.3.1.2.9 Specification of Intra_4x4_Horizontal_Up prediction mode
+                // Equations 8-67 to 8-70
                 let left = ctx.left4();
                 for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
                     for (x, value) in row.iter_mut().take(4).enumerate() {
@@ -985,6 +997,7 @@ pub fn render_luma_16x16_intra_prediction(
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
+            // Equation 8-116: predL[x, y] = p[x, -1]
             let mut src_row = [0; 16];
             src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 16)]);
             let mut target_slice = target.mut_slice(offset);
@@ -994,6 +1007,7 @@ pub fn render_luma_16x16_intra_prediction(
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Horizontal => {
             // Section 8.3.3.2 Specification of Intra_16x16_Horizontal prediction mode
+            // Equation 8-117: predL[x, y] = p[-1, y]
             let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
             for row in target_slice.rows_iter_mut().take(16) {
                 let src = row[0];
@@ -1017,6 +1031,7 @@ pub fn render_luma_16x16_intra_prediction(
                 None
             };
 
+            // Equations 8-118 to 8-121
             let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
             if sum_a.is_some() && sum_b.is_some() {
                 sum = (sum + 16) >> 5;
@@ -1041,14 +1056,18 @@ pub fn render_luma_16x16_intra_prediction(
                 left[idx] = row[0];
             }
 
+            // Equations 8-126, 8-127
             let mut h = 0i32;
             let mut v = 0i32;
             for i in 1..=8 {
                 h += (i as i32) * (top[i + 8] as i32 - top[8 - i] as i32);
                 v += (i as i32) * (left[i + 8] as i32 - left[8 - i] as i32);
             }
+            // Equation 8-123: a
             let a = (top[16] as i32 + left[16] as i32) * 16;
+            // Equation 8-124: b
             let b = (5 * h + 32) >> 6;
+            // Equation 8-125: c
             let c = (5 * v + 32) >> 6;
 
             let mut target_slice = target.mut_slice(offset);
@@ -1056,6 +1075,7 @@ pub fn render_luma_16x16_intra_prediction(
                 for (x, pixel) in row.iter_mut().take(16).enumerate() {
                     let x = x as i32;
                     let y = y as i32;
+                    // Equation 8-122
                     let value = (a + b * (x - 7) + c * (y - 7) + 16) >> 5;
                     *pixel = value.clamp(0, 255) as u8;
                 }
@@ -1100,6 +1120,7 @@ pub fn render_chroma_intra_prediction(
     match mode {
         Intra_Chroma_Pred_Mode::Vertical => {
             // Section 8.3.4.3 Specification of Intra_Chroma_Vertical prediction mode
+            // Equation 8-143
             let x = loc.x as usize;
             let y = loc.y as usize;
             let mut src_row = [0; 16];
@@ -1111,6 +1132,7 @@ pub fn render_chroma_intra_prediction(
         }
         Intra_Chroma_Pred_Mode::Horizontal => {
             // Section 8.3.4.2 Specification of Intra_Chroma_Horizontal prediction mode
+            // Equation 8-142
             let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
             for row in target_slice.rows_iter_mut().take(mb_height) {
                 let src = row[0];
@@ -1143,6 +1165,7 @@ pub fn render_chroma_intra_prediction(
             }
 
             for blk_idx in 0..4 {
+                // Equations 8-132 to 8-141 (derivation of prediction values based on availability)
                 const DEFAULT_VALUE: u32 = 1 << 7; // = 1 << ( BitDepthC − 1 )
                 let result = match blk_idx {
                     0 => {
@@ -1207,6 +1230,7 @@ pub fn render_chroma_intra_prediction(
             let mut h = 0;
             let mut top_row = [0u8; 9];
             top_row.copy_from_slice(&target_slice[0][0..9]);
+            // Equation 8-148: H
             for x in 0..4usize {
                 h += (x as isize + 1) * (top_row[4 + 1 + x] as isize - top_row[2 + 1 - x] as isize);
             }
@@ -1216,13 +1240,17 @@ pub fn render_chroma_intra_prediction(
             for (idx, row) in target_slice.rows_iter().take(9).enumerate() {
                 left_column[idx] = row[0];
             }
+            // Equation 8-149: V
             for y in 0..4usize {
                 v += (y as isize + 1)
                     * (left_column[4 + 1 + y] as isize - left_column[2 + 1 - y] as isize);
             }
 
+            // Equation 8-145: a
             let a = 16 * (left_column[8] as isize + top_row[8] as isize);
+            // Equation 8-146: b
             let b = (34 * h + 32) >> 6;
+            // Equation 8-147: c
             let c = (34 * v + 32) >> 6;
 
             let mut target_slice = target.mut_slice(offset);
@@ -1230,6 +1258,7 @@ pub fn render_chroma_intra_prediction(
                 for (x, pixel) in row.iter_mut().take(mb_width).enumerate() {
                     let x = x as isize;
                     let y = y as isize;
+                    // Equation 8-144
                     *pixel = ((a + b * (x - 3) + c * (y - 3) + 16) >> 5) as u8;
                 }
             }

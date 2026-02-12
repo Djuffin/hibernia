@@ -66,63 +66,74 @@ pub fn interpolate_luma(
                 }
             }
         }
-        (2, 0) => {
-            // Half-pel horizontal (b)
-            for y in 0..height as usize {
-                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
-                let src_row = &buffer.data[y + 2];
-                for x in 0..width as usize {
-                    d[x] = filter_6tap_and_clip(&src_row[x..x + 6]);
-                }
-            }
-        }
-        (0, 2) => {
-            // Half-pel vertical (h)
-            for y in 0..height as usize {
-                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
-                for x in 0..width as usize {
-                    let col = [
-                        buffer.data[y][x + 2],
-                        buffer.data[y + 1][x + 2],
-                        buffer.data[y + 2][x + 2],
-                        buffer.data[y + 3][x + 2],
-                        buffer.data[y + 4][x + 2],
-                        buffer.data[y + 5][x + 2],
-                    ];
-                    d[x] = filter_6tap_and_clip(&col);
-                }
-            }
-        }
-        (2, 2) => {
-            // Half-pel center (j)
-            let mut intermediate = [0i32; 21 * 21];
-            for y in 0..buf_h {
-                let row = &buffer.data[y];
-                for x in 0..width as usize {
-                    intermediate[y * 21 + x] = filter_6tap(&row[x..x + 6]);
-                }
-            }
-            for y in 0..height as usize {
-                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
-                for x in 0..width as usize {
-                    let val = intermediate[y * 21 + x] - 5 * intermediate[(y + 1) * 21 + x]
-                        + 20 * intermediate[(y + 2) * 21 + x]
-                        + 20 * intermediate[(y + 3) * 21 + x]
-                        - 5 * intermediate[(y + 4) * 21 + x]
-                        + intermediate[(y + 5) * 21 + x];
-                    d[x] = ((val + 512) >> 10).clamp(0, 255) as u8;
-                }
-            }
-        }
         _ => {
-            // Quarter-pel positions
-            // Optimization: precompute b, h, j if needed
-            // For a 4x4 or 16x16 block, it's worth precomputing some values.
-            // But let's start with a simpler optimization: avoid redundant work in get_j etc.
-            for y in 0..height as usize {
-                for x in 0..width as usize {
-                    dst[y * dst_stride + x] = interpolate_quarter_pel(buffer, x, y, x_frac, y_frac);
+            macro_rules! interpolate {
+                (|$x:ident, $y:ident| $calc:expr) => {
+                    for y in 0..height as usize {
+                        let $y = y;
+                        let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                        for x in 0..width as usize {
+                            let $x = x;
+                            d[x] = $calc;
+                        }
+                    }
+                };
+            }
+
+            // Accessors for integer and half-pel positions
+            let data: &[[i16; 21]; 21] = &buffer.data;
+            macro_rules! G { ($x:expr, $y:expr) => { data[$y + 2][$x + 2] as u16 } }
+            macro_rules! H { ($x:expr, $y:expr) => { data[$y + 2][$x + 3] as u16 } }
+            macro_rules! M { ($x:expr, $y:expr) => { data[$y + 3][$x + 2] as u16 } }
+            
+            macro_rules! b { ($x:expr, $y:expr) => { filter_6tap_and_clip(&data[$y + 2][$x..$x + 6]) as u16 } }
+            macro_rules! s { ($x:expr, $y:expr) => { filter_6tap_and_clip(&data[$y + 3][$x..$x + 6]) as u16 } }
+            
+            macro_rules! h { ($x:expr, $y:expr) => { filter_6tap_vertical_and_clip(buffer, $x, $y) as u16 } }
+            macro_rules! m { ($x:expr, $y:expr) => { filter_6tap_vertical_and_clip(buffer, $x + 1, $y) as u16 } }
+            
+            macro_rules! avg { ($val1:expr, $val2:expr) => { (($val1 + $val2 + 1) >> 1) as u8 } }
+
+            match (x_frac, y_frac) {
+                // Half-pel positions (except j)
+                (2, 0) => interpolate!(|x, y| b!(x, y) as u8),
+                (0, 2) => interpolate!(|x, y| h!(x, y) as u8),
+                
+                // Quarter-pel positions
+                (1, 0) => interpolate!(|x, y| avg!(G!(x, y), b!(x, y))), // a
+                (3, 0) => interpolate!(|x, y| avg!(H!(x, y), b!(x, y))), // c
+                (0, 1) => interpolate!(|x, y| avg!(G!(x, y), h!(x, y))), // d
+                (0, 3) => interpolate!(|x, y| avg!(M!(x, y), h!(x, y))), // n
+                (1, 1) => interpolate!(|x, y| avg!(b!(x, y), h!(x, y))), // e
+                (3, 1) => interpolate!(|x, y| avg!(b!(x, y), m!(x, y))), // g
+                (1, 3) => interpolate!(|x, y| avg!(h!(x, y), s!(x, y))), // p
+                (3, 3) => interpolate!(|x, y| avg!(m!(x, y), s!(x, y))), // r
+
+                // Cases needing j (center half-sample)
+                (2, 2) | (2, 1) | (2, 3) | (1, 2) | (3, 2) => {
+                    let mut intermediate = [0i32; 21 * 21];
+                    for y in 0..buf_h {
+                        let row = &buffer.data[y];
+                        for x in 0..width as usize {
+                            intermediate[y * 21 + x] = filter_6tap(&row[x..x + 6]);
+                        }
+                    }
+
+                    macro_rules! j { ($x:expr, $y:expr) => { get_j_from_intermediate(&intermediate, $x, $y) as u16 } }
+                    // Optimization: Use intermediate buffer for horizontal half-samples
+                    macro_rules! b_opt { ($x:expr, $y:expr) => { clip_intermediate(intermediate[($y + 2) * 21 + $x]) as u16 } }
+                    macro_rules! s_opt { ($x:expr, $y:expr) => { clip_intermediate(intermediate[($y + 3) * 21 + $x]) as u16 } }
+
+                    match (x_frac, y_frac) {
+                        (2, 2) => interpolate!(|x, y| j!(x, y) as u8),           // j
+                        (2, 1) => interpolate!(|x, y| avg!(b_opt!(x, y), j!(x, y))), // f
+                        (2, 3) => interpolate!(|x, y| avg!(j!(x, y), s_opt!(x, y))), // q
+                        (1, 2) => interpolate!(|x, y| avg!(h!(x, y), j!(x, y))),     // i
+                        (3, 2) => interpolate!(|x, y| avg!(j!(x, y), m!(x, y))),     // k
+                        _ => unreachable!(),
+                    }
                 }
+                _ => unreachable!("x_frac={}, y_frac={}", x_frac, y_frac),
             }
         }
     }
@@ -233,22 +244,46 @@ pub fn interpolate_chroma(
     }
 }
 
-#[inline]
+#[inline(always)]
 fn filter_6tap(p: &[i16]) -> i32 {
     (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32) + 20 * (p[3] as i32) - 5 * (p[4] as i32)
         + (p[5] as i32)
 }
 
-#[inline]
+#[inline(always)]
 fn filter_6tap_and_clip(p: &[i16]) -> u8 {
     let val = filter_6tap(p);
     ((val + 16) >> 5).clamp(0, 255) as u8
 }
 
-#[inline]
-fn filter_6tap_center_and_clip(p: &[i32]) -> u8 {
-    let val = p[0] - 5 * p[1] + 20 * p[2] + 20 * p[3] - 5 * p[4] + p[5];
+#[inline(always)]
+fn filter_6tap_vertical_and_clip(buffer: &InterpolationBuffer, x: usize, y: usize) -> u8 {
+    let col = x + 2;
+    let val = (buffer.data[y][col] as i32)
+        - 5 * (buffer.data[y + 1][col] as i32)
+        + 20 * (buffer.data[y + 2][col] as i32)
+        + 20 * (buffer.data[y + 3][col] as i32)
+        - 5 * (buffer.data[y + 4][col] as i32)
+        + (buffer.data[y + 5][col] as i32);
+    ((val + 16) >> 5).clamp(0, 255) as u8
+}
+
+#[inline(always)]
+fn get_j_from_intermediate(intermediate: &[i32], x: usize, y: usize) -> u8 {
+    // 21 is the width of intermediate buffer (InterploationBuffer::data width)
+    let stride = 21;
+    let val = intermediate[y * stride + x]
+        - 5 * intermediate[(y + 1) * stride + x]
+        + 20 * intermediate[(y + 2) * stride + x]
+        + 20 * intermediate[(y + 3) * stride + x]
+        - 5 * intermediate[(y + 4) * stride + x]
+        + intermediate[(y + 5) * stride + x];
     ((val + 512) >> 10).clamp(0, 255) as u8
+}
+
+#[inline(always)]
+fn clip_intermediate(val: i32) -> u8 {
+    ((val + 16) >> 5).clamp(0, 255) as u8
 }
 
 /// Buffer for storing integer pixels with padding for 6-tap filtering.
@@ -259,163 +294,8 @@ pub struct InterpolationBuffer {
 }
 
 impl InterpolationBuffer {
-    const PADDING: usize = 2;
-
     pub fn new() -> Self {
         Self { data: [[0; 21]; 21] }
-    }
-
-    // Returns the horizontal window for the 6-tap filter centered at (x, y) (half-pel position b)
-    // The window covers integer pixels (x-2, y) to (x+3, y).
-    fn get_horizontal_window(&self, x: usize, y: usize) -> &[i16] {
-        &self.data[y + Self::PADDING][x..x + 6]
-    }
-
-    // Returns the vertical window for the 6-tap filter centered at (x, y) (half-pel position h)
-    // The window covers integer pixels (x, y-2) to (x, y+3).
-    fn get_vertical_window(&self, x: usize, y: usize) -> [i16; 6] {
-        let col = x + Self::PADDING;
-        [
-            self.data[y][col],
-            self.data[y + 1][col],
-            self.data[y + 2][col],
-            self.data[y + 3][col],
-            self.data[y + 4][col],
-            self.data[y + 5][col],
-        ]
-    }
-
-    // Returns integer sample at (x, y)
-    fn get_integer(&self, x: usize, y: usize) -> i16 {
-        self.data[y + Self::PADDING][x + Self::PADDING]
-    }
-}
-
-/*
- * Luma sample interpolation for quarter-pixel positions (Section 8.4.2.2.1, Figure 8-4).
- * Coordinates x_frac, y_frac are in 1/4th pixel units (0..3).
- * Anchor samples: integer (G, H, M), half-pel (b, h, j, m, s).
- */
-fn interpolate_quarter_pel(
-    buffer: &InterpolationBuffer,
-    x: usize,
-    y: usize,
-    x_frac: i8,
-    y_frac: i8,
-) -> u8 {
-    // get_h: Vertical half-sample 'h' at (x, y + 1/2)
-    let get_h = |tx: usize, ty: usize| {
-        let col = buffer.get_vertical_window(tx, ty);
-        filter_6tap_and_clip(&col)
-    };
-
-    // get_b: Horizontal half-sample 'b' at (x + 1/2, y)
-    let get_b = |tx: usize, ty: usize| filter_6tap_and_clip(buffer.get_horizontal_window(tx, ty));
-
-    // get_j: Center half-sample 'j' at (x + 1/2, y + 1/2)
-    let get_j = |tx: usize, ty: usize| {
-        let mut row_results = [0i32; 6];
-        for i in 0..6 {
-            row_results[i] = filter_6tap(&buffer.data[ty + i][tx..tx + 6]);
-        }
-        filter_6tap_center_and_clip(&row_results)
-    };
-
-    // 'G' is the integer sample at (x, y)
-    let g = buffer.get_integer(x, y) as u8;
-
-    match (x_frac, y_frac) {
-        (1, 0) => {
-            // Position 'a' (1/4, 0)
-            // Equation 8-250: a = (G + b + 1) >> 1
-            let b = get_b(x, y);
-            ((g as u16 + b as u16 + 1) >> 1) as u8
-        }
-        (3, 0) => {
-            // Position 'c' (3/4, 0)
-            // Equation 8-251: c = (H + b + 1) >> 1
-            // 'H' is integer sample at (x + 1, y)
-            let b = get_b(x, y);
-            let h_int = buffer.get_integer(x + 1, y) as u8;
-            ((h_int as u16 + b as u16 + 1) >> 1) as u8
-        }
-        (0, 1) => {
-            // Position 'd' (0, 1/4)
-            // Equation 8-252: d = (G + h + 1) >> 1
-            let h = get_h(x, y);
-            ((g as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (0, 3) => {
-            // Position 'n' (0, 3/4)
-            // Equation 8-253: n = (M + h + 1) >> 1
-            // 'M' is integer sample at (x, y + 1)
-            let h = get_h(x, y);
-            let m_int = buffer.get_integer(x, y + 1) as u8;
-            ((m_int as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (2, 1) => {
-            // Position 'f' (1/2, 1/4)
-            // Equation 8-254: f = (b + j + 1) >> 1
-            let b = get_b(x, y);
-            let j = get_j(x, y);
-            ((b as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (2, 3) => {
-            // Position 'q' (1/2, 3/4)
-            // Equation 8-257: q = (j + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            let s = get_b(x, y + 1);
-            let j = get_j(x, y);
-            ((s as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (1, 2) => {
-            // Position 'i' (1/4, 1/2)
-            // Equation 8-255: i = (h + j + 1) >> 1
-            let h = get_h(x, y);
-            let j = get_j(x, y);
-            ((h as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (3, 2) => {
-            // Position 'k' (3/4, 1/2)
-            // Equation 8-256: k = (j + m + 1) >> 1
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let m = get_h(x + 1, y);
-            let j = get_j(x, y);
-            ((m as u16 + j as u16 + 1) >> 1) as u8
-        }
-        (1, 1) => {
-            // Position 'e' (1/4, 1/4)
-            // Equation 8-258: e = (b + h + 1) >> 1
-            let b = get_b(x, y);
-            let h = get_h(x, y);
-            ((b as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (3, 1) => {
-            // Position 'g' (3/4, 1/4)
-            // Equation 8-259: g = (b + m + 1) >> 1
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let b = get_b(x, y);
-            let m = get_h(x + 1, y);
-            ((b as u16 + m as u16 + 1) >> 1) as u8
-        }
-        (1, 3) => {
-            // Position 'p' (1/4, 3/4)
-            // Equation 8-260: p = (h + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            let s = get_b(x, y + 1);
-            let h = get_h(x, y);
-            ((s as u16 + h as u16 + 1) >> 1) as u8
-        }
-        (3, 3) => {
-            // Position 'r' (3/4, 3/4)
-            // Equation 8-261: r = (m + s + 1) >> 1
-            // 's' is horizontal half-sample at (x + 1/2, y + 1) (i.e., 'b' at y+1)
-            // 'm' is vertical half-sample at (x + 1, y + 1/2) (i.e., 'h' at x+1)
-            let s = get_b(x, y + 1);
-            let m = get_h(x + 1, y);
-            ((m as u16 + s as u16 + 1) >> 1) as u8
-        }
-        _ => unreachable!("x_frac={}, y_frac={}", x_frac, y_frac),
     }
 }
 

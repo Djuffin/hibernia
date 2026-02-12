@@ -22,7 +22,7 @@ use log::info;
 use slice::Slice;
 use smallvec::SmallVec;
 use v_frame::frame;
-use v_frame::plane::{self, PlaneOffset, PlaneSlice};
+use v_frame::plane::{self, PlaneMutSlice, PlaneOffset, PlaneSlice};
 
 pub type VideoFrame = frame::Frame<u8>;
 type Plane = v_frame::plane::Plane<u8>;
@@ -543,59 +543,6 @@ fn point_to_plane_offset(p: Point) -> PlaneOffset {
     PlaneOffset { x: p.x as isize, y: p.y as isize }
 }
 
-#[derive(Default)]
-struct Surroundings4x4 {
-    pub offset: PlaneOffset,
-    pub top_row: [u8; 9],
-    pub left_column: [u8; 5],
-}
-
-impl Surroundings4x4 {
-    pub fn load(&mut self, plane: &Plane, blk_loc: Point, substitute_right: bool) {
-        let mut offset = point_to_plane_offset(blk_loc);
-        offset.x -= 1;
-        offset.y -= 1;
-        let mut target_slice = plane.slice(offset);
-
-        if offset.y > 0 {
-            if substitute_right {
-                // Section 8.3.1.2 Intra_4x4 sample prediction
-                // When samples p[ x, −1 ], with x = 4..7, are marked as "not available" ...
-                self.top_row[0..5].copy_from_slice(&target_slice[0][0..5]);
-                let filler = self.top_row[4];
-                self.top_row[5..9].fill(filler);
-            } else {
-                self.top_row.copy_from_slice(&target_slice[0][0..9]);
-            }
-        } else {
-            self.top_row.fill(0);
-        }
-
-        self.left_column[0] = self.top_row[0];
-        offset.y += 1;
-        target_slice = plane.slice(offset);
-        if offset.x > 0 {
-            for (idx, v) in target_slice.rows_iter().take(4).enumerate() {
-                self.left_column[idx + 1] = v[0];
-            }
-        } else {
-            self.left_column[1..5].fill(0);
-        }
-
-        offset.x += 1;
-        self.offset = offset;
-    }
-
-    #[inline]
-    pub fn top4(&self) -> &[u8] {
-        &self.top_row[1..5]
-    }
-
-    #[inline]
-    pub fn left4(&self) -> &[u8] {
-        &self.left_column[1..5]
-    }
-}
 
 pub fn render_luma_inter_prediction(
     slice: &Slice,
@@ -798,183 +745,218 @@ pub fn render_luma_4x4_intra_prediction(
         (((a as u16) + (b as u16) + 1) >> 1) as u8
     }
 
-    let mut ctx = Surroundings4x4::default();
     let has_c_mb_neighbor = slice.has_mb_neighbor(mb_addr, MbNeighborName::C);
     for blk_idx in 0..16 {
         let mut blk_loc = get_4x4luma_block_location(blk_idx);
         blk_loc.x += mb_loc.x;
         blk_loc.y += mb_loc.y;
+
+        let mut offset = point_to_plane_offset(blk_loc);
+        offset.x -= 1;
+        offset.y -= 1;
+
+        let top_avail = offset.y > 0;
+        let left_avail = offset.x > 0;
+
         let substitute_right = match blk_idx {
             3 | 7 | 11 | 13 | 15 => true,
             5 => !has_c_mb_neighbor,
             _ => false,
         };
-        ctx.load(target, blk_loc, substitute_right);
-        let mut target_slice = target.mut_slice(ctx.offset);
+
+        let mut target_slice = target.mut_slice(offset);
+
+        let get_top = |slice: &PlaneMutSlice<u8>, x: usize| -> u8 {
+            if !top_avail {
+                return 0;
+            }
+            if substitute_right && x >= 4 {
+                return slice[0][4];
+            }
+            slice[0][x + 1]
+        };
+
+        let get_left = |slice: &PlaneMutSlice<u8>, y: usize| -> u8 {
+            if !left_avail {
+                return 0;
+            }
+            slice[y + 1][0]
+        };
+
+        let get_top_left = |slice: &PlaneMutSlice<u8>| -> u8 {
+            if !top_avail {
+                return 0;
+            }
+            slice[0][0]
+        };
+
+        let t = |slice: &PlaneMutSlice<u8>, k: usize| -> u8 {
+            if k == 0 {
+                get_top_left(slice)
+            } else {
+                get_top(slice, k - 1)
+            }
+        };
+
+        let l = |slice: &PlaneMutSlice<u8>, k: usize| -> u8 {
+            if k == 0 {
+                get_top_left(slice)
+            } else {
+                get_left(slice, k - 1)
+            }
+        };
 
         let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
         match mode {
             Intra_4x4_SamplePredMode::Vertical => {
-                // Section 8.3.1.2.1 Specification of Intra_4x4_Vertical prediction mode
-                // Equation 8-46: pred4x4L[x, y] = p[x, -1]
-                let src = ctx.top4();
-                for row in target_slice.rows_iter_mut().take(4) {
-                    row[0..4].copy_from_slice(src);
+                for x in 0..4 {
+                    let val = get_top(&target_slice, x);
+                    for y in 0..4 {
+                        target_slice[y + 1][x + 1] = val;
+                    }
                 }
             }
             Intra_4x4_SamplePredMode::Horizontal => {
-                // Section 8.3.1.2.2 Specification of Intra_4x4_Horizontal prediction mode
-                // Equation 8-47: pred4x4L[x, y] = p[-1, y]
-                let src = ctx.left4();
-                for (idx, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                    row[0..4].fill(src[idx]);
+                for y in 0..4 {
+                    let val = get_left(&target_slice, y);
+                    for x in 0..4 {
+                        target_slice[y + 1][x + 1] = val;
+                    }
                 }
             }
             Intra_4x4_SamplePredMode::DC => {
-                // Section 8.3.1.2.3 Specification of Intra_4x4_DC prediction mode
-                // Calculate the sum of all the values at the left of the current macroblock
                 let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::A).1.is_none();
                 let sum_a = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
-                    Some(ctx.left4().iter().map(|v| *v as u32).sum::<u32>())
+                    let mut s = 0u32;
+                    for y in 0..4 {
+                        s += get_left(&target_slice, y) as u32;
+                    }
+                    Some(s)
                 } else {
                     None
                 };
 
-                // Calculate the sum of all the values at the top of the current macroblock
                 let same_mb = get_4x4luma_block_neighbor(blk_idx, MbNeighborName::B).1.is_none();
                 let sum_b = if same_mb || slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
-                    Some(ctx.top4().iter().map(|v| *v as u32).sum::<u32>())
+                    let mut s = 0u32;
+                    for x in 0..4 {
+                        s += get_top(&target_slice, x) as u32;
+                    }
+                    Some(s)
                 } else {
                     None
                 };
 
-                // Equations 8-48 to 8-51: averaging top and/or left neighbors
                 let mut sum = sum_a.unwrap_or(0) + sum_b.unwrap_or(0);
                 if sum_a.is_some() && sum_b.is_some() {
                     sum = (sum + 4) >> 3;
                 } else if sum_a.is_some() != sum_b.is_some() {
                     sum = (sum + 2) >> 2;
                 } else {
-                    sum = 1 << 7; // Default 128 for 8-bit
+                    sum = 1 << 7;
                 }
 
-                for row in target_slice.rows_iter_mut().take(4) {
-                    row[0..4].fill(sum as u8);
+                for row in target_slice.rows_iter_mut().skip(1).take(4) {
+                    row[1..5].fill(sum as u8);
                 }
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Left => {
-                // Section 8.3.1.2.4 Specification of Intra_4x4_Diagonal_Down_Left prediction mode
-                let top_row = &ctx.top_row[1..=8];
-                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                for y in 0..4 {
+                    for x in 0..4 {
                         let i = x + y;
-                        *value = if i == 6 {
-                            // Equation 8-52
-                            weighted_avg(top_row[7], top_row[7], top_row[6])
+                        let val = if i == 6 {
+                            weighted_avg(t(&target_slice, 8), t(&target_slice, 8), t(&target_slice, 7))
                         } else {
-                            // Equation 8-53
-                            weighted_avg(top_row[i + 1], top_row[i], top_row[i + 2])
+                            weighted_avg(t(&target_slice, i + 2), t(&target_slice, i + 1), t(&target_slice, i + 3))
                         };
+                        target_slice[y + 1][x + 1] = val;
                     }
                 }
             }
             Intra_4x4_SamplePredMode::Diagonal_Down_Right => {
-                // Section 8.3.1.2.5 Specification of Intra_4x4_Diagonal_Down_Right prediction mode
-                // Equations 8-54 to 8-56
-                let top = &ctx.top_row;
-                let left = &ctx.left_column;
-                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                    for (x, value) in row.iter_mut().take(4).enumerate() {
-                        *value = match x.cmp(&y) {
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let val = match x.cmp(&y) {
                             Ordering::Greater => {
                                 let i = 1 + x - y;
-                                weighted_avg(top[i - 1], top[i - 2], top[i])
+                                weighted_avg(t(&target_slice, i - 1), t(&target_slice, i - 2), t(&target_slice, i))
                             }
                             Ordering::Less => {
                                 let i = 1 + y - x;
-                                weighted_avg(left[i - 1], left[i - 2], left[i])
+                                weighted_avg(l(&target_slice, i - 1), l(&target_slice, i - 2), l(&target_slice, i))
                             }
-                            Ordering::Equal => weighted_avg(top[0], top[1], left[1]),
-                        }
+                            Ordering::Equal => weighted_avg(t(&target_slice, 0), t(&target_slice, 1), l(&target_slice, 1)),
+                        };
+                        target_slice[y + 1][x + 1] = val;
                     }
                 }
             }
             Intra_4x4_SamplePredMode::Vertical_Right => {
-                // Section 8.3.1.2.6 Specification of Intra_4x4_Vertical_Right prediction mode
-                // Equations 8-57 to 8-60
-                let left = &ctx.left_column;
-                let top = &ctx.top_row;
-                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                for y in 0..4 {
+                    for x in 0..4 {
                         let z = 2 * (x as isize) - (y as isize);
                         let i = 1 + x - (y >> 1);
-                        *value = match z {
-                            0 | 2 | 4 | 6 => avg(top[i], top[i - 1]),
-                            1 | 3 | 5 => weighted_avg(top[i - 1], top[i - 2], top[i]),
-                            -1 => weighted_avg(top[0], top[1], left[1]),
+                        let val = match z {
+                            0 | 2 | 4 | 6 => avg(t(&target_slice, i), t(&target_slice, i - 1)),
+                            1 | 3 | 5 => weighted_avg(t(&target_slice, i - 1), t(&target_slice, i - 2), t(&target_slice, i)),
+                            -1 => weighted_avg(t(&target_slice, 0), t(&target_slice, 1), l(&target_slice, 1)),
                             _ => {
                                 let y = y + 1;
-                                weighted_avg(left[y - 2], left[y - 1], left[y - 3])
+                                weighted_avg(l(&target_slice, y - 2), l(&target_slice, y - 1), l(&target_slice, y - 3))
                             }
                         };
+                        target_slice[y + 1][x + 1] = val;
                     }
                 }
             }
             Intra_4x4_SamplePredMode::Horizontal_Down => {
-                // Section 8.3.1.2.7 Specification of Intra_4x4_Horizontal_Down prediction mode
-                // Equations 8-61 to 8-64
-                let left = &ctx.left_column;
-                let top = &ctx.top_row;
-                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                for y in 0..4 {
+                    for x in 0..4 {
                         let z = 2 * (y as isize) - (x as isize);
                         let i = 1 + y - (x >> 1);
-                        *value = match z {
-                            0 | 2 | 4 | 6 => avg(left[i - 1], left[i]),
-                            1 | 3 | 5 => weighted_avg(left[i - 1], left[i - 2], left[i]),
-                            -1 => weighted_avg(top[0], left[1], top[1]),
-                            _ => weighted_avg(top[x - 1], top[x], top[x - 2]),
+                        let val = match z {
+                            0 | 2 | 4 | 6 => avg(l(&target_slice, i - 1), l(&target_slice, i)),
+                            1 | 3 | 5 => weighted_avg(l(&target_slice, i - 1), l(&target_slice, i - 2), l(&target_slice, i)),
+                            -1 => weighted_avg(t(&target_slice, 0), l(&target_slice, 1), t(&target_slice, 1)),
+                            _ => weighted_avg(t(&target_slice, x - 1), t(&target_slice, x), t(&target_slice, x - 2)),
                         };
+                        target_slice[y + 1][x + 1] = val;
                     }
                 }
             }
             Intra_4x4_SamplePredMode::Vertical_Left => {
-                // Section 8.3.1.2.8 Specification of Intra_4x4_Vertical_Left prediction mode
-                // Equations 8-65, 8-66
-                let top_row = &ctx.top_row[1..];
-                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                for y in 0..4 {
+                    for x in 0..4 {
                         let i = x + (y >> 1);
-                        *value = if y % 2 == 0 {
-                            avg(top_row[i], top_row[i + 1])
+                        let val = if y % 2 == 0 {
+                            avg(t(&target_slice, i + 1), t(&target_slice, i + 2))
                         } else {
-                            weighted_avg(top_row[i + 1], top_row[i + 2], top_row[i])
+                            weighted_avg(t(&target_slice, i + 2), t(&target_slice, i + 3), t(&target_slice, i + 1))
                         };
+                        target_slice[y + 1][x + 1] = val;
                     }
                 }
             }
             Intra_4x4_SamplePredMode::Horizontal_Up => {
-                // Section 8.3.1.2.9 Specification of Intra_4x4_Horizontal_Up prediction mode
-                // Equations 8-67 to 8-70
-                let left = ctx.left4();
-                for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                    for (x, value) in row.iter_mut().take(4).enumerate() {
+                for y in 0..4 {
+                    for x in 0..4 {
                         let z = x + 2 * y;
                         let i = y + (x >> 1);
-                        *value = match z {
-                            0 | 2 | 4 => avg(left[i], left[i + 1]),
-                            1 | 3 => weighted_avg(left[i + 1], left[i], left[i + 2]),
-                            5 => weighted_avg(left[3], left[3], left[2]),
-                            _ => left[3],
+                        let val = match z {
+                            0 | 2 | 4 => avg(l(&target_slice, i + 1), l(&target_slice, i + 2)),
+                            1 | 3 => weighted_avg(l(&target_slice, i + 2), l(&target_slice, i + 1), l(&target_slice, i + 3)),
+                            5 => weighted_avg(l(&target_slice, 4), l(&target_slice, 4), l(&target_slice, 3)),
+                            _ => l(&target_slice, 4),
                         };
+                        target_slice[y + 1][x + 1] = val;
                     }
                 }
             }
         }
 
         if let Some(residual) = residuals.get(blk_idx as usize) {
-            for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                for (x, pixel) in row.iter_mut().take(4).enumerate() {
+            for (y, row) in target_slice.rows_iter_mut().skip(1).take(4).enumerate() {
+                for (x, pixel) in row.iter_mut().skip(1).take(4).enumerate() {
                     *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;
                 }
             }

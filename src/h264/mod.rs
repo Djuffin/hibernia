@@ -6,6 +6,7 @@ pub mod inter_pred;
 pub mod macroblock;
 pub mod nal;
 pub mod parser;
+pub mod poc;
 pub mod pps;
 pub mod rbsp;
 pub mod residual;

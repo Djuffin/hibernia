@@ -1749,3 +1749,52 @@ mod tests {
         assert!(remove_emulation_if_needed(&data).is_empty());
     }
 }
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use crate::h264::slice::SliceHeader;
+    use crate::h264::sps::SequenceParameterSet;
+    use crate::h264::pps::PicParameterSet;
+    use crate::h264::Profile;
+    use crate::h264::ChromaFormat;
+
+    #[test]
+    fn test_predict_mv_l0_crafted_ref_idx_panic() {
+        // Issue: Panic on Crafted Reference Index in Parser
+        // Vulnerability: Code directly unwraps a neighbor if ref_idx matches,
+        // but if neighbor is None, ref_idx defaults to u8::MAX.
+        // If crafted ref_idx is u8::MAX, it triggers the unwrap on None.
+
+        let sps = SequenceParameterSet {
+            profile: Profile::Baseline,
+            level_idc: 20,
+            seq_parameter_set_id: 0,
+            chroma_format_idc: ChromaFormat::YUV420,
+            pic_width_in_mbs_minus1: 3,
+            pic_height_in_map_units_minus1: 3,
+            frame_mbs_only_flag: true,
+            ..SequenceParameterSet::default()
+        };
+
+        let pps = PicParameterSet::default();
+        let header = SliceHeader::default(); // first_mb_in_slice = 0
+
+        let slice = Slice::new(sps, pps, header);
+
+        // We are at MB 0. Neighbors A, B, C, D are all unavailable (out of bounds).
+        // Calling predict_mv_l0 with ref_idx_l0 = 255 (u8::MAX).
+        // If the vulnerability exists, this should panic.
+
+        let result = predict_mv_l0(
+            &slice,
+            0, // mb_addr
+            0, 0, 16, 16, // part rect
+            255, // ref_idx_l0 = u8::MAX
+            None // current_mb_motion
+        );
+
+        // If it doesn't panic, we expect default motion vector (0,0).
+        assert_eq!(result, MotionVector { x: 0, y: 0 });
+    }
+}

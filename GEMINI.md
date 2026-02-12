@@ -16,7 +16,9 @@ When I ask for code, you provide it directly, optimized for clarity and correctn
 
 This project, Hibernia, is a clean-room implementation of the H.264 (AVC) video decoder,
 written entirely in Rust. The primary objective is to create a correct, understandable,
-and reasonably performant decoder. Adherence to the official ITU-T H.264 specification is the highest priority.
+and reasonably performant decoder.
+Adherence to the official ITU-T H.264 specification is the highest priority.
+Use @spec/h264.md to find files to refresh your memory of ITU-T H.264 specification.
 
 ## Tech Stack
 

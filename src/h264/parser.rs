@@ -556,6 +556,19 @@ pub fn parse_pred_weight_table(
     sps: &SequenceParameterSet,
     pps: &PicParameterSet,
 ) -> ParseResult<PredWeightTable> {
+    if slice_header.num_ref_idx_l0_active_minus1 > 31 {
+        return Err(format!(
+            "num_ref_idx_l0_active_minus1 ({}) is too large",
+            slice_header.num_ref_idx_l0_active_minus1
+        ));
+    }
+    if slice_header.slice_type == SliceType::B && slice_header.num_ref_idx_l1_active_minus1 > 31 {
+        return Err(format!(
+            "num_ref_idx_l1_active_minus1 ({}) is too large",
+            slice_header.num_ref_idx_l1_active_minus1
+        ));
+    }
+
     let mut table = PredWeightTable::default();
     read_value!(input, table.luma_log2_weight_denom, ue, 8);
     if sps.ChromaArrayType() != ChromaFormat::Monochrome {

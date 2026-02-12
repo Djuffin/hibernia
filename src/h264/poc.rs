@@ -6,11 +6,15 @@ pub struct PocState {
     // POC Type 0 state
     prev_pic_order_cnt_msb: i32,
     prev_pic_order_cnt_lsb: i32,
+    /// Set to true if the previous *reference* picture included an MMCO 5 operation.
+    /// Used for state resets in POC Type 0 (Section 8.2.1.1).
     prev_ref_has_mmco5: bool,
 
     // POC Type 1 & 2 state
     prev_frame_num: i32,
     prev_frame_num_offset: i32,
+    /// Set to true if the previous picture (reference or non-reference) included an MMCO 5 operation.
+    /// Used for state resets in POC Type 1 and 2 (Sections 8.2.1.2 and 8.2.1.3).
     prev_has_mmco5: bool,
 }
 

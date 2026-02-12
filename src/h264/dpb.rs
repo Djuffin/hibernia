@@ -117,7 +117,10 @@ impl DecodedPictureBuffer {
         })
     }
 
-    // Section 8.2.5 Decoded reference picture marking process
+    /// Section 8.2.5 Decoded reference picture marking process.
+    ///
+    /// Returns true if a memory_management_control_operation equal to 5 (MMCO 5) was processed,
+    /// indicating that the POC state should be reset for the next picture.
     pub fn mark_references(
         &mut self,
         header: &SliceHeader,
@@ -177,6 +180,9 @@ impl DecodedPictureBuffer {
         }
     }
 
+    /// Section 8.2.5.4 Adaptive memory control decoded reference picture marking process.
+    ///
+    /// Returns true if MMCO 5 was encountered.
     fn mark_adaptive_references(
         &mut self,
         header: &SliceHeader,

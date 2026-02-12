@@ -181,6 +181,8 @@ impl Decoder {
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
                     self.process_slice(&mut slice)?;
+                    // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
+                    // as "unused for reference" and sets the current frame's frame_num and POC to 0.
                     let has_mmco5 = self.dpb.mark_references(&slice.header, disposition, &slice.sps);
                     self.poc_state.update_mmco5_state(
                         has_mmco5,

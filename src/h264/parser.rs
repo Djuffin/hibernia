@@ -1069,9 +1069,17 @@ pub fn predict_mv_l0(
 
     // Get raw neighbor info (None if Intra or Unavailable)
     let raw_a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-    let raw_b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
-    let raw_c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
+    let mut raw_b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
+    let mut raw_c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
         .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1));
+
+    // Section 8.4.1.3.1 Derivation process for median luma motion vector prediction
+    // 1. When both partitions mbAddrB\mbPartIdxB\subMbPartIdxB and mbAddrC\mbPartIdxC\subMbPartIdxC are not
+    // available and mbAddrA\mbPartIdxA\subMbPartIdxA is available...
+    if raw_b.is_none() && raw_c.is_none() && raw_a.is_some() {
+        raw_b = raw_a;
+        raw_c = raw_a;
+    }
 
     // Check if neighbors match the current ref_idx
     let match_a = raw_a.map_or(false, |p| p.ref_idx_l0 == ref_idx_l0);

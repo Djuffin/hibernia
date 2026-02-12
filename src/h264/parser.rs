@@ -980,7 +980,7 @@ pub fn get_motion_at_coord(
     current_mb_motion: Option<&MbMotion>,
 ) -> Option<PartitionInfo> {
     let pic_width_pixels = slice.sps.pic_width() as i32;
-    let pic_height_pixels = slice.sps.pic_hight() as i32;
+    let pic_height_pixels = slice.sps.pic_height() as i32;
 
     if x < 0 || y < 0 || x >= pic_width_pixels || y >= pic_height_pixels {
         return None;

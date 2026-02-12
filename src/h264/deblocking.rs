@@ -604,6 +604,9 @@ fn get_bs(
     let mb_p = slice.get_mb(mb_p_addr).unwrap();
     let mb_q = slice.get_mb(mb_q_addr).unwrap();
 
+    // Section 8.7.2.1: mixedModeEdgeFlag derivation (MBAFF not yet supported)
+    let mixed_mode_edge_flag = false;
+
     // Condition 1: Intra coding
     if mb_p.is_intra() || mb_q.is_intra() {
         // If edge is a macroblock edge ...
@@ -621,7 +624,7 @@ fn get_bs(
     }
 
     // Condition 3: Motion vectors / Reference frames
-    if check_motion_discontinuity(slice, mb_p, blk_p_idx, mb_q, blk_q_idx) {
+    if mixed_mode_edge_flag || check_motion_discontinuity(slice, mb_p, blk_p_idx, mb_q, blk_q_idx) {
         return BS_MOTION;
     }
 

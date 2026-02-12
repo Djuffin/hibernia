@@ -147,7 +147,7 @@ impl Decoder {
                     info!("{:?} {:#?}", nal.nal_unit_type, slice);
                     let frame = VideoFrame::new_with_padding(
                         slice.sps.pic_width(),
-                        slice.sps.pic_hight(),
+                        slice.sps.pic_height(),
                         v_frame::pixel::ChromaSampling::Cs420,
                         16,
                     );
@@ -181,7 +181,11 @@ impl Decoder {
                         .map_err(parse_error_handler)?;
                     info!("Blocks: {:#?}", slice.get_macroblock_count());
                     self.process_slice(&mut slice)?;
-                    self.dpb.mark_references(&slice.header, disposition, &slice.sps);
+                    let has_mmco5 = self.dpb.mark_references(&slice.header, disposition, &slice.sps);
+                    self.poc_state.update_mmco5_state(
+                        has_mmco5,
+                        disposition != ReferenceDisposition::NonReference,
+                    );
                 }
                 NalUnitType::SupplementalEnhancementInfo => {}
                 NalUnitType::SeqParameterSet => {

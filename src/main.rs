@@ -17,6 +17,32 @@ use std::io;
 use log::info;
 use v_frame::plane::PlaneOffset;
 use hibernia::y4m_cmp::compare_y4m_buffers;
+use hibernia::h264::decoder::VideoFrame;
+
+fn write_frame(
+    frame: &VideoFrame,
+    encoder: &mut y4m::Encoder<impl io::Write>,
+    planes: &mut Vec<Vec<u8>>,
+) {
+    if planes.len() < frame.planes.len() {
+        planes.resize_with(frame.planes.len(), Vec::new);
+    }
+
+    for (i, plane) in frame.planes.iter().enumerate() {
+        let data_size = plane.cfg.width * plane.cfg.height;
+        let data = &mut planes[i];
+        if data.len() != data_size {
+            data.resize(data_size, 0);
+        }
+        plane.copy_to_raw_u8(data, plane.cfg.width, 1);
+    }
+
+    let yuv_frame = y4m::Frame::new(
+        [planes[0].as_slice(), planes[1].as_slice(), planes[2].as_slice()],
+        None,
+    );
+    encoder.write_frame(&yuv_frame).unwrap();
+}
 
 fn main() {
     diag::init(false);
@@ -29,48 +55,68 @@ fn main() {
         return;
     }
 
-    let encoded_video_buffer =
-        fs::read(&input_filename).expect(format!("can't read file: {input_filename}").as_str());
+    let file = fs::File::open(&input_filename).expect(&format!("can't read file: {input_filename}"));
+    let reader = io::BufReader::new(file);
+    let parser = h264::nal_parser::NalParser::new(reader);
     let mut decoder = h264::decoder::Decoder::new();
-    decoder.decode(&encoded_video_buffer).expect("Decoding error");
-
-    let first_frame = decoder.get_frame_buffer().first().unwrap();
-    let y_plane = &first_frame.planes[0];
-    let w = y_plane.cfg.width as u32;
-    let h = y_plane.cfg.height as u32;
 
     let mut decoding_output = Vec::<u8>::new();
+    let mut planes = Vec::<Vec<u8>>::new();
+
     {
         let mut writer = io::BufWriter::new(&mut decoding_output);
-        let mut encoder = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
-            .with_colorspace(y4m::Colorspace::C420)
-            .write_header(&mut writer)
-            .unwrap();
+        let mut encoder_opt: Option<y4m::Encoder<_>> = None;
+        let mut frame_count = 0;
 
-        let mut planes = Vec::<Vec<u8>>::new();
-        for (num, frame) in decoder.get_frame_buffer().iter().enumerate() {
-            info!("Writing frame #{num} {w} x {h} to y4m");
+        for nal_result in parser {
+            let nal = nal_result.expect("NAL parsing error");
+            decoder.decode(&nal).expect("Decoding error");
 
-            if planes.len() < frame.planes.len() {
-                planes.resize_with(frame.planes.len(), Vec::new);
-            }
+            while let Some(frame) = decoder.retrieve_frame() {
+                let y_plane = &frame.planes[0];
+                let w = y_plane.cfg.width as u32;
+                let h = y_plane.cfg.height as u32;
 
-            for (i, plane) in frame.planes.iter().enumerate() {
-                let data_size = plane.cfg.width * plane.cfg.height;
-                let data = &mut planes[i];
-                if data.len() != data_size {
-                    data.resize(data_size, 0);
+                info!("Writing frame #{frame_count} {w} x {h} to y4m");
+                frame_count += 1;
+
+                if encoder_opt.is_none() {
+                     let enc = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
+                        .with_colorspace(y4m::Colorspace::C420)
+                        .write_header(&mut writer)
+                        .unwrap();
+                     encoder_opt = Some(enc);
                 }
-                plane.copy_to_raw_u8(data, plane.cfg.width, 1);
+
+                if let Some(ref mut encoder) = encoder_opt {
+                    write_frame(&frame, encoder, &mut planes);
+                }
+            }
+        }
+
+        decoder.flush().expect("Flush error");
+        while let Some(frame) = decoder.retrieve_frame() {
+            let y_plane = &frame.planes[0];
+            let w = y_plane.cfg.width as u32;
+            let h = y_plane.cfg.height as u32;
+
+            info!("Writing frame #{frame_count} {w} x {h} to y4m");
+            frame_count += 1;
+
+            if encoder_opt.is_none() {
+                 let enc = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
+                    .with_colorspace(y4m::Colorspace::C420)
+                    .write_header(&mut writer)
+                    .unwrap();
+                 encoder_opt = Some(enc);
             }
 
-            let yuv_frame = y4m::Frame::new(
-                [planes[0].as_slice(), planes[1].as_slice(), planes[2].as_slice()],
-                None,
-            );
-            encoder.write_frame(&yuv_frame).unwrap();
+            if let Some(ref mut encoder) = encoder_opt {
+                write_frame(&frame, encoder, &mut planes);
+            }
         }
     }
+
     fs::write("output.y4m", decoding_output.as_slice()).expect("can't save decoding result");
 }
 
@@ -86,45 +132,56 @@ mod tests {
             format!("IO error: {e}")
         }
         let expected_y4m_buffer = fs::read(gold_y4m_filename).map_err(stringify)?;
-        let encoded_video_buffer = fs::read(encoded_file_name).map_err(stringify)?;
-        let mut decoder = h264::decoder::Decoder::new();
-        decoder
-            .decode(&encoded_video_buffer)
-            .map_err(|e| -> String { format!("Decoding error: {e:?}") })?;
 
-        let first_frame = decoder.get_frame_buffer().first().unwrap();
-        let y_plane = &first_frame.planes[0];
-        let w = y_plane.cfg.width as u32;
-        let h = y_plane.cfg.height as u32;
+        let file = fs::File::open(encoded_file_name).map_err(stringify)?;
+        let reader = io::BufReader::new(file);
+        let parser = h264::nal_parser::NalParser::new(reader);
+        let mut decoder = h264::decoder::Decoder::new();
 
         let mut decoding_output = Vec::<u8>::new();
         {
             let mut writer = io::BufWriter::new(&mut decoding_output);
-            let mut encoder = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
-                .with_colorspace(y4m::Colorspace::C420)
-                .write_header(&mut writer)
-                .unwrap();
-
+            let mut encoder_opt: Option<y4m::Encoder<_>> = None;
             let mut planes = Vec::<Vec<u8>>::new();
-            for (num, frame) in decoder.get_frame_buffer().iter().enumerate() {
-                if planes.len() < frame.planes.len() {
-                    planes.resize_with(frame.planes.len(), Vec::new);
-                }
 
-                for (i, plane) in frame.planes.iter().enumerate() {
-                    let data_size = plane.cfg.width * plane.cfg.height;
-                    let data = &mut planes[i];
-                    if data.len() != data_size {
-                        data.resize(data_size, 0);
+            for nal_result in parser {
+                let nal = nal_result.map_err(stringify)?;
+                decoder.decode(&nal).map_err(|e| format!("Decoding error: {e:?}"))?;
+                while let Some(frame) = decoder.retrieve_frame() {
+                    let y_plane = &frame.planes[0];
+                    let w = y_plane.cfg.width as u32;
+                    let h = y_plane.cfg.height as u32;
+
+                    if encoder_opt.is_none() {
+                         let enc = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
+                            .with_colorspace(y4m::Colorspace::C420)
+                            .write_header(&mut writer)
+                            .unwrap();
+                         encoder_opt = Some(enc);
                     }
-                    plane.copy_to_raw_u8(data, plane.cfg.width, 1);
+
+                    if let Some(ref mut encoder) = encoder_opt {
+                        write_frame(&frame, encoder, &mut planes);
+                    }
+                }
+            }
+            decoder.flush().map_err(|e| format!("Flush error: {e:?}"))?;
+            while let Some(frame) = decoder.retrieve_frame() {
+                let y_plane = &frame.planes[0];
+                let w = y_plane.cfg.width as u32;
+                let h = y_plane.cfg.height as u32;
+
+                if encoder_opt.is_none() {
+                     let enc = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
+                        .with_colorspace(y4m::Colorspace::C420)
+                        .write_header(&mut writer)
+                        .unwrap();
+                     encoder_opt = Some(enc);
                 }
 
-                let yuv_frame = y4m::Frame::new(
-                    [planes[0].as_slice(), planes[1].as_slice(), planes[2].as_slice()],
-                    None,
-                );
-                encoder.write_frame(&yuv_frame).unwrap();
+                if let Some(ref mut encoder) = encoder_opt {
+                    write_frame(&frame, encoder, &mut planes);
+                }
             }
         }
 

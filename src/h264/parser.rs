@@ -25,6 +25,7 @@ use slice::{
     RefPicListModification, RefPicListModifications, Slice, SliceHeader, SliceType,
     WeightingFactors,
 };
+use std::borrow::Cow;
 use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 
 pub type BitReader<'a> = rbsp::RbspReader<'a>;
@@ -410,7 +411,7 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     None
 }
 
-pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
+pub fn remove_emulation_if_needed(input: &[u8]) -> Cow<[u8]> {
     let mut zeros = 0;
     let mut result = Vec::<u8>::new();
     for (byte_index, byte) in input.iter().enumerate() {
@@ -440,7 +441,11 @@ pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
             }
         }
     }
-    result
+    if result.is_empty() {
+        Cow::Borrowed(input)
+    } else {
+        Cow::Owned(result)
+    }
 }
 
 pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
@@ -1747,18 +1752,25 @@ mod tests {
     #[test]
     pub fn test_remove_emulation_if_needed() {
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0f, 0x00, 0x00, 0x00, 0x00];
-        assert!(remove_emulation_if_needed(&data).is_empty());
+        let result = remove_emulation_if_needed(&data);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&result[..], &data[..]);
 
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0f, 0x00, 0x00, 0x03, 0x00];
         assert_eq!(
-            remove_emulation_if_needed(&data),
+            remove_emulation_if_needed(&data).into_owned(),
             vec![0xAA, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00]
         );
 
         let data = [0x00, 0x03, 0x0f, 0x00, 0x00, 0x03];
-        assert_eq!(remove_emulation_if_needed(&data), vec![0x00, 0x03, 0x0f, 0x00, 0x00]);
+        assert_eq!(
+            remove_emulation_if_needed(&data).into_owned(),
+            vec![0x00, 0x03, 0x0f, 0x00, 0x00]
+        );
 
         let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4];
-        assert!(remove_emulation_if_needed(&data).is_empty());
+        let result = remove_emulation_if_needed(&data);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&result[..], &data[..]);
     }
 }

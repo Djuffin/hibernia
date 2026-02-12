@@ -324,6 +324,8 @@ impl Decoder {
 
         self.construct_ref_pic_list0(slice)?;
 
+        let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
+        let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
         let split_idx = self.dpb.pictures.len() - 1;
         let (references, current) = self.dpb.pictures.split_at_mut(split_idx);
@@ -349,7 +351,9 @@ impl Decoder {
                         }
                     }
                     Macroblock::I(imb) => {
-                        qp = (qp + imb.mb_qp_delta).clamp(0, 51);
+                        qp = (qp + imb.mb_qp_delta + 52 + 2 * qp_bd_offset_y)
+                            % (52 + qp_bd_offset_y)
+                            - qp_bd_offset_y;
                         let residuals = if let Some(residual) = imb.residual.as_ref() {
                             residual.restore(ColorPlane::Y, qp as u8)
                         } else {
@@ -386,7 +390,7 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, 0)
+                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, qp_bd_offset_c)
                                 .try_into()
                                 .unwrap();
                             let chroma_plane = &mut frame.planes[plane_name as usize];
@@ -406,7 +410,9 @@ impl Decoder {
                         }
                     }
                     Macroblock::P(block) => {
-                        qp = (qp + block.mb_qp_delta).clamp(0, 51);
+                        qp = (qp + block.mb_qp_delta + 52 + 2 * qp_bd_offset_y)
+                            % (52 + qp_bd_offset_y)
+                            - qp_bd_offset_y;
                         let residuals = if let Some(residual) = block.residual.as_ref() {
                             residual.restore(ColorPlane::Y, qp as u8)
                         } else {
@@ -425,7 +431,7 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, 0)
+                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, qp_bd_offset_c)
                                 .try_into()
                                 .unwrap();
                             let residuals = if let Some(residual) = block.residual.as_ref() {

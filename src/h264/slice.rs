@@ -134,6 +134,7 @@ pub struct SliceHeader {
     pub idr_pic_id: Option<u32>,
     pub pic_order_cnt_lsb: Option<u32>,
     pub delta_pic_order_cnt_bottom: Option<i32>,
+    pub delta_pic_order_cnt: [i32; 2],
     pub redundant_pic_cnt: Option<u32>,
 
     //pub direct_spatial_mv_pred_flag: Option<bool>,

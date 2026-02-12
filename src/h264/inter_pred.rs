@@ -235,7 +235,8 @@ pub fn interpolate_luma(
                     for y in 0..height as usize {
                         let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
                         for x in 0..width as usize {
-                            let b = clip_intermediate(intermediate[y * 21 + x]);
+                            // b is at horizontal integer y, which is row y+2 in intermediate
+                            let b = clip_intermediate(intermediate[(y + 2) * 21 + x]);
                             let j = get_j_from_intermediate(&intermediate, x, y);
                             d[x] = ((b as u16 + j as u16 + 1) >> 1) as u8;
                         }
@@ -248,7 +249,8 @@ pub fn interpolate_luma(
                         let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
                         for x in 0..width as usize {
                             let j = get_j_from_intermediate(&intermediate, x, y);
-                            let s = clip_intermediate(intermediate[(y + 1) * 21 + x]);
+                            // s is at horizontal integer y+1, which is row y+3 in intermediate
+                            let s = clip_intermediate(intermediate[(y + 3) * 21 + x]);
                             d[x] = ((j as u16 + s as u16 + 1) >> 1) as u8;
                         }
                     }

@@ -85,25 +85,49 @@ fn lookup_total_zeros(bits: u16, vlc_idx: u8) -> (u8, u8) {
     TOTAL_ZEROS_LUT[vlc_idx as usize][index]
 }
 
+// Generates a LUT for `total_zeros_chroma` decoding at compile time.
+const fn init_total_zeros_chroma_lut() -> [[(u8, u8); 8]; 4] {
+    let mut lut = [[(0, 0); 8]; 4];
+
+    let mut vlc_idx = 1;
+    while vlc_idx <= 3 {
+        let mut row_idx = 0;
+        while row_idx < 4 {
+            let row = tables::TABLE9_9A[row_idx];
+            let (pattern, len) = match vlc_idx {
+                1 => row.1,
+                2 => row.2,
+                3 => row.3,
+                _ => (0, 0),
+            };
+
+            if len > 0 {
+                let total_zeros = row.0;
+                let shift = 3 - len;
+                let start = (pattern as usize) << shift;
+                let end = ((pattern as usize) + 1) << shift;
+                let mut i = start;
+                while i < end {
+                    lut[vlc_idx][i] = (total_zeros, len);
+                    i += 1;
+                }
+            }
+            row_idx += 1;
+        }
+        vlc_idx += 1;
+    }
+    lut
+}
+
+static TOTAL_ZEROS_CHROMA_LUT: [[(u8, u8); 8]; 4] = init_total_zeros_chroma_lut();
+
 // Naive implementation of Tables 9-9 total_zeros patterns
 fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
-    for row in tables::TABLE9_9A {
-        let (pattern, pattern_len) = match vlc_idx {
-            1 => row.1,
-            2 => row.2,
-            3 => row.3,
-            _ => (0, 0),
-        };
-        if pattern_len == 0 {
-            break;
-        }
-        let shift = u16::BITS - pattern_len as u32;
-        let meaningful_bits = bits >> shift;
-        if meaningful_bits == pattern {
-            return (row.0, pattern_len);
-        }
+    if vlc_idx < 1 || vlc_idx > 3 {
+        return (0, 0);
     }
-    (0, 0)
+    let index = (bits >> 13) as usize;
+    TOTAL_ZEROS_CHROMA_LUT[vlc_idx as usize][index]
 }
 
 // Naive implementation of Table 9-10 – Tables for run_before

@@ -1004,7 +1004,7 @@ pub fn get_motion_at_coord(
 pub fn predict_mv_l0(
     slice: &Slice,
     mb_addr: MbAddr,
-    part_x: u8, // in pixels, relative to MB top-left
+    part_x: u8,
     part_y: u8,
     part_w: u8,
     part_h: u8,
@@ -1012,110 +1012,111 @@ pub fn predict_mv_l0(
     current_mb_motion: Option<&MbMotion>,
 ) -> MotionVector {
     let mb_loc = slice.get_mb_location(mb_addr);
-    let abs_part_x = mb_loc.x as i32 + part_x as i32;
-    let abs_part_y = mb_loc.y as i32 + part_y as i32;
+    let x = mb_loc.x as i32 + part_x as i32;
+    let y = mb_loc.y as i32 + part_y as i32;
 
-    let get_neighbor_raw = |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
+    // Helper to fetch neighbor info.
+    // Returns None if the neighbor is unavailable (e.g. out of bounds).
+    // Returns Some with ref_idx=MAX for Intra blocks (treated as ref_idx=-1).
+    let get_neighbor = |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
 
-    // Directional segmentation prediction for 16x8 and 8x16
-    if part_w == 16 && part_h == 8 {
+    // Neighbors A (left), B (top), C (top-right), D (top-left)
+    let a = get_neighbor(x - 1, y);
+    let b = get_neighbor(x, y - 1);
+    let c = get_neighbor(x + part_w as i32, y - 1);
+    let d = get_neighbor(x - 1, y - 1);
+
+    // Directional segmentation prediction (8-203 to 8-206)
+    let is_16x8 = part_w == 16 && part_h == 8;
+    let is_8x16 = part_w == 8 && part_h == 16;
+
+    if is_16x8 {
         if part_y == 0 {
-            // 16x8 Top partition (0)
-            // If refIdxL0B == refIdxL0, mvpL0 = mvL0B.
-            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
-            let b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
-            let ref_b = b.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-
-            if ref_b == ref_idx_l0 {
-                return b.unwrap().mv_l0;
+            // 16x8 Top partition (0): use B if references match
+            if let Some(info) = b {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
             }
         } else {
-            // 16x8 Bottom partition (1)
-            // If refIdxL0A == refIdxL0, mvpL0 = mvL0A
-            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
-            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-
-            if ref_a == ref_idx_l0 {
-                return a.unwrap().mv_l0;
+            // 16x8 Bottom partition (1): use A if references match
+            if let Some(info) = a {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
             }
         }
-    }
-
-    if part_w == 8 && part_h == 16 {
+    } else if is_8x16 {
         if part_x == 0 {
-            // 8x16 Left partition (0)
-            // If refIdxL0A == refIdxL0, mvpL0 = mvL0A
-            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
-            let a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-            let ref_a = a.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-
-            if ref_a == ref_idx_l0 {
-                return a.unwrap().mv_l0;
+            // 8x16 Left partition (0): use A if references match
+            if let Some(info) = a {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
             }
         } else {
-            // 8x16 Right partition (1)
-            // If refIdxL0C == refIdxL0, mvpL0 = mvL0C
-            // Otherwise, mvpL0 = Median( mvL0A, mvL0B, mvL0C )
-            let c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
-                .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1)); // D fallback
-            let ref_c = c.map(|i| i.ref_idx_l0).unwrap_or(u8::MAX);
-
-            if ref_c == ref_idx_l0 {
-                return c.unwrap().mv_l0;
+            // 8x16 Right partition (1): use C (or D) if references match
+            let c_eff = c.or(d);
+            if let Some(info) = c_eff {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
             }
         }
     }
 
-    // Get raw neighbor info (None if Intra or Unavailable)
-    let raw_a = get_neighbor_raw(abs_part_x - 1, abs_part_y);
-    let mut raw_b = get_neighbor_raw(abs_part_x, abs_part_y - 1);
-    let mut raw_c = get_neighbor_raw(abs_part_x + part_w as i32, abs_part_y - 1)
-        .or_else(|| get_neighbor_raw(abs_part_x - 1, abs_part_y - 1));
+    // Median prediction (Section 8.4.1.3.1)
 
-    // Section 8.4.1.3.1 Derivation process for median luma motion vector prediction
-    // 1. When both partitions mbAddrB\mbPartIdxB\subMbPartIdxB and mbAddrC\mbPartIdxC\subMbPartIdxC are not
-    // available and mbAddrA\mbPartIdxA\subMbPartIdxA is available...
-    if raw_b.is_none() && raw_c.is_none() && raw_a.is_some() {
-        raw_b = raw_a;
-        raw_c = raw_a;
+    // Step 1: Availability adjustments
+    // C is replaced by D if C is unavailable (8-214)
+    let mut mv_c = c.or(d);
+    let mut mv_b = b;
+    let mv_a = a;
+
+    // If B and C are unavailable and A is available, use A for everything (8-207)
+    if mv_b.is_none() && mv_c.is_none() && mv_a.is_some() {
+        mv_b = mv_a;
+        mv_c = mv_a;
     }
 
-    // Check if neighbors match the current ref_idx
-    let match_a = raw_a.map_or(false, |p| p.ref_idx_l0 == ref_idx_l0);
-    let match_b = raw_b.map_or(false, |p| p.ref_idx_l0 == ref_idx_l0);
-    let match_c = raw_c.map_or(false, |p| p.ref_idx_l0 == ref_idx_l0);
+    // Helper to extract values for comparison/calculation.
+    // Unavailable neighbors are treated as zero MV and ref_idx = -1 (MAX).
+    let get_vals = |info: Option<PartitionInfo>| {
+        info.unwrap_or(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default() })
+    };
 
-    let count_matches = match_a as i32 + match_b as i32 + match_c as i32;
+    let val_a = get_vals(mv_a);
+    let val_b = get_vals(mv_b);
+    let val_c = get_vals(mv_c);
 
-    // If exactly one neighbor has the same reference index, use its MV.
-    if count_matches == 1 {
+    // Step 2: Reference index matching
+    // If one and only one of the reference indices is equal to the reference index of the current partition,
+    // use that motion vector (8-211).
+    let match_a = val_a.ref_idx_l0 == ref_idx_l0;
+    let match_b = val_b.ref_idx_l0 == ref_idx_l0;
+    let match_c = val_c.ref_idx_l0 == ref_idx_l0;
+
+    let match_count = (match_a as u8) + (match_b as u8) + (match_c as u8);
+
+    if match_count == 1 {
         if match_a {
-            return raw_a.unwrap().mv_l0;
+            return val_a.mv_l0;
         }
         if match_b {
-            return raw_b.unwrap().mv_l0;
+            return val_b.mv_l0;
         }
         if match_c {
-            return raw_c.unwrap().mv_l0;
+            return val_c.mv_l0;
         }
     }
 
-    // Otherwise, use Median of MVs.
-    // For Median calculation, unavailable/Intra neighbors are treated as (0,0).
-    // Neighbors with different ref_idx are used AS IS (they are not zeroed).
-    let mv_a = raw_a.map(|p| p.mv_l0).unwrap_or_default();
-    let mv_b = raw_b.map(|p| p.mv_l0).unwrap_or_default();
-    let mv_c = raw_c.map(|p| p.mv_l0).unwrap_or_default();
+    // Step 3: Median of components (8-212, 8-213)
+    let median = |a: i16, b: i16, c: i16| a + b + c - a.min(b).min(c) - a.max(b).max(c);
 
-    // Median prediction.
-    fn median(a: i16, b: i16, c: i16) -> i16 {
-        let min_val = a.min(b).min(c);
-        let max_val = a.max(b).max(c);
-        a + b + c - min_val - max_val
+    MotionVector {
+        x: median(val_a.mv_l0.x, val_b.mv_l0.x, val_c.mv_l0.x),
+        y: median(val_a.mv_l0.y, val_b.mv_l0.y, val_c.mv_l0.y),
     }
-
-    MotionVector { x: median(mv_a.x, mv_b.x, mv_c.x), y: median(mv_a.y, mv_b.y, mv_c.y) }
 }
 
 fn calculate_motion(

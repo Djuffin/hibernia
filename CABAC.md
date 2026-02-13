@@ -31,7 +31,7 @@ Currently, `src/h264/parser.rs` asserts failure if `pps.entropy_coding_mode_flag
     *   State transition tables for probability estimation (Spec Table 9-35, `transIdxLPS` and `transIdxMPS`).
     *   Range table `rangeTabLPS` (Spec Table 9-33).
 
-### Phase 2: Binarization & Context Selection
+### Phase 2: Binarization & Context Selection (COMPLETED)
 **Goal:** Implement helpers to map syntax elements to/from bin strings and select context indices (`ctxIdx`).
 
 1.  **Implement `CabacContext` methods for Binarization (Spec 9.3.2)**:
@@ -107,7 +107,7 @@ impl<'a> CabacContext<'a> {
     pub fn decode_bin(&mut self, ctx_idx: usize) -> u8 { ... }
     pub fn decode_bypass(&mut self) -> u8 { ... }
     pub fn decode_terminate(&mut self) -> bool { ... }
-    
+
     // High-level parsing methods
     pub fn parse_mb_type(&mut self, slice_type: SliceType) -> MbType { ... }
     pub fn parse_residual(&mut self, mb: &mut Macroblock) { ... }

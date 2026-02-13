@@ -513,6 +513,18 @@ impl Macroblock {
         matches!(self, Macroblock::I(_) | Macroblock::PCM(_))
     }
 
+    pub fn is_skipped(&self) -> bool {
+        match self {
+            Macroblock::P(mb) => mb.mb_type == PMbType::P_Skip,
+            _ => false,
+        }
+    }
+
+    pub fn is_direct(&self) -> bool {
+        // TODO: Implement B slice support
+        false
+    }
+
     // Calculates nC for the block withing the macroblock
     pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         // Section 9.2.1

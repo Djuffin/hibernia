@@ -22,7 +22,7 @@ use super::poc::PocState;
 use super::residual::{level_scale_4x4_block, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
-use log::info;
+use log::{info, trace};
 use smallvec::SmallVec;
 use v_frame::frame;
 use v_frame::plane::{self, PlaneOffset, PlaneSlice};
@@ -116,10 +116,9 @@ impl Decoder {
         let mut input = parser::BitReader::new(rbsp_data);
         let parse_error_handler = DecodingError::MisformedData;
 
-        info!("---------------------------------------------------");
         let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
         assert!(input.is_aligned());
-        info!("NAL {:?}", nal);
+        trace!("NAL {:?}", nal);
 
         match nal.nal_unit_type {
             NalUnitType::Unspecified => {}
@@ -130,7 +129,7 @@ impl Decoder {
                 let mut slice = parser::parse_slice_header(&self.context, &nal, &mut input)
                     .map_err(parse_error_handler)?;
 
-                info!("{:?} {:#?}", nal.nal_unit_type, slice);
+                trace!("{:?} {:#?}", nal.nal_unit_type, slice);
                 let frame = VideoFrame::new_with_padding(
                     slice.sps.pic_width(),
                     slice.sps.pic_height(),
@@ -164,7 +163,6 @@ impl Decoder {
                 self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
 
                 parser::parse_slice_data(&mut input, &mut slice).map_err(parse_error_handler)?;
-                info!("Blocks: {:#?}", slice.get_macroblock_count());
                 self.process_slice(&mut slice)?;
                 // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
                 // as "unused for reference" and sets the current frame's frame_num and POC to 0.
@@ -275,10 +273,6 @@ impl Decoder {
 
                         let luma_plane = &mut frame.planes[0];
                         let luma_prediction_mode = imb.MbPartPredMode(0);
-                        info!(
-                            "MB {mb_addr} {} Luma: {:?} Chroma: {:?}",
-                            qp, luma_prediction_mode, imb.intra_chroma_pred_mode
-                        );
                         match luma_prediction_mode {
                             MbPredictionMode::None => panic!("impossible pred mode"),
                             MbPredictionMode::Intra_4x4 => {
@@ -360,6 +354,7 @@ impl Decoder {
 
             if let Some(mb) = slice.get_mb_mut(mb_addr) {
                 mb.set_qp(qp as u8);
+                trace!("MB {mb_addr}: {mb:?}");
             }
         }
 

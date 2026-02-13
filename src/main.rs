@@ -93,28 +93,6 @@ fn main() {
                 }
             }
         }
-
-        decoder.flush().expect("Flush error");
-        while let Some(frame) = decoder.retrieve_frame() {
-            let y_plane = &frame.planes[0];
-            let w = y_plane.cfg.width as u32;
-            let h = y_plane.cfg.height as u32;
-
-            info!("Writing frame #{frame_count} {w} x {h} to y4m");
-            frame_count += 1;
-
-            if encoder_opt.is_none() {
-                 let enc = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
-                    .with_colorspace(y4m::Colorspace::C420)
-                    .write_header(&mut writer)
-                    .unwrap();
-                 encoder_opt = Some(enc);
-            }
-
-            if let Some(ref mut encoder) = encoder_opt {
-                write_frame(&frame, encoder, &mut planes);
-            }
-        }
     }
 
     fs::write("output.y4m", decoding_output.as_slice()).expect("can't save decoding result");
@@ -163,24 +141,6 @@ mod tests {
                     if let Some(ref mut encoder) = encoder_opt {
                         write_frame(&frame, encoder, &mut planes);
                     }
-                }
-            }
-            decoder.flush().map_err(|e| format!("Flush error: {e:?}"))?;
-            while let Some(frame) = decoder.retrieve_frame() {
-                let y_plane = &frame.planes[0];
-                let w = y_plane.cfg.width as u32;
-                let h = y_plane.cfg.height as u32;
-
-                if encoder_opt.is_none() {
-                     let enc = y4m::encode(w as usize, h as usize, y4m::Ratio { num: 15, den: 1 })
-                        .with_colorspace(y4m::Colorspace::C420)
-                        .write_header(&mut writer)
-                        .unwrap();
-                     encoder_opt = Some(enc);
-                }
-
-                if let Some(ref mut encoder) = encoder_opt {
-                    write_frame(&frame, encoder, &mut planes);
                 }
             }
         }

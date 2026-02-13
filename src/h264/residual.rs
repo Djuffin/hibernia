@@ -1,6 +1,5 @@
 use std::result;
 
-use log::info;
 use smallvec::SmallVec;
 
 use super::{

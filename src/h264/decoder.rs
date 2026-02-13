@@ -19,7 +19,7 @@ use super::poc::PocState;
 use super::residual::{level_scale_4x4_block, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
-use log::info;
+use log::{debug, info, trace};
 use slice::Slice;
 use smallvec::SmallVec;
 use v_frame::frame;
@@ -119,10 +119,9 @@ impl Decoder {
         let mut input = parser::BitReader::new(rbsp_data);
         let parse_error_handler = DecodingError::MisformedData;
 
-        info!("---------------------------------------------------");
         let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
         assert!(input.is_aligned());
-        info!("NAL {:?}", nal);
+        debug!("NAL {:?}", nal);
 
         match nal.nal_unit_type {
             NalUnitType::Unspecified => {}
@@ -134,7 +133,7 @@ impl Decoder {
                     parser::parse_slice_header(&self.context, &nal, &mut input)
                         .map_err(parse_error_handler)?;
 
-                info!("{:?} {:#?}", nal.nal_unit_type, slice);
+                trace!("{:?} {:#?}", nal.nal_unit_type, slice);
                 let frame = VideoFrame::new_with_padding(
                     slice.sps.pic_width(),
                     slice.sps.pic_height(),
@@ -169,7 +168,7 @@ impl Decoder {
 
                 parser::parse_slice_data(&mut input, &mut slice)
                     .map_err(parse_error_handler)?;
-                info!("Blocks: {:#?}", slice.get_macroblock_count());
+                debug!("Blocks: {:#?}", slice.get_macroblock_count());
                 self.process_slice(&mut slice)?;
                 // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
                 // as "unused for reference" and sets the current frame's frame_num and POC to 0.
@@ -280,7 +279,7 @@ impl Decoder {
 
                         let luma_plane = &mut frame.planes[0];
                         let luma_prediction_mode = imb.MbPartPredMode(0);
-                        info!(
+                        trace!(
                             "MB {mb_addr} {} Luma: {:?} Chroma: {:?}",
                             qp, luma_prediction_mode, imb.intra_chroma_pred_mode
                         );
@@ -998,7 +997,7 @@ pub fn render_luma_16x16_intra_prediction(
     let x = loc.x as usize;
     let y = loc.y as usize;
     let offset = point_to_plane_offset(loc);
-    info!("luma 16x16 prediction: {mode:?}");
+    trace!("luma 16x16 prediction: {mode:?}");
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode

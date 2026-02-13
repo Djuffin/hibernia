@@ -3,6 +3,7 @@ pub mod deblocking;
 pub mod decoder;
 pub mod dpb;
 pub mod inter_pred;
+pub mod intra_pred;
 pub mod macroblock;
 pub mod nal;
 pub mod nal_parser;

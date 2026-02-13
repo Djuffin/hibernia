@@ -259,7 +259,7 @@ impl Slice {
 
 #[cfg(test)]
 mod tests {
-    use crate::h264::{macroblock::PcmMb, sps::VuiParameters, ChromaFormat, Profile};
+    use super::super::{macroblock::PcmMb, sps::VuiParameters, ChromaFormat, Profile};
 
     pub use super::*;
 

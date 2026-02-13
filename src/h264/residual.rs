@@ -245,8 +245,7 @@ pub const fn un_zig_zag_4x4(idx: usize) -> (/* row */ usize, /* column */ usize)
 // Get index of zig-zag walk for a given coordinates in 4x4 block
 #[inline]
 pub const fn zig_zag_4x4(row: usize, column: usize) -> usize {
-    const TABLE: [usize; 16] =
-        [0, 1, 5, 6, 2, 4, 7, 12, 3, 8, 11, 13, 9, 10, 14, 15];
+    const TABLE: [usize; 16] = [0, 1, 5, 6, 2, 4, 7, 12, 3, 8, 11, 13, 9, 10, 14, 15];
     TABLE[row * 4 + column]
 }
 
@@ -308,7 +307,7 @@ pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
     for row in block.samples.iter_mut() {
         for c in row.iter_mut() {
             // Equation 8-326 (approximated)
-            let d = (*c * level_scale_4x4(is_inter, m, 0) << (qp / 6)) >> 5;
+            let d = ((*c * level_scale_4x4(is_inter, m, 0)) << (qp / 6)) >> 5;
             *c = d;
         }
     }

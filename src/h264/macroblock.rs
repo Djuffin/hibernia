@@ -106,12 +106,8 @@ pub const fn get_4x4luma_block_location(idx: u8) -> Point {
 
 // Section 6.4.7 Inverse 4x4 chroma block scanning process
 pub const fn get_4x4chroma_block_location(idx: u8) -> Point {
-    const LOCATIONS: [Point; 4] = [
-        Point { x: 0, y: 0 },
-        Point { x: 4, y: 0 },
-        Point { x: 0, y: 4 },
-        Point { x: 4, y: 4 },
-    ];
+    const LOCATIONS: [Point; 4] =
+        [Point { x: 0, y: 0 }, Point { x: 4, y: 0 }, Point { x: 0, y: 4 }, Point { x: 4, y: 4 }];
     LOCATIONS[idx as usize]
 }
 

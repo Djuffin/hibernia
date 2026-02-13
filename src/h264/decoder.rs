@@ -1,13 +1,12 @@
-use std::collections::VecDeque;
 use std::cmp::{max, min, Ordering};
+use std::collections::VecDeque;
 use std::io::Read;
 
-use crate::h264::dpb::{DpbMarking, ReferenceDisposition};
-use crate::h264::slice::{RefPicListModification, SliceType};
-use crate::h264::tables::mb_type_to_16x16_pred_mode;
-use crate::h264::ColorPlane;
+use super::slice::{RefPicListModification, SliceType, Slice};
+use super::tables::mb_type_to_16x16_pred_mode;
+use super::ColorPlane;
 
-use super::dpb::{DecodedPictureBuffer, DpbPicture};
+use super::dpb::{DecodedPictureBuffer, DpbPicture, DpbMarking, ReferenceDisposition};
 use super::inter_pred::{interpolate_chroma, interpolate_luma, InterpolationBuffer};
 use super::intra_pred::{
     point_to_plane_offset, render_chroma_intra_prediction, render_luma_16x16_intra_prediction,
@@ -24,7 +23,6 @@ use super::residual::{level_scale_4x4_block, unzip_block_4x4, Block4x4};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::info;
-use slice::Slice;
 use smallvec::SmallVec;
 use v_frame::frame;
 use v_frame::plane::{self, PlaneOffset, PlaneSlice};
@@ -111,14 +109,10 @@ impl Decoder {
 
     pub fn decode(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
         use nal::NalUnitType;
-        
+
         let nal_vec = parser::remove_emulation_if_needed(nal_data);
-        let rbsp_data = if nal_vec.is_empty() {
-            nal_data
-        } else {
-            nal_vec.as_slice()
-        };
-        
+        let rbsp_data = if nal_vec.is_empty() { nal_data } else { nal_vec.as_slice() };
+
         let mut input = parser::BitReader::new(rbsp_data);
         let parse_error_handler = DecodingError::MisformedData;
 
@@ -133,9 +127,8 @@ impl Decoder {
             NalUnitType::SliceDataB => {}
             NalUnitType::SliceDataC => {}
             NalUnitType::IDRSlice | NalUnitType::NonIDRSlice => {
-                let mut slice =
-                    parser::parse_slice_header(&self.context, &nal, &mut input)
-                        .map_err(parse_error_handler)?;
+                let mut slice = parser::parse_slice_header(&self.context, &nal, &mut input)
+                    .map_err(parse_error_handler)?;
 
                 info!("{:?} {:#?}", nal.nal_unit_type, slice);
                 let frame = VideoFrame::new_with_padding(
@@ -170,8 +163,7 @@ impl Decoder {
                 let pictures = self.dpb.store_picture(dpb_pic);
                 self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
 
-                parser::parse_slice_data(&mut input, &mut slice)
-                    .map_err(parse_error_handler)?;
+                parser::parse_slice_data(&mut input, &mut slice).map_err(parse_error_handler)?;
                 info!("Blocks: {:#?}", slice.get_macroblock_count());
                 self.process_slice(&mut slice)?;
                 // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
@@ -217,7 +209,7 @@ impl Decoder {
             NalUnitType::CodedSliceExtensionForDepthView => {}
             NalUnitType::Reserved => {}
         }
-        
+
         Ok(())
     }
 
@@ -311,9 +303,8 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, qp_bd_offset_c)
-                                .try_into()
-                                .unwrap();
+                            let chroma_qp =
+                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().unwrap();
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
@@ -352,9 +343,8 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp as i32, qp_offset, qp_bd_offset_c)
-                                .try_into()
-                                .unwrap();
+                            let chroma_qp =
+                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().unwrap();
                             let residuals = if let Some(residual) = block.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {
@@ -725,9 +715,3 @@ pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -
 
     qp_c + qp_bd_offset_c
 }
-
-
-
-
-
-

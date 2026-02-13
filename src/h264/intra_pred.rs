@@ -3,15 +3,15 @@ use std::cmp::Ordering;
 use log::info;
 use v_frame::plane::{Plane, PlaneOffset};
 
-use crate::h264::macroblock::{
-    get_4x4chroma_block_location, get_4x4luma_block_location,
-    get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
-    Intra_Chroma_Pred_Mode, MbAddr, MbNeighborName,
+use super::macroblock::{
+    get_4x4chroma_block_location, get_4x4luma_block_location, get_4x4luma_block_neighbor, IMb,
+    Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, MbAddr,
+    MbNeighborName,
 };
-use crate::h264::residual::Block4x4;
-use crate::h264::slice::Slice;
-use crate::h264::tables::{MB_HEIGHT, MB_WIDTH};
-use crate::h264::Point;
+use super::residual::Block4x4;
+use super::slice::Slice;
+use super::tables::{MB_HEIGHT, MB_WIDTH};
+use super::Point;
 
 #[inline]
 pub fn point_to_plane_offset(p: Point) -> PlaneOffset {

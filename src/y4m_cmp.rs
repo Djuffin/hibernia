@@ -1,6 +1,6 @@
 use v_frame::frame;
 
-use crate::h264::tables::MB_WIDTH;
+use super::h264::tables::MB_WIDTH;
 
 use std::fmt::format;
 use std::fs;

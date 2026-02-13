@@ -46,7 +46,7 @@ fn test_decoding_against_gold(
 
             for (i, plane) in frame.planes.iter().enumerate() {
                 let data_size = plane.cfg.width * plane.cfg.height;
-                let data = &mut planes[i];
+                let data: &mut Vec<u8> = &mut planes[i];
                 if data.len() != data_size {
                     data.resize(data_size, 0);
                 }
@@ -54,11 +54,7 @@ fn test_decoding_against_gold(
             }
 
             let yuv_frame = y4m::Frame::new(
-                [
-                    planes[0].as_slice(),
-                    planes[1].as_slice(),
-                    planes[2].as_slice(),
-                ],
+                [planes[0].as_slice(), planes[1].as_slice(), planes[2].as_slice()],
                 None,
             );
 
@@ -69,9 +65,7 @@ fn test_decoding_against_gold(
 
         for nal_result in nal_parser {
             let nal_data = nal_result.map_err(|e| format!("NAL error: {e:?}"))?;
-            decoder
-                .decode(&nal_data)
-                .map_err(|e| format!("Decoding error: {e:?}"))?;
+            decoder.decode(&nal_data).map_err(|e| format!("Decoding error: {e:?}"))?;
 
             while let Some(frame) = decoder.retrieve_frame() {
                 process_frame(frame);

@@ -71,13 +71,11 @@ impl PocState {
         }
 
         // TopFieldOrderCnt = PicOrderCntMsb + pic_order_cnt_lsb
-        let top_field_order_cnt = msb + lsb;
-
         // TODO: Handle BottomFieldOrderCnt if bottom_field_flag is present (interlaced)
         // For progressive frames, POC is min(TopFieldOrderCnt, BottomFieldOrderCnt),
         // but effectively just TopFieldOrderCnt for now.
 
-        top_field_order_cnt
+        msb + lsb
     }
 
     #[inline]
@@ -107,12 +105,12 @@ impl PocState {
         };
 
         // Section 8.2.1.2: if( nal_ref_idc == 0 && absFrameNum > 0 ) absFrameNum = absFrameNum - 1
-        let abs_frame_num = if disposition == ReferenceDisposition::NonReference && abs_frame_num > 0
-        {
-            abs_frame_num - 1
-        } else {
-            abs_frame_num
-        };
+        let abs_frame_num =
+            if disposition == ReferenceDisposition::NonReference && abs_frame_num > 0 {
+                abs_frame_num - 1
+            } else {
+                abs_frame_num
+            };
 
         let expected_pic_order_cnt = if abs_frame_num > 0 {
             let pic_order_cnt_cycle_cnt =
@@ -123,8 +121,7 @@ impl PocState {
             let expected_delta_per_pic_order_cnt_cycle: i32 =
                 slice.sps.offset_for_ref_frame.iter().sum();
 
-            let mut expected_poc =
-                pic_order_cnt_cycle_cnt * expected_delta_per_pic_order_cnt_cycle;
+            let mut expected_poc = pic_order_cnt_cycle_cnt * expected_delta_per_pic_order_cnt_cycle;
             for i in 0..=frame_num_in_pic_order_cnt_cycle {
                 expected_poc += slice.sps.offset_for_ref_frame[i as usize];
             }
@@ -192,11 +189,11 @@ impl PocState {
 
 #[cfg(test)]
 mod tests {
+    use super::super::pps::PicParameterSet;
+    use super::super::slice::SliceHeader;
+    use super::super::sps::{SequenceParameterSet, VuiParameters};
+    use super::super::{ChromaFormat, Profile};
     use super::*;
-    use crate::h264::pps::PicParameterSet;
-    use crate::h264::slice::SliceHeader;
-    use crate::h264::sps::{SequenceParameterSet, VuiParameters};
-    use crate::h264::{ChromaFormat, Profile};
 
     fn prepare_slice() -> Slice {
         let sps = SequenceParameterSet {

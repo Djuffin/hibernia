@@ -372,11 +372,13 @@ fn filter_luma_edge(
                     let q1 = samples[5] as i32;
 
                     // Equation 8-477
-                    data[p0_idx] = ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(0, 255) as u8;
+                    data[p0_idx] =
+                        ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(0, 255) as u8;
                     // Equation 8-478
                     data[p1_idx] = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
                     // Equation 8-479
-                    data[p2_idx] = ((2 * samples[0] as i32 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(0, 255) as u8;
+                    data[p2_idx] = ((2 * samples[0] as i32 + 3 * p2 + p1 + p0 + q0 + 4) >> 3)
+                        .clamp(0, 255) as u8;
                 } else {
                     // Weak filter p0 only (same as bs < 4 but with tc0=0)
                     // Equation 8-480
@@ -395,11 +397,13 @@ fn filter_luma_edge(
                     let p1 = samples[2] as i32;
 
                     // Equation 8-484
-                    data[q0_idx] = ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
+                    data[q0_idx] =
+                        ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
                     // Equation 8-485
                     data[q1_idx] = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
                     // Equation 8-486
-                    data[q2_idx] = ((2 * samples[7] as i32 + 3 * q2 + q1 + q0 + p0 + 4) >> 3).clamp(0, 255) as u8;
+                    data[q2_idx] = ((2 * samples[7] as i32 + 3 * q2 + q1 + q0 + p0 + 4) >> 3)
+                        .clamp(0, 255) as u8;
                 } else {
                     // Weak filter q0 only
                     // Equation 8-487
@@ -476,8 +480,7 @@ fn filter_chroma_edge(
 
             let index_a =
                 (qp_av_c + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
-            let index_b =
-                (qp_av_c + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
+            let index_b = (qp_av_c + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
 
             let alpha = ALPHA_TABLE[index_a];
             let beta = BETA_TABLE[index_b];

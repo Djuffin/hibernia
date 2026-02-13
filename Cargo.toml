@@ -2,6 +2,12 @@
 name = "hibernia"
 version = "0.1.0"
 edition = "2021"
+authors = ["Eugene Zemtsov"]
+description = "Clean-room implementation of H.264 video decoder"
+license = "MIT"
+readme = "README.md"
+keywords = ["video", "h264", "avc", "decoder"]
+categories = ["multimedia::video"]
 
 [dependencies]
 bitstream-io = "2.2.0"

@@ -71,6 +71,57 @@ impl DecoderContext {
     }
 }
 
+/// A standards-compliant H.264 (AVC) video decoder.
+///
+/// This decoder implements the ITU-T H.264 specification, supporting the parsing of NAL units
+/// and the reconstruction of video frames. It currently maintains internal state for
+/// Sequence Parameter Sets (SPS), Picture Parameter Sets (PPS), and the Decoded Picture Buffer (DPB).
+///
+/// # Usage
+///
+/// The decoder works by feeding it individual NAL units (Network Abstraction Layer) extracted
+/// from a byte stream. You must use a separate parser (like [`crate::h264::nal_parser::NalParser`])
+/// to split the raw byte stream into NAL units before passing them to [`Decoder::decode`].
+///
+/// # Example
+///
+/// ```rust
+/// use hibernia::h264::decoder::Decoder;
+///
+/// // Valid NAL units from SVA_BA2_D.264
+/// // SPS (Sequence Parameter Set)
+/// let sps = vec![
+///     0x67, 0x42, 0xE0, 0x15, 0x8D, 0x66, 0x0B, 0x13, 0x90
+/// ];
+/// // PPS (Picture Parameter Set)
+/// let pps = vec![
+///     0x68, 0xCE, 0x38, 0x80
+/// ];
+/// // IDR Slice (First 40 bytes)
+/// // Note: This is truncated, so full decoding might fail or produce a partial frame,
+/// // but it's enough to pass header parsing.
+/// let slice = vec![
+///     0x65, 0x88, 0x80, 0x00, 0x41, 0x98, 0xD2, 0x2F, 0x01, 0x07, 0xDD, 0xF8, 0x03, 0x30, 0x20,
+///     0xFE, 0xC3, 0xA8, 0x8B, 0xEF, 0x0B, 0xFC, 0xCF, 0x9C, 0x7A, 0x07, 0xDF, 0x9F, 0x15, 0x00,
+///     0x6E, 0x18, 0xFA, 0x14, 0x43, 0x03, 0x9F, 0xA8, 0xFC
+/// ];
+///
+/// let mut decoder = Decoder::new();
+///
+/// // 1. Decode Parameter Sets first
+/// decoder.decode(&sps).expect("SPS should be valid");
+/// decoder.decode(&pps).expect("PPS should be valid");
+///
+/// // 2. Decode Slice Data
+/// // Since we provided a truncated slice, we use .ok() to ignore potential EOF errors
+/// // for this demonstration. In a real scenario, you'd provide the full NAL.
+/// let _ = decoder.decode(&slice);
+///
+/// // 3. Retrieve decoded frames (if any are ready)
+/// if let Some(frame) = decoder.retrieve_frame() {
+///     println!("Decoded {}x{} frame", frame.planes[0].cfg.width, frame.planes[0].cfg.height);
+/// }
+/// ```
 pub struct Decoder {
     context: DecoderContext,
     dpb: DecodedPictureBuffer,

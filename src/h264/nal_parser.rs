@@ -9,6 +9,35 @@ use std::io::{BufRead, Error};
 /// - Scans for the first start code to begin parsing.
 /// - Strips start code prefixes and trailing zero bytes (which are part of the gap between NAL units).
 /// - Returns the NAL unit bytes (header + payload) as `Vec<u8>`.
+///
+/// # Example
+///
+/// ```rust
+/// use std::io::Cursor;
+/// use hibernia::h264::nal_parser::NalParser;
+///
+/// // A stream with two NAL units (SPS and PPS)
+/// // 00 00 00 01 (start code) -> 67 42 ... (SPS)
+/// // 00 00 01 (short start code) -> 68 CE ... (PPS)
+/// let data = vec![
+///     0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A, 0xF8, 0x41, 0xA2,
+///     0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80
+/// ];
+///
+/// let cursor = Cursor::new(data);
+/// let mut parser = NalParser::new(cursor);
+///
+/// // First NAL (SPS)
+/// let nal1 = parser.next().unwrap().expect("Failed to parse NAL");
+/// assert_eq!(nal1[0] & 0x1F, 7); // Type 7 = SPS
+///
+/// // Second NAL (PPS)
+/// let nal2 = parser.next().unwrap().expect("Failed to parse NAL");
+/// assert_eq!(nal2[0] & 0x1F, 8); // Type 8 = PPS
+///
+/// // End of stream
+/// assert!(parser.next().is_none());
+/// ```
 pub struct NalParser<R> {
     reader: R,
     /// Accumulates the current NAL unit's data.

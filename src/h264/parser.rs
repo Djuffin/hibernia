@@ -905,7 +905,7 @@ pub fn parse_residual(
 }
 
 // Section 8.3.1.1 Derivation process for Intra4x4PredMode
-fn calc_prev_intra4x4_pred_mode(
+pub fn calc_prev_intra4x4_pred_mode(
     slice: &Slice,
     mb: &IMb,
     mb_addr: MbAddr,
@@ -1122,7 +1122,7 @@ pub fn predict_mv_l0(
     }
 }
 
-fn calculate_motion(
+pub fn calculate_motion(
     slice: &Slice,
     this_mb_addr: MbAddr,
     mb_type: PMbType,

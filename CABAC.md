@@ -44,7 +44,7 @@ Currently, `src/h264/parser.rs` asserts failure if `pps.entropy_coding_mode_flag
     *   Implement `get_ctx_idx_inc(...)` functions. These require checking neighboring macroblocks (A and B).
     *   **Action**: Extend `Slice` or `Macroblock` traits to expose helper methods for CABAC neighbor availability (checking `mb_skip_flag`, etc., which differs slightly from CAVLC neighbors).
 
-### Phase 3: Parsing Macroblock Layer
+### Phase 3: Parsing Macroblock Layer (COMPLETED)
 **Goal:** Implement parsing of macroblock types and prediction modes using CABAC.
 
 1.  **Add `parse_macroblock_cabac` to `src/h264/cabac.rs`**:

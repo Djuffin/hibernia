@@ -8,6 +8,7 @@ use super::slice;
 use super::sps;
 use super::tables;
 
+use super::cabac::CabacContext;
 use super::cavlc::parse_residual_block;
 use super::residual::Residual;
 use super::{ChromaFormat, ColorPlane, Profile};
@@ -992,7 +993,7 @@ pub fn get_motion_at_coord(
 
     let neighbor_mb = slice.get_mb(mb_addr)?;
     if neighbor_mb.is_intra() {
-        return Some(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default() });
+        return Some(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default(), mvd_l0: MotionVector::default() });
     }
     let motion_info = neighbor_mb.get_motion_info();
 
@@ -1085,7 +1086,7 @@ pub fn predict_mv_l0(
     // Helper to extract values for comparison/calculation.
     // Unavailable neighbors are treated as zero MV and ref_idx = -1 (MAX).
     let get_vals = |info: Option<PartitionInfo>| {
-        info.unwrap_or(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default() })
+        info.unwrap_or(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default(), mvd_l0: MotionVector::default() })
     };
 
     let val_a = get_vals(mv_a);
@@ -1154,7 +1155,7 @@ pub fn calculate_motion(
             );
             let final_mv =
                 MotionVector { x: mvp.x.wrapping_add(mvd.x), y: mvp.y.wrapping_add(mvd.y) };
-            let info = PartitionInfo { ref_idx_l0: ref_idx, mv_l0: final_mv };
+            let info = PartitionInfo { ref_idx_l0: ref_idx, mv_l0: final_mv, mvd_l0: mvd };
 
             let grid_x_start = (part_x / 4) as usize;
             let grid_y_start = (part_y / 4) as usize;
@@ -1198,7 +1199,7 @@ pub fn calculate_motion(
                 predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0, None)
             };
 
-            let info = PartitionInfo { ref_idx_l0: 0, mv_l0: mv };
+            let info = PartitionInfo { ref_idx_l0: 0, mv_l0: mv, mvd_l0: MotionVector::default() };
             for row in motion.partitions.iter_mut() {
                 row.fill(info);
             }
@@ -1469,10 +1470,6 @@ pub fn parse_i_macroblock(
 // Section 7.3.4 Slice data syntax
 pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
     // Baseline profile features
-    if slice.sps.profile != Profile::Baseline {
-        todo!("profiles above baseline");
-    }
-    assert!(!slice.pps.entropy_coding_mode_flag, "entropy coding is not implemented yet");
     assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
     assert!(!slice.sps.seq_scaling_matrix_present_flag, "scaling list is not implemented yet");
     assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
@@ -1481,9 +1478,34 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
     assert_eq!(slice.sps.ChromaArrayType().get_chroma_shift(), super::Size { width: 1, height: 1 });
 
     if slice.pps.entropy_coding_mode_flag {
-        input.align();
+        parse_slice_data_cabac(input, slice)
+    } else {
+        parse_slice_data_cavlc(input, slice)
     }
+}
 
+pub fn parse_slice_data_cabac(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
+    let mut cabac_ctx = CabacContext::new(input, slice)?;
+    loop {
+        let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
+        let next_mb_addr = slice.get_next_mb_addr() as usize;
+
+        if next_mb_addr >= pic_size_in_mbs {
+            break;
+        }
+
+        trace!("=============== Parsing macroblock (CABAC): {} ===============", next_mb_addr);
+        let mb = cabac_ctx.parse_macroblock(slice)?;
+        slice.append_mb(mb);
+
+        if cabac_ctx.decode_terminate()? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
     loop {
         let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
         if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
@@ -1497,7 +1519,7 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
             }
             let default_partitions = [PartitionInfo::default(); 4];
             let default_sub_mbs = [SubMacroblock::default(); 4];
-            for i in 0..mb_skip_run {
+            for _ in 0..mb_skip_run {
                 let curr_mb_addr = slice.get_next_mb_addr();
                 let motion = calculate_motion(
                     slice,
@@ -1507,8 +1529,11 @@ pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult
                     &default_sub_mbs,
                 );
 
-                let block =
-                    Macroblock::P(PMb { mb_type: PMbType::P_Skip, motion, ..Default::default() });
+                let block = Macroblock::P(PMb {
+                    mb_type: PMbType::P_Skip,
+                    motion,
+                    ..Default::default()
+                });
                 slice.append_mb(block);
             }
             if mb_skip_run > 0 && !more_rbsp_data(input) {

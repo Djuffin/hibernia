@@ -55,7 +55,7 @@ Currently, `src/h264/parser.rs` asserts failure if `pps.entropy_coding_mode_flag
     *   `mb_pred` (Intra prediction modes): `prev_intra4x4_pred_mode_flag`, `rem_intra4x4_pred_mode`.
     *   `sub_mb_pred` (Inter prediction modes): `sub_mb_type`.
 
-### Phase 4: Parsing Prediction Data & Residuals
+### Phase 4: Parsing Prediction Data & Residuals (COMPLETED)
 **Goal:** Parse motion vectors and transform coefficients.
 
 1.  **Implement Prediction Parsers**:
@@ -71,7 +71,7 @@ Currently, `src/h264/parser.rs` asserts failure if `pps.entropy_coding_mode_flag
         *   `coeff_abs_level_minus1`: Decodes the value of coefficients.
         *   *Note*: This replaces `cavlc::parse_residual_block`.
 
-### Phase 5: Integration
+### Phase 5: Integration (COMPLETED)
 **Goal:** Wire the new CABAC parser into the main decoding loop.
 
 1.  **Update `src/h264/mod.rs`**:

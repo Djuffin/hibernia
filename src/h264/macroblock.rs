@@ -225,6 +225,17 @@ impl TryFrom<u32> for PMbType {
     }
 }
 
+#[allow(non_snake_case)]
+impl PMbType {
+    pub const fn NumMbPart(&self) -> usize {
+        match self {
+            PMbType::P_Skip | PMbType::P_L0_16x16 => 1,
+            PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => 2,
+            PMbType::P_8x8ref0 | PMbType::P_8x8 => 4,
+        }
+    }
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum MbPredictionMode {
@@ -391,6 +402,7 @@ pub struct MotionVector {
 pub struct PartitionInfo {
     pub ref_idx_l0: u8,
     pub mv_l0: MotionVector,
+    pub mvd_l0: MotionVector,
 }
 
 // Holds the final motion information for a single decoded macroblock,

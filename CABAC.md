@@ -9,7 +9,7 @@ Currently, `src/h264/parser.rs` asserts failure if `pps.entropy_coding_mode_flag
 
 ## 2. Step-by-Step Implementation Phases
 
-### Phase 1: Infrastructure & Arithmetic Engine
+### Phase 1: Infrastructure & Arithmetic Engine (COMPLETED)
 **Goal:** Create the core arithmetic decoding engine and state management.
 
 1.  **Create `src/h264/cabac.rs`**:

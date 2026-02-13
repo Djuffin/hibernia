@@ -1,4 +1,6 @@
 pub mod cavlc;
+pub mod cabac;
+pub mod cabac_tables;
 pub mod deblocking;
 pub mod decoder;
 pub mod dpb;

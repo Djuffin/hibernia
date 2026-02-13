@@ -32,6 +32,12 @@ impl TryFrom<u32> for SliceType {
     }
 }
 
+impl SliceType {
+    pub fn is_intra(&self) -> bool {
+        matches!(self, SliceType::I | SliceType::SI)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum DeblockingFilterIdc {
     #[default]
@@ -145,7 +151,7 @@ pub struct SliceHeader {
     pub ref_pic_list_modification: RefPicListModifications,
     pub pred_weight_table: Option<PredWeightTable>,
     pub dec_ref_pic_marking: Option<DecRefPicMarking>,
-    //pub cabac_init_idc: Option<u32>,
+    pub cabac_init_idc: u32,
     pub slice_qp_delta: i32,
     pub sp_for_switch_flag: Option<bool>,
     pub slice_qs: Option<u32>,
@@ -189,6 +195,10 @@ impl Slice {
     pub fn set_ref_pic_lists(&mut self, list0: Vec<usize>, list1: Vec<usize>) {
         self.ref_pic_list0 = list0;
         self.ref_pic_list1 = list1;
+    }
+
+    pub fn slice_qp_y(&self) -> i32 {
+        26 + self.pps.pic_init_qp_minus26 + self.header.slice_qp_delta
     }
 
     pub fn MbaffFrameFlag(&self) -> bool {

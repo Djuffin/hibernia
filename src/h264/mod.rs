@@ -15,6 +15,9 @@ pub mod slice;
 pub mod sps;
 pub mod tables;
 
+#[cfg(test)]
+pub mod e2e_tests;
+
 use num_traits::cast::FromPrimitive;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]

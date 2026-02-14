@@ -1,5 +1,23 @@
+// Auto-generated CABAC initialization tables
+/// Table 9-45 – State transition table
+#[rustfmt::skip]
+pub const TRANS_IDX_LPS: [u8; 64] = [
+    0, 0, 1, 2, 2, 4, 4, 5, 6, 7, 8, 9, 9, 11, 11, 12,
+    13, 13, 15, 15, 16, 16, 18, 18, 19, 19, 21, 21, 22, 22, 23, 24,
+    24, 25, 26, 26, 27, 27, 28, 29, 29, 30, 30, 30, 31, 32, 32, 33,
+    33, 33, 34, 34, 35, 35, 35, 36, 36, 36, 37, 37, 37, 38, 38, 63,
+];
 
-// Table 9-44 – Specification of rangeTabLPS depending on pStateIdx and qCodIRangeIdx
+/// Table 9-45 – State transition table
+#[rustfmt::skip]
+pub const TRANS_IDX_MPS: [u8; 64] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 62, 63,
+];
+
+/// Table 9-44 – Specification of rangeTabLPS depending on pStateIdx and qCodIRangeIdx
 #[rustfmt::skip]
 pub const RANGE_TAB_LPS: [[u8; 4]; 64] = [
     [128, 176, 208, 240], [128, 167, 197, 227], [128, 158, 187, 216], [123, 150, 178, 205],
@@ -20,61 +38,16 @@ pub const RANGE_TAB_LPS: [[u8; 4]; 64] = [
     [6, 8, 9, 11], [6, 7, 9, 10], [6, 7, 8, 9], [2, 2, 2, 2],
 ];
 
-// Table 9-45 – State transition table
-#[rustfmt::skip]
-pub const TRANS_IDX_LPS: [u8; 64] = [
-    0, 0, 1, 2, 2, 4, 4, 5, 6, 7, 8, 9, 9, 11, 11, 12,
-    13, 13, 15, 15, 16, 16, 18, 18, 19, 19, 21, 21, 22, 22, 23, 24,
-    24, 25, 26, 26, 27, 27, 28, 29, 29, 30, 30, 30, 31, 32, 32, 33,
-    33, 33, 34, 34, 35, 35, 35, 36, 36, 36, 37, 37, 37, 38, 38, 63,
-];
+/// Initialization values for I slices (Tables 9-12 to 9-33)
+pub const INIT_CTX_I: [(i8, i8); 1024] = include!("cabac_init_tables_i.rs");
+/// Initialization values for P/B slices with cabac_init_idc = 0 (Tables 9-12 to 9-33)
+pub const INIT_CTX_PB_0: [(i8, i8); 1024] = include!("cabac_init_tables_pb0.rs");
+/// Initialization values for P/B slices with cabac_init_idc = 1 (Tables 9-12 to 9-33)
+pub const INIT_CTX_PB_1: [(i8, i8); 1024] = include!("cabac_init_tables_pb1.rs");
+/// Initialization values for P/B slices with cabac_init_idc = 2 (Tables 9-12 to 9-33)
+pub const INIT_CTX_PB_2: [(i8, i8); 1024] = include!("cabac_init_tables_pb2.rs");
 
-#[rustfmt::skip]
-pub const TRANS_IDX_MPS: [u8; 64] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 62, 63,
-];
-
-// Context initialization values (m, n).
-// Entries are structured as (m, n).
-// We use a flat array where the index corresponds to ctxIdx.
-// Since initialization depends on slice type and cabac_init_idc, we have 4 sets.
-// 0: I slice
-// 1: P/B slice, cabac_init_idc = 0
-// 2: P/B slice, cabac_init_idc = 1
-// 3: P/B slice, cabac_init_idc = 2
-
-// Each entry is (m, n)
-#[derive(Copy, Clone)]
-pub struct InitValue(pub i8, pub i8);
-
-// We will populate these arrays in a separate file or large block if needed.
-// For now, I'll put a placeholder or a partial implementation to satisfy the structure.
-// In a real implementation, we would copy-paste the data from Tables 9-12 to 9-33.
-// Given the size, I'll define a helper macro or just listing them is the only way.
-
-// To save space in this specific response, I will define the structure and a few examples,
-// but acknowledge that the full table needs to be populated from the spec.
-// However, the prompt asks for a "detailed plan... do Phase 1". I should try to be complete if possible.
-// I'll create a compressed representation if possible or just the raw data.
-
-// Due to the sheer size (1024 * 4 * 2 bytes = 8KB of data), and the limitation of manual entry here,
-// I will populate a subset to demonstrate the mechanism, and add a TODO to fill the rest.
-// OR, I can try to process the text I just read.
-
-// Actually, I can use a default value (0,0) and fill in the ones I have.
-// But that's dangerous.
-// Let's define the arrays.
-
-pub const INIT_CTX_I: [InitValue; 1024] = [InitValue(0, 0); 1024]; // TODO: Fill from tables
-pub const INIT_CTX_PB_0: [InitValue; 1024] = [InitValue(0, 0); 1024]; // TODO: Fill from tables
-pub const INIT_CTX_PB_1: [InitValue; 1024] = [InitValue(0, 0); 1024]; // TODO: Fill from tables
-pub const INIT_CTX_PB_2: [InitValue; 1024] = [InitValue(0, 0); 1024]; // TODO: Fill from tables
-
-// Helper to select the right table
-pub fn get_init_table(slice_type: super::slice::SliceType, cabac_init_idc: u8) -> &'static [InitValue; 1024] {
+pub fn get_init_table(slice_type: super::slice::SliceType, cabac_init_idc: u8) -> &'static [(i8, i8); 1024] {
     if slice_type.is_intra() {
         &INIT_CTX_I
     } else {

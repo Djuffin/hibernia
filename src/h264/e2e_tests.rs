@@ -127,3 +127,12 @@ pub fn test_BA2_Sony_F() -> Result<(), String> {
     // pic_order_cnt_type is equal to 0.
     test_decoding_against_gold("data/BA2_Sony_F.jsv", "data/BA2_Sony_F.y4m")
 }
+
+#[test]
+#[ignore]
+pub fn test_CANL1_TOSHIBA_G() -> Result<(), String> {
+    // All slices are coded as I slices. Each picture contains only one slice. disable_deblocking_filter_idc is equal
+    // to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
+    // CABAC parsing process. pic_order_cnt_type is equal to 2.
+    test_decoding_against_gold("data/CANL1_TOSHIBA_G.264", "data/CANL1_TOSHIBA_G_dec.y4m")
+}

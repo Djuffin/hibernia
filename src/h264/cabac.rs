@@ -1329,11 +1329,20 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     fn parse_i_16x16_suffix(&mut self, ctx_idx_offset: usize, base_type: u32) -> ParseResult<super::macroblock::IMbType> {
         // Bins 3-6 (Fixed ctxIdx 3..6 + offset)
         let bit3 = self.decode_bin(ctx_idx_offset + 4)?;
-        let bit4 = self.decode_bin(ctx_idx_offset + 5)?;
-        let bit5 = self.decode_bin(ctx_idx_offset + 6)?;
-        let bit6 = self.decode_bin(ctx_idx_offset + 7)?;
 
-        let offset = (bit3 as u32) << 3 | (bit4 as u32) << 2 | (bit5 as u32) << 1 | (bit6 as u32);
+        let ctx_inc_4 = if bit3 != 0 { 5 } else { 6 };
+        let bit4 = self.decode_bin(ctx_idx_offset + ctx_inc_4)?;
+
+        let ctx_inc_5 = if bit3 != 0 { 6 } else { 7 };
+        let bit5 = self.decode_bin(ctx_idx_offset + ctx_inc_5)?;
+
+        let offset = if bit3 == 0 {
+            (bit4 as u32) << 1 | (bit5 as u32)
+        } else {
+            let bit6 = self.decode_bin(ctx_idx_offset + 7)?;
+            4 + ((bit4 as u32) << 2 | (bit5 as u32) << 1 | (bit6 as u32))
+        };
+
         super::macroblock::IMbType::try_from(1 + base_type + offset).map_err(|e| e)
     }
 
@@ -1347,8 +1356,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         // Bin 1 (ctxIdx 15)
         if self.decode_bin(15)? == 1 {
-             // Bin 2 (ctxIdx 16)
-             if self.decode_bin(16)? == 1 {
+             // Bin 2 (ctxIdx 17)
+             if self.decode_bin(17)? == 1 {
                  return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_16x8));
              } else {
                  return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_8x16));

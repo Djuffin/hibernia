@@ -1184,15 +1184,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mut last_scan_pos = -1;
         
         for i in 0..max_num_coeff {
+            if i == max_num_coeff - 1 {
+                significant_coeff_flag[i] = true;
+                last_scan_pos = i as i32;
+                num_coeff += 1;
+                break;
+            }
+
             let ctx_idx_inc_sig = Self::get_ctx_idx_inc_sig_coeff_flag(ctx_block_cat, i);
             let sig = self.decode_bin(ctx_idx_offset_sig + ctx_idx_inc_sig)? == 1;
             significant_coeff_flag[i] = sig;
             if sig {
                 num_coeff += 1;
-                if i == max_num_coeff - 1 {
-                    last_scan_pos = i as i32;
-                    break;
-                }
                 
                 let ctx_idx_inc_last = Self::get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat, i);
                 let last = self.decode_bin(ctx_idx_offset_last + ctx_idx_inc_last)? == 1;

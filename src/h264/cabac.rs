@@ -4,6 +4,20 @@ use super::cabac_tables::{
 use super::macroblock::{
     CodedBlockPattern, MbAddr, MbMotion, MbNeighborName, MotionVector, PartitionInfo, SubMbType,
 };
+
+// Table 9-43 – Mapping of scanning position to ctxIdxInc for ctxBlockCat = = 5, 9, or 13
+// (sig_coeff_flag (frame), last_sig_coeff_flag)
+// Index is scanning position (0..62)
+const TABLE_9_43: [(u8, u8); 63] = [
+    (0, 0), (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (5, 1), (4, 1),
+    (4, 1), (3, 1), (3, 1), (4, 1), (4, 1), (4, 1), (5, 1), (5, 1),
+    (4, 2), (4, 2), (4, 2), (4, 2), (3, 2), (3, 2), (6, 2), (7, 2),
+    (7, 2), (7, 2), (8, 2), (9, 2), (10, 2), (9, 2), (8, 2), (7, 2),
+    (7, 3), (6, 3), (11, 3), (12, 3), (13, 3), (11, 3), (6, 3), (7, 3),
+    (8, 4), (9, 4), (14, 4), (10, 4), (9, 4), (8, 4), (6, 4), (11, 4),
+    (12, 5), (13, 5), (11, 5), (6, 5), (9, 6), (14, 6), (10, 6), (9, 6),
+    (11, 7), (12, 7), (13, 7), (11, 7), (14, 8), (10, 8), (12, 8),
+];
 use super::parser::{BitReader, ParseResult};
 use super::residual::Residual;
 use super::slice::Slice;
@@ -974,37 +988,53 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     pub fn get_ctx_idx_inc_sig_coeff_flag(ctx_block_cat: usize, scanning_pos: usize) -> usize {
-        // Table 9-40
+        // Table 9-40 and Clause 9.3.3.1.3
         match ctx_block_cat {
-            0 | 1 | 2 => scanning_pos, // Luma DC, AC, 4x4
-            3 | 4 => min(scanning_pos, 2), // Chroma DC
-            5 | 6 => min(scanning_pos, 2) + 12, // Chroma AC
+            0 | 1 | 2 | 4 => scanning_pos, // Luma DC, AC, 4x4, Chroma AC
+            3 => min(scanning_pos / 1, 2), // Chroma DC (assuming 4:2:0 so NumC8x8=1)
+            5 | 9 | 13 => {
+                if scanning_pos < 63 {
+                    TABLE_9_43[scanning_pos].0 as usize
+                } else {
+                    0
+                }
+            } // Luma 8x8, Chroma 8x8
             _ => scanning_pos,
         }
     }
 
     pub fn get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat: usize, scanning_pos: usize) -> usize {
-        // Table 9-41
+        // Table 9-40 and Clause 9.3.3.1.3
         match ctx_block_cat {
-            0 | 1 | 2 => scanning_pos,
-            3 | 4 => min(scanning_pos, 2),
-            5 | 6 => scanning_pos,
+            0 | 1 | 2 | 4 => scanning_pos,
+            3 => min(scanning_pos / 1, 2), // Chroma DC
+            5 | 9 | 13 => {
+                if scanning_pos < 63 {
+                    TABLE_9_43[scanning_pos].1 as usize
+                } else {
+                    0
+                }
+            }
             _ => scanning_pos,
         }
     }
 
-    pub fn get_ctx_idx_inc_abs_level(ctx_block_cat: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> usize {
-        // Table 9-42
-        let base = if num_decod_abs_level_gt1 != 0 {
-            0
+    pub fn get_ctx_idx_inc_abs_level(
+        ctx_block_cat: usize,
+        num_decod_abs_level_gt1: usize,
+        num_decod_abs_level_eq1: usize,
+        bin_idx: u32,
+    ) -> usize {
+        // Clause 9.3.3.1.3
+        if bin_idx == 0 {
+            if num_decod_abs_level_gt1 != 0 {
+                0
+            } else {
+                min(4, 1 + num_decod_abs_level_eq1)
+            }
         } else {
-            min(4, 1 + num_decod_abs_level_eq1)
-        };
-        
-        match ctx_block_cat {
-            0 | 1 | 2 | 5 | 6 => 5 + base,
-            3 | 4 => min(4, 1 + num_decod_abs_level_eq1), // Chroma DC
-            _ => base,
+            let offset = if ctx_block_cat == 3 { 1 } else { 0 };
+            5 + min(4 - offset, num_decod_abs_level_gt1)
         }
     }
 
@@ -1218,20 +1248,27 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 let ctx_idx_offset_abs = match ctx_block_cat {
                     0..=4 => 227,
                     5 => 426,
-                    6 => 952,
+                    6 => 952, // This was mapped to Chroma Cb DC in previous code, but in table 9-32 it is blocks with 5 < ctxBlockCat < 9 (Cb 8x8 is 9)
+                    9 => 952, // Cb 8x8? No, Table 9-34: 5 < ctxBlockCat < 9 -> 952. 9 < ctxBlockCat < 13 -> 982.
+                    13 => 982, // Cr 8x8?
                     _ => 227,
                 };
-                
+
                 let get_ctx_idx = |bin_idx: u32| {
-                    if bin_idx == 0 {
-                        let inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
-                        ctx_idx_offset_abs + inc
-                    } else {
-                        // Suffix (UEG0) uses Bypass
-                        0
-                    }
+                    // For coeff_abs_level_minus1, maxBinIdxCtx is 1 (prefix).
+                    // This means bin 0 uses its own context, and bins >= 1 use the context for bin 1.
+                    // However, parse_ueg_k calls this closure for the TU prefix.
+                    // The TU prefix length is uCoff=14.
+                    let effective_bin_idx = if bin_idx > 0 { 1 } else { 0 };
+                    let inc = Self::get_ctx_idx_inc_abs_level(
+                        ctx_block_cat,
+                        num_decod_abs_level_gt1,
+                        num_decod_abs_level_eq1,
+                        effective_bin_idx,
+                    );
+                    ctx_idx_offset_abs + inc
                 };
-                
+
                 let val_minus1 = self.parse_ueg_k(14, 0, false, get_ctx_idx)? as i32;
                 let abs_level = val_minus1 + 1;
                 

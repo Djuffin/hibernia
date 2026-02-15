@@ -4,21 +4,8 @@ use super::cabac_tables::{
 use super::macroblock::{
     CodedBlockPattern, MbAddr, MbMotion, MbNeighborName, MotionVector, PartitionInfo, SubMbType,
 };
-
-// Table 9-43 – Mapping of scanning position to ctxIdxInc for ctxBlockCat = = 5, 9, or 13
-// (sig_coeff_flag (frame), last_sig_coeff_flag)
-// Index is scanning position (0..62)
-const TABLE_9_43: [(u8, u8); 63] = [
-    (0, 0), (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (5, 1), (4, 1),
-    (4, 1), (3, 1), (3, 1), (4, 1), (4, 1), (4, 1), (5, 1), (5, 1),
-    (4, 2), (4, 2), (4, 2), (4, 2), (3, 2), (3, 2), (6, 2), (7, 2),
-    (7, 2), (7, 2), (8, 2), (9, 2), (10, 2), (9, 2), (8, 2), (7, 2),
-    (7, 3), (6, 3), (11, 3), (12, 3), (13, 3), (11, 3), (6, 3), (7, 3),
-    (8, 4), (9, 4), (14, 4), (10, 4), (9, 4), (8, 4), (6, 4), (11, 4),
-    (12, 5), (13, 5), (11, 5), (6, 5), (9, 6), (14, 6), (10, 6), (9, 6),
-    (11, 7), (12, 7), (13, 7), (11, 7), (14, 8), (10, 8), (12, 8),
-];
 use super::parser::{BitReader, ParseResult};
+use super::tables::TABLE_9_43;
 use super::residual::Residual;
 use super::slice::Slice;
 use std::cmp::min;

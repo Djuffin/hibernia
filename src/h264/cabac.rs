@@ -1,4 +1,4 @@
-use super::cabac_tables::{
+use super::tables::{
     get_init_table, RANGE_TAB_LPS, TRANS_IDX_LPS, TRANS_IDX_MPS,
 };
 use super::macroblock::{

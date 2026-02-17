@@ -1,5 +1,6 @@
 use super::cavlc;
 use super::macroblock;
+use super::slice::SliceType;
 
 use cavlc::BitPattern;
 use log::trace;
@@ -160,3 +161,39 @@ pub const TABLE9_10: [(
     BitPattern,
     BitPattern,
 ); 15] = include!("table_9-10.rs");
+
+/// Table 9-45 – State transition table
+#[rustfmt::skip]
+#[allow(clippy::all)]
+pub const TRANS_IDX_LPS: [u8; 64] = include!("table_9-45_lps.rs");
+
+/// Table 9-45 – State transition table
+#[rustfmt::skip]
+#[allow(clippy::all)]
+pub const TRANS_IDX_MPS: [u8; 64] = include!("table_9-45_mps.rs");
+
+/// Table 9-44 – Specification of rangeTabLPS depending on pStateIdx and qCodIRangeIdx
+#[rustfmt::skip]
+#[allow(clippy::all)]
+pub const RANGE_TAB_LPS: [[u8; 4]; 64] = include!("table_9-44.rs");
+
+/// Initialization values for I slices (Tables 9-12 to 9-33)
+pub const INIT_CTX_I: [(i8, i8); 1024] = include!("tables_9-12to33_i.rs");
+/// Initialization values for P/B slices with cabac_init_idc = 0 (Tables 9-12 to 9-33)
+pub const INIT_CTX_PB_0: [(i8, i8); 1024] = include!("tables_9-12to33_pb0.rs");
+/// Initialization values for P/B slices with cabac_init_idc = 1 (Tables 9-12 to 9-33)
+pub const INIT_CTX_PB_1: [(i8, i8); 1024] = include!("tables_9-12to33_pb1.rs");
+/// Initialization values for P/B slices with cabac_init_idc = 2 (Tables 9-12 to 9-33)
+pub const INIT_CTX_PB_2: [(i8, i8); 1024] = include!("tables_9-12to33_pb2.rs");
+
+pub fn get_init_table(slice_type: SliceType, cabac_init_idc: u8) -> &'static [(i8, i8); 1024] {
+    if slice_type.is_intra() {
+        &INIT_CTX_I
+    } else {
+        match cabac_init_idc {
+            0 => &INIT_CTX_PB_0,
+            1 => &INIT_CTX_PB_1,
+            _ => &INIT_CTX_PB_2,
+        }
+    }
+}

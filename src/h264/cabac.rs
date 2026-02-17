@@ -303,6 +303,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         };
 
         ctx.init_context_variables(slice);
+        ctx.reader.align();
         ctx.init_decoding_engine()?;
 
         Ok(ctx)
@@ -336,7 +337,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
     // 9.3.1.2 Initialization process for the arithmetic decoding engine
     fn init_decoding_engine(&mut self) -> ParseResult<()> {
-        self.reader.align();
         self.range = 510;
         self.offset = self.reader.u(9)? as u32;
 
@@ -349,14 +349,23 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.2.1 Unary (U) binarization process
-    pub fn parse_unary_bin<F>(&mut self, mut get_ctx_idx: F) -> ParseResult<u32>
+    pub fn parse_unary_bin<F>(
+        &mut self,
+        max_bin_idx_ctx: u32,
+        mut get_ctx_idx: F,
+    ) -> ParseResult<u32>
     where
         F: FnMut(u32) -> usize,
     {
         let mut bin_idx = 0;
         loop {
-            let ctx_idx = get_ctx_idx(bin_idx);
-            let bin = self.decode_bin(ctx_idx)?;
+            let bin = if bin_idx > max_bin_idx_ctx {
+                self.decode_bypass()?
+            } else {
+                let ctx_idx = get_ctx_idx(bin_idx);
+                self.decode_bin(ctx_idx)?
+            };
+
             if bin == 0 {
                 return Ok(bin_idx);
             }
@@ -368,6 +377,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn parse_truncated_unary_bin<F>(
         &mut self,
         c_max: u32,
+        max_bin_idx_ctx: u32,
         mut get_ctx_idx: F,
     ) -> ParseResult<u32>
     where
@@ -375,8 +385,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     {
         let mut bin_idx = 0;
         while bin_idx < c_max {
-            let ctx_idx = get_ctx_idx(bin_idx);
-            let bin = self.decode_bin(ctx_idx)?;
+            let bin = if bin_idx > max_bin_idx_ctx {
+                self.decode_bypass()?
+            } else {
+                let ctx_idx = get_ctx_idx(bin_idx);
+                self.decode_bin(ctx_idx)?
+            };
+
             if bin == 0 {
                 return Ok(bin_idx);
             }
@@ -391,13 +406,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         u_coff: u32,
         k_val: u32,
         signed_val_flag: bool,
+        max_bin_idx_ctx: u32,
         mut get_ctx_idx: F,
     ) -> ParseResult<i32>
     where
         F: FnMut(u32) -> usize,
     {
         // Prefix: TU with cMax = uCoff
-        let prefix = self.parse_truncated_unary_bin(u_coff, &mut get_ctx_idx)?;
+        let prefix = self.parse_truncated_unary_bin(u_coff, max_bin_idx_ctx, &mut get_ctx_idx)?;
 
         if prefix < u_coff {
             let val = prefix as i32;
@@ -534,13 +550,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             return 0;
         }
 
+        // We need to separate I_NxN check from CBP check
+        let is_i_nxn = match prev_mb {
+            super::macroblock::Macroblock::I(m) => m.mb_type == super::macroblock::IMbType::I_NxN,
+            _ => false,
+        };
+
         let (cbp_luma, cbp_chroma, mb_qp_delta) = match prev_mb {
             super::macroblock::Macroblock::I(m) => {
-                let is_i16x16 = m.mb_type != super::macroblock::IMbType::I_NxN && m.mb_type != super::macroblock::IMbType::I_PCM;
-                if is_i16x16 {
-                    // For Intra_16x16, CBP is non-zero, so we only care about mb_qp_delta
-                    return if m.mb_qp_delta != 0 { 1 } else { 0 };
-                }
                 (m.coded_block_pattern.luma(), m.coded_block_pattern.chroma(), m.mb_qp_delta)
             }
             super::macroblock::Macroblock::P(m) => {
@@ -549,7 +566,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             _ => unreachable!(),
         };
 
-        if cbp_luma == 0 && cbp_chroma == 0 {
+        // Condition: ( mb_type != I_NxN ) AND ( CBP == 0 )
+        if !is_i_nxn && cbp_luma == 0 && cbp_chroma == 0 {
             return 0;
         }
 
@@ -683,7 +701,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 super::macroblock::get_4x4luma_block_neighbor(blk_idx as u8, nb);
 
             if mb_neighbor.is_some() && accessor.get_mb_type_is_skipped(blk_idx as u8, nb) {
-                return 0;
+                return 1;
             }
 
             // Check bit
@@ -692,12 +710,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 // 8x8 block index = neighbor_blk_idx / 4
                 let bit_idx = neighbor_blk_idx / 4;
                 if (cbp.luma() >> bit_idx) & 1 != 0 {
-                    1
-                } else {
                     0
+                } else {
+                    1
                 }
             } else {
-                0
+                1
             }
         };
 
@@ -762,7 +780,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         };
         
-        let prefix = self.parse_unary_bin(get_ctx_idx)?;
+        let prefix = self.parse_unary_bin(2, get_ctx_idx)?;
         
         // Map back to signed value (Table 9-3)
         let val = prefix as i32;
@@ -864,7 +882,16 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             ctx_idx_offset + ctx_idx_inc
         };
 
-        let val = self.parse_truncated_unary_bin(num_ref_idx_active_minus1, get_ctx_idx)?;
+        // Table 9-34 specifies U binarization for ref_idx_l0/l1.
+        let val = self.parse_unary_bin(2, get_ctx_idx)?;
+
+        if val > num_ref_idx_active_minus1 {
+            return Err(format!(
+                "ref_idx {} exceeds num_ref_idx_active_minus1 {}",
+                val, num_ref_idx_active_minus1
+            ));
+        }
+
         Ok(val as u8)
     }
 
@@ -890,7 +917,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             base_offset + ctx_idx_inc
         };
 
-        let val = self.parse_ueg_k(9, 3, true, get_ctx_idx)?;
+        let val = self.parse_ueg_k(9, 3, true, 4, get_ctx_idx)?;
         Ok(val as i16)
     }
 
@@ -1289,9 +1316,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // prefix: TU with cMax = 14. maxBinIdxCtx = 1.
         let mut prefix = 0;
         while prefix < 14 {
-            let bin_idx = if prefix == 0 { 0 } else { 1 };
-            let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, bin_idx, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
-            let bin = self.decode_bin(ctx_idx_offset_abs + ctx_idx_inc)?;
+            let bin = if prefix < 2 {
+                let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, prefix, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
+                self.decode_bin(ctx_idx_offset_abs + ctx_idx_inc)?
+            } else {
+                self.decode_bypass()?
+            };
+
             if bin == 0 {
                 return Ok(prefix);
             }
@@ -1494,7 +1525,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         };
 
-        let val = self.parse_truncated_unary_bin(3, get_ctx_idx)?;
+        let val = self.parse_truncated_unary_bin(3, 1, get_ctx_idx)?;
         super::macroblock::Intra_Chroma_Pred_Mode::try_from(val).map_err(|e| e)
     }
 
@@ -1655,7 +1686,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         2 => 2,
                         _ => 0,
                     };
-                    mb.coded_block_pattern = CodedBlockPattern::new(cbp_chroma, 15);
+                    // Table 7-11: mb_types 1..12 have CbpL=0, 13..24 have CbpL=1 (represented as 15 internally)
+                    let cbp_luma = if type_val >= 12 { 15 } else { 0 };
+                    mb.coded_block_pattern = CodedBlockPattern::new(cbp_chroma, cbp_luma);
                     curr_mb.coded_block_pattern = mb.coded_block_pattern;
                     mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                 }

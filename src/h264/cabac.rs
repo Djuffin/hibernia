@@ -757,12 +757,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let ctx_idx_offset = 60;
         let ctx_idx_inc = Self::get_ctx_idx_inc_mb_qp_delta(slice, mb_addr);
         
-        // Table 9-39: binIdx 0 uses ctxIdxInc, binIdx > 0 uses ctxIdxInc = 2.
+        // Table 9-39: binIdx 0 uses ctxIdxInc, binIdx > 0 uses ctxIdxInc = 3.
         let get_ctx_idx = |bin_idx| {
             if bin_idx == 0 {
                 ctx_idx_offset + ctx_idx_inc
             } else {
-                ctx_idx_offset + 2
+                ctx_idx_offset + 3
             }
         };
         
@@ -869,7 +869,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         };
 
         // Table 9-34 specifies U binarization for ref_idx_l0/l1.
-        let val = self.parse_unary_bin(2, get_ctx_idx)?;
+        let val = self.parse_unary_bin(u32::MAX, get_ctx_idx)?;
 
         if val > num_ref_idx_active_minus1 {
             return Err(format!(
@@ -903,7 +903,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             base_offset + ctx_idx_inc
         };
 
-        let val = self.parse_ueg_k(9, 3, true, 4, get_ctx_idx)?;
+        let val = self.parse_ueg_k(9, 3, true, 8, get_ctx_idx)?;
         Ok(val as i16)
     }
 
@@ -1511,7 +1511,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         };
 
-        let val = self.parse_truncated_unary_bin(3, 1, get_ctx_idx)?;
+        let val = self.parse_truncated_unary_bin(3, 2, get_ctx_idx)?;
         super::macroblock::Intra_Chroma_Pred_Mode::try_from(val).map_err(|e| e)
     }
 

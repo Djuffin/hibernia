@@ -801,6 +801,10 @@ pub fn parse_slice_header(
         header.dec_ref_pic_marking = Some(parse_dec_ref_pic_marking(input, idr_pic_flag)?);
     }
 
+    if pps.entropy_coding_mode_flag && !header.slice_type.is_intra() {
+        read_value!(input, header.cabac_init_idc, ue);
+    }
+
     read_value!(input, header.slice_qp_delta, se);
     if pps.deblocking_filter_control_present_flag {
         read_value!(input, header.deblocking_filter_idc, ue, 8);
@@ -1494,7 +1498,6 @@ pub fn parse_slice_data_cabac(input: &mut BitReader, slice: &mut Slice) -> Parse
             break;
         }
 
-        trace!("=============== Parsing macroblock (CABAC): {} ===============", next_mb_addr);
         let mb = cabac_ctx.parse_macroblock(slice)?;
         slice.append_mb(mb);
 

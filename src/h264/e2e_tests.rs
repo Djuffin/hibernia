@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fs;
 use std::io::{self, Cursor};
 
@@ -8,6 +9,14 @@ use crate::y4m_cmp::compare_y4m_buffers;
 fn test_decoding_against_gold(
     encoded_file_name: &str,
     gold_y4m_filename: &str,
+) -> Result<(), String> {
+    test_decoding_against_gold_limited(encoded_file_name, gold_y4m_filename, usize::MAX)
+}
+
+fn test_decoding_against_gold_limited(
+    encoded_file_name: &str,
+    gold_y4m_filename: &str,
+    frame_limit: usize,
 ) -> Result<(), String> {
     fn stringify(e: io::Error) -> String {
         format!("IO error: {e}")
@@ -20,11 +29,15 @@ fn test_decoding_against_gold(
     let mut decoder = h264::decoder::Decoder::new();
 
     let mut decoding_output = Vec::<u8>::new();
+    let frames_decoded = Cell::new(0);
     {
         let mut writer_opt = Some(io::BufWriter::new(&mut decoding_output));
         let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<&mut Vec<u8>>>> = None;
 
         let mut process_frame = |frame: h264::decoder::VideoFrame| {
+            if frames_decoded.get() >= frame_limit {
+                return;
+            }
             if encoder_opt.is_none() {
                 let y_plane = &frame.planes[0];
                 let w = y_plane.cfg.width as usize;
@@ -61,9 +74,13 @@ fn test_decoding_against_gold(
             if let Some(enc) = &mut encoder_opt {
                 enc.write_frame(&yuv_frame).unwrap();
             }
+            frames_decoded.set(frames_decoded.get() + 1);
         };
 
         for nal_result in nal_parser {
+            if frames_decoded.get() >= frame_limit {
+                break;
+            }
             let nal_data = nal_result.map_err(|e| format!("NAL error: {e:?}"))?;
             decoder.decode(&nal_data).map_err(|e| format!("Decoding error: {e:?}"))?;
 
@@ -129,12 +146,15 @@ pub fn test_BA2_Sony_F() -> Result<(), String> {
 }
 
 #[test]
-#[ignore]
 pub fn test_CANL1_TOSHIBA_G() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice. disable_deblocking_filter_idc is equal
     // to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 2.
-    test_decoding_against_gold("data/CANL1_TOSHIBA_G.264", "data/CANL1_TOSHIBA_G_dec.y4m")
+    test_decoding_against_gold_limited(
+        "data/CANL1_TOSHIBA_G.264",
+        "data/CANL1_TOSHIBA_G_dec.y4m",
+        1,
+    )
 }
 
 #[test]

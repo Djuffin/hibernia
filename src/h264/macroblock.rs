@@ -553,6 +553,20 @@ impl Macroblock {
         }
     }
 
+    pub fn get_cbf(&self, ctx_block_cat: usize, blk_idx: usize, comp_idx: usize) -> bool {
+        match self {
+            Macroblock::I(mb) => match &mb.residual {
+                Some(r) => r.get_cbf(ctx_block_cat, blk_idx, comp_idx),
+                None => false,
+            },
+            Macroblock::PCM(_) => true,
+            Macroblock::P(mb) => match &mb.residual {
+                Some(r) => r.get_cbf(ctx_block_cat, blk_idx, comp_idx),
+                None => false,
+            },
+        }
+    }
+
     pub fn get_coded_block_pattern(&self) -> CodedBlockPattern {
         match self {
             Macroblock::I(mb) => mb.coded_block_pattern,

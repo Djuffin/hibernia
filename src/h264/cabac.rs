@@ -251,20 +251,7 @@ impl<'a> NeighborAccessor<'a> {
             Some(nb_name) => self
                 .slice
                 .get_mb_neighbor(self.mb_addr, nb_name)
-                .map(|mb| {
-                    mb.get_nc(
-                        neighbor_blk_idx,
-                        if ctx_block_cat >= 3 {
-                            if comp_idx == 0 {
-                                super::ColorPlane::Cb
-                            } else {
-                                super::ColorPlane::Cr
-                            }
-                        } else {
-                            super::ColorPlane::Y
-                        },
-                    ) > 0
-                }),
+                .map(|mb| mb.get_cbf(ctx_block_cat, neighbor_blk_idx as usize, comp_idx)),
         }
     }
 
@@ -701,7 +688,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 super::macroblock::get_4x4luma_block_neighbor(blk_idx as u8, nb);
 
             if mb_neighbor.is_some() && accessor.get_mb_type_is_skipped(blk_idx as u8, nb) {
-                return 1;
+                return 0;
             }
 
             // Check bit
@@ -710,12 +697,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 // 8x8 block index = neighbor_blk_idx / 4
                 let bit_idx = neighbor_blk_idx / 4;
                 if (cbp.luma() >> bit_idx) & 1 != 0 {
-                    0
-                } else {
                     1
+                } else {
+                    0
                 }
             } else {
-                1
+                0
             }
         };
 
@@ -1207,6 +1194,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
             _ => {}
         }
+
+        residual.set_cbf(ctx_block_cat, blk_idx, comp_idx, cbf);
 
         if !cbf {
             return Ok(false);

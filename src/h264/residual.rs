@@ -38,9 +38,73 @@ pub struct Residual {
 
     pub chroma_cb_level4x4_nc: [u8; 4],
     pub chroma_cr_level4x4_nc: [u8; 4],
+
+    pub luma_dc_cbf: bool,
+    pub luma_ac_cbf: u16,
+    pub chroma_cb_dc_cbf: bool,
+    pub chroma_cr_dc_cbf: bool,
+    pub chroma_cb_ac_cbf: u8,
+    pub chroma_cr_ac_cbf: u8,
 }
 
 impl Residual {
+    pub fn set_cbf(&mut self, ctx_block_cat: usize, blk_idx: usize, comp_idx: usize, val: bool) {
+        match ctx_block_cat {
+            0 => self.luma_dc_cbf = val,
+            1 | 2 | 5 => {
+                if val {
+                    self.luma_ac_cbf |= 1 << blk_idx;
+                } else {
+                    self.luma_ac_cbf &= !(1 << blk_idx);
+                }
+            }
+            3 => {
+                if comp_idx == 0 {
+                    self.chroma_cb_dc_cbf = val;
+                } else {
+                    self.chroma_cr_dc_cbf = val;
+                }
+            }
+            4 => {
+                let mask = 1 << blk_idx;
+                if comp_idx == 0 {
+                    if val {
+                        self.chroma_cb_ac_cbf |= mask;
+                    } else {
+                        self.chroma_cb_ac_cbf &= !mask;
+                    }
+                } else if val {
+                    self.chroma_cr_ac_cbf |= mask;
+                } else {
+                    self.chroma_cr_ac_cbf &= !mask;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn get_cbf(&self, ctx_block_cat: usize, blk_idx: usize, comp_idx: usize) -> bool {
+        match ctx_block_cat {
+            0 => self.luma_dc_cbf,
+            1 | 2 | 5 => (self.luma_ac_cbf >> blk_idx) & 1 != 0,
+            3 => {
+                if comp_idx == 0 {
+                    self.chroma_cb_dc_cbf
+                } else {
+                    self.chroma_cr_dc_cbf
+                }
+            }
+            4 => {
+                if comp_idx == 0 {
+                    (self.chroma_cb_ac_cbf >> blk_idx) & 1 != 0
+                } else {
+                    (self.chroma_cr_ac_cbf >> blk_idx) & 1 != 0
+                }
+            }
+            _ => false,
+        }
+    }
+
     pub fn get_dc_levels_for(&mut self, plane: ColorPlane) -> &mut [i32] {
         let nc: &mut u8;
         match plane {

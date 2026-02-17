@@ -538,23 +538,30 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // We need to separate I_NxN check from CBP check
-        let is_i_nxn = match prev_mb {
-            super::macroblock::Macroblock::I(m) => m.mb_type == super::macroblock::IMbType::I_NxN,
+        let is_intra_16x16 = match prev_mb {
+            super::macroblock::Macroblock::I(m) => {
+                m.mb_type != super::macroblock::IMbType::I_NxN
+                    && m.mb_type != super::macroblock::IMbType::I_PCM
+            }
             _ => false,
         };
 
         let (cbp_luma, cbp_chroma, mb_qp_delta) = match prev_mb {
-            super::macroblock::Macroblock::I(m) => {
-                (m.coded_block_pattern.luma(), m.coded_block_pattern.chroma(), m.mb_qp_delta)
-            }
-            super::macroblock::Macroblock::P(m) => {
-                (m.coded_block_pattern.luma(), m.coded_block_pattern.chroma(), m.mb_qp_delta)
-            }
+            super::macroblock::Macroblock::I(m) => (
+                m.coded_block_pattern.luma(),
+                m.coded_block_pattern.chroma(),
+                m.mb_qp_delta,
+            ),
+            super::macroblock::Macroblock::P(m) => (
+                m.coded_block_pattern.luma(),
+                m.coded_block_pattern.chroma(),
+                m.mb_qp_delta,
+            ),
             _ => unreachable!(),
         };
 
-        // Condition: ( mb_type != I_NxN ) AND ( CBP == 0 )
-        if !is_i_nxn && cbp_luma == 0 && cbp_chroma == 0 {
+        // Condition: ( mb_type != Intra_16x16 ) AND ( CBP == 0 )
+        if !is_intra_16x16 && cbp_luma == 0 && cbp_chroma == 0 {
             return 0;
         }
 
@@ -1303,14 +1310,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
     fn parse_abs_level_minus1(&mut self, ctx_block_cat: usize, ctx_idx_offset_abs: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> ParseResult<u32> {
         // prefix: TU with cMax = 14. maxBinIdxCtx = 1.
+        // Bins 0..13 all use contexts. binIdx > 1 uses the same ctxIdx as binIdx = 1 (due to maxBinIdxCtx=1).
         let mut prefix = 0;
         while prefix < 14 {
-            let bin = if prefix < 2 {
-                let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, prefix, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
-                self.decode_bin(ctx_idx_offset_abs + ctx_idx_inc)?
-            } else {
-                self.decode_bypass()?
-            };
+            let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, prefix, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
+            let bin = self.decode_bin(ctx_idx_offset_abs + ctx_idx_inc)?;
 
             if bin == 0 {
                 return Ok(prefix);
@@ -1439,15 +1443,17 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // Helper for P-slice Intra suffix
     fn parse_mb_type_i_suffix(&mut self, ctx_idx_offset: usize, slice: &Slice, mb_addr: MbAddr) -> ParseResult<super::macroblock::IMbType> {
         // Bin 0 (of suffix)
-        // Table 9-39: ctxIdxOffset 17 bin 0 uses ctxIdxInc 0.
+        // Table 9-39:
         // ctxIdxOffset 3 bin 0 uses derived ctxIdxInc.
-        let ctx_idx_inc_0 = if ctx_idx_offset == 3 {
-            Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr)
+        // ctxIdxOffset 17 (P slice) and 32 (B slice) bin 0 uses ctxIdx = 276.
+        let bin0 = if ctx_idx_offset == 3 {
+            let ctx_idx_inc = Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr);
+            self.decode_bin(ctx_idx_offset + ctx_idx_inc)?
         } else {
-            0
+            self.decode_bin(276)?
         };
 
-        if self.decode_bin(ctx_idx_offset + ctx_idx_inc_0)? == 0 {
+        if bin0 == 0 {
             return Ok(super::macroblock::IMbType::I_NxN);
         }
 

@@ -314,13 +314,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         let init_table = get_init_table(slice.header.slice_type, cabac_init_idc as u8);
 
+        let qp_clipped = slice_qp_y.clamp(0, 51);
+
         for ctx_idx in 0..1024 {
             let init_val = init_table[ctx_idx];
             let m = init_val.0 as i32;
             let n = init_val.1 as i32;
 
-            let pre_ctx_state = min(126, ((m * (min(51, slice_qp_y) as i32)) >> 4) + n);
-            let pre_ctx_state = if pre_ctx_state < 1 { 1 } else { pre_ctx_state };
+            let pre_ctx_state = ((m * qp_clipped >> 4) + n).clamp(1, 126);
 
             let (p_state_idx, val_mps) = if pre_ctx_state <= 63 {
                 (63 - pre_ctx_state, 0)
@@ -516,23 +517,46 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
     // 9.3.3.1.1.5 Derivation process of ctxIdxInc for the syntax element mb_qp_delta
     pub fn get_ctx_idx_inc_mb_qp_delta(slice: &Slice, mb_addr: MbAddr) -> usize {
-        let get_flag = |mb: &super::macroblock::Macroblock| match mb {
-            super::macroblock::Macroblock::I(m) => m.mb_qp_delta != 0,
-            super::macroblock::Macroblock::P(m) => m.mb_qp_delta != 0,
-            super::macroblock::Macroblock::PCM(_) => false,
+        if mb_addr <= slice.header.first_mb_in_slice {
+            return 0;
+        }
+        let prev_mb_addr = mb_addr - 1;
+        let prev_mb = match slice.get_mb(prev_mb_addr) {
+            Some(mb) => mb,
+            None => return 0,
         };
 
-        let cond_term_flag_a = slice
-            .get_mb_neighbor(mb_addr, MbNeighborName::A)
-            .map(get_flag)
-            .unwrap_or(false);
+        if prev_mb.is_skipped() {
+            return 0;
+        }
+        if matches!(prev_mb, super::macroblock::Macroblock::PCM(_)) {
+            return 0;
+        }
 
-        let cond_term_flag_b = slice
-            .get_mb_neighbor(mb_addr, MbNeighborName::B)
-            .map(get_flag)
-            .unwrap_or(false);
+        let (cbp_luma, cbp_chroma, mb_qp_delta) = match prev_mb {
+            super::macroblock::Macroblock::I(m) => {
+                let is_i16x16 = m.mb_type != super::macroblock::IMbType::I_NxN && m.mb_type != super::macroblock::IMbType::I_PCM;
+                if is_i16x16 {
+                    // For Intra_16x16, CBP is non-zero, so we only care about mb_qp_delta
+                    return if m.mb_qp_delta != 0 { 1 } else { 0 };
+                }
+                (m.coded_block_pattern.luma(), m.coded_block_pattern.chroma(), m.mb_qp_delta)
+            }
+            super::macroblock::Macroblock::P(m) => {
+                (m.coded_block_pattern.luma(), m.coded_block_pattern.chroma(), m.mb_qp_delta)
+            }
+            _ => unreachable!(),
+        };
 
-        (cond_term_flag_a as usize) + (cond_term_flag_b as usize)
+        if cbp_luma == 0 && cbp_chroma == 0 {
+            return 0;
+        }
+
+        if mb_qp_delta == 0 {
+            0
+        } else {
+            1
+        }
     }
 
     // 9.3.3.1.1.6 Derivation process of ctxIdxInc for the syntax elements ref_idx_l0 and ref_idx_l1
@@ -853,13 +877,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     ) -> ParseResult<i16> {
         let base_offset = if comp_idx == 0 { 40 } else { 47 };
 
+        let ctx_idx_inc_0 = Self::get_ctx_idx_inc_mvd(accessor, list_idx, comp_idx, blk_idx);
+
         let get_ctx_idx = |bin_idx| {
-            let ctx_idx_inc = if bin_idx < 3 {
-                Self::get_ctx_idx_inc_mvd(accessor, list_idx, comp_idx, blk_idx)
-            } else if bin_idx == 3 {
-                3
+            let ctx_idx_inc = if bin_idx == 0 {
+                ctx_idx_inc_0
             } else {
-                4
+                // Table 9-39: binIdx 1->3, 2->4, 3->5, 4->6, >=5->6
+                min(bin_idx as usize + 2, 6)
             };
             base_offset + ctx_idx_inc
         };
@@ -974,37 +999,36 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     pub fn get_ctx_idx_inc_sig_coeff_flag(ctx_block_cat: usize, scanning_pos: usize) -> usize {
-        // Table 9-40
-        match ctx_block_cat {
-            0 | 1 | 2 => scanning_pos, // Luma DC, AC, 4x4
-            3 | 4 => min(scanning_pos, 2), // Chroma DC
-            5 | 6 => min(scanning_pos, 2) + 12, // Chroma AC
-            _ => scanning_pos,
+        // Section 9.3.3.1.3
+        if ctx_block_cat == 3 {
+            // Chroma DC
+            min(scanning_pos, 2)
+        } else {
+            // Luma DC, AC, 4x4 and Chroma AC
+            scanning_pos
         }
     }
 
     pub fn get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat: usize, scanning_pos: usize) -> usize {
-        // Table 9-41
-        match ctx_block_cat {
-            0 | 1 | 2 => scanning_pos,
-            3 | 4 => min(scanning_pos, 2),
-            5 | 6 => scanning_pos,
-            _ => scanning_pos,
+        // Section 9.3.3.1.3
+        if ctx_block_cat == 3 {
+            min(scanning_pos, 2)
+        } else {
+            scanning_pos
         }
     }
 
-    pub fn get_ctx_idx_inc_abs_level(ctx_block_cat: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> usize {
-        // Table 9-42
-        let base = if num_decod_abs_level_gt1 != 0 {
-            0
+    pub fn get_ctx_idx_inc_abs_level(ctx_block_cat: usize, bin_idx: u32, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> usize {
+        // Section 9.3.3.1.3
+        if bin_idx == 0 {
+            if num_decod_abs_level_gt1 != 0 {
+                0
+            } else {
+                min(4, 1 + num_decod_abs_level_eq1)
+            }
         } else {
-            min(4, 1 + num_decod_abs_level_eq1)
-        };
-        
-        match ctx_block_cat {
-            0 | 1 | 2 | 5 | 6 => 5 + base,
-            3 | 4 => min(4, 1 + num_decod_abs_level_eq1), // Chroma DC
-            _ => base,
+            let limit = if ctx_block_cat == 3 { 3 } else { 4 };
+            5 + min(limit, num_decod_abs_level_gt1)
         }
     }
 
@@ -1099,12 +1123,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         comp_idx: usize,
         max_num_coeff: usize,
     ) -> ParseResult<bool> {
-        // 1. coded_block_flag
-        let ctx_idx_offset_cbf = match ctx_block_cat {
-            0..=4 => 85,
-            5 | 6 => 460,
-            _ => 85,
+        // Table 9-40: ctxIdxBlockCatOffset
+        let (cbf_cat_off, sig_cat_off, abs_cat_off) = match ctx_block_cat {
+            0 => (0, 0, 0),
+            1 => (4, 15, 10),
+            2 => (8, 29, 20),
+            3 => (12, 44, 30),
+            4 => (16, 47, 39),
+            _ => (0, 0, 0), // Default for non-Main profile/8x8 cats
         };
+
+        // 1. coded_block_flag
+        let ctx_idx_offset_cbf = 85 + cbf_cat_off;
 
         let cbf = if max_num_coeff != 64
             || slice.sps.ChromaArrayType() == super::ChromaFormat::YUV444
@@ -1147,19 +1177,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     }
                 }
             }
-            5 => {
-                if cbf {
-                    // Luma 8x8. blk_idx is 0..3 (8x8 block index).
-                    let start_x = (blk_idx & 1) * 2;
-                    let start_y = (blk_idx >> 1) * 2;
-                    for y in 0..2 {
-                        for x in 0..2 {
-                            let idx4x4 = (start_y + y) * 4 + (start_x + x);
-                            curr_mb.cbf.luma_ac |= 1 << idx4x4;
-                        }
-                    }
-                }
-            }
             _ => {}
         }
 
@@ -1172,20 +1189,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mut last_significant_coeff_flag = [false; 64];
         let mut num_coeff = 0;
         
-        // Table 9-34
-        let ctx_idx_offset_sig = match ctx_block_cat {
-            0..=4 => 105,
-            5 => 402,
-            6 => 484, // Table 9-34: 5 < ctxBlockCat < 9 -> 484
-            _ => 105,
-        };
-        
-        let ctx_idx_offset_last = match ctx_block_cat {
-            0..=4 => 166,
-            5 => 417,
-            6 => 572,
-            _ => 166,
-        };
+        let ctx_idx_offset_sig = 105 + sig_cat_off;
+        let ctx_idx_offset_last = 166 + sig_cat_off;
         
         let mut last_scan_pos = -1;
         
@@ -1218,36 +1223,33 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mut num_decod_abs_level_gt1 = 0;
         let mut coeff_level = [0i32; 64];
         
+        let ctx_idx_offset_abs = 227 + abs_cat_off;
+
         // Reverse scan
         for i in (0..=last_scan_pos as usize).rev() {
             if significant_coeff_flag[i] {
-                let ctx_idx_offset_abs = match ctx_block_cat {
-                    0..=4 => 227,
-                    5 => 426,
-                    6 => 952,
-                    _ => 227,
-                };
-                
                 let get_ctx_idx = |bin_idx: u32| {
-                    if bin_idx == 0 {
-                        let inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
+                    if bin_idx <= 1 {
+                        let inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, bin_idx, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
                         ctx_idx_offset_abs + inc
                     } else {
-                        // Suffix (UEG0) uses Bypass
+                        // UEG0 prefix part uses DecodeBypass for bins > 1 (maxBinIdxCtx=1 in Table 9-34)
                         0
                     }
                 };
                 
-                let val_minus1 = self.parse_ueg_k(14, 0, false, get_ctx_idx)? as i32;
-                let abs_level = val_minus1 + 1;
-                
+                // UEG0 prefix part bin 0 and 1 are decoded with contexts, others with bypass.
+                // parse_ueg_k needs to handle this. Let's rewrite it.
+                let val_minus1 = self.parse_abs_level_minus1(ctx_block_cat, ctx_idx_offset_abs, num_decod_abs_level_gt1, num_decod_abs_level_eq1)?;
+                let abs_level = (val_minus1 + 1) as i32;
+
                 // Update counters
                 if abs_level == 1 {
                     num_decod_abs_level_eq1 += 1;
                 } else {
                     num_decod_abs_level_gt1 += 1;
                 }
-                
+
                 // Sign
                 let sign = self.decode_bypass()?;
                 coeff_level[i] = if sign == 1 { -abs_level } else { abs_level };
@@ -1267,24 +1269,52 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 residual.luma_level4x4[blk_idx].copy_from_slice(&coeff_level[0..16]);
                 residual.luma_level4x4_nc[blk_idx] = num_coeff as u8;
             },
-            3 => { // Chroma DC Cb (4 coeffs)
-                residual.chroma_cb_dc_level.copy_from_slice(&coeff_level[0..4]);
+            3 => { // Chroma DC Cb/Cr
+                let levels = residual.get_dc_levels_for(if comp_idx == 0 { super::ColorPlane::Cb } else { super::ColorPlane::Cr });
+                levels.copy_from_slice(&coeff_level[0..4]);
             },
-            4 => { // Chroma DC Cr (4 coeffs)
-                residual.chroma_cr_dc_level.copy_from_slice(&coeff_level[0..4]);
-            },
-            5 => { // Chroma AC Cb (15 coeffs)
-                residual.chroma_cb_ac_level[blk_idx].copy_from_slice(&coeff_level[0..15]);
-                residual.chroma_cb_level4x4_nc[blk_idx] = num_coeff as u8;
-            },
-            6 => { // Chroma AC Cr (15 coeffs)
-                residual.chroma_cr_ac_level[blk_idx].copy_from_slice(&coeff_level[0..15]);
-                residual.chroma_cr_level4x4_nc[blk_idx] = num_coeff as u8;
+            4 => { // Chroma AC Cb/Cr
+                let (levels, nc) = residual.get_ac_levels_for(blk_idx as u8, if comp_idx == 0 { super::ColorPlane::Cb } else { super::ColorPlane::Cr });
+                levels.copy_from_slice(&coeff_level[0..15]);
+                *nc = num_coeff as u8;
             },
             _ => {},
         }
         
         Ok(true)
+    }
+
+    fn parse_abs_level_minus1(&mut self, ctx_block_cat: usize, ctx_idx_offset_abs: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> ParseResult<u32> {
+        // prefix: TU with cMax = 14. maxBinIdxCtx = 1.
+        let mut prefix = 0;
+        while prefix < 14 {
+            let bin_idx = if prefix == 0 { 0 } else { 1 };
+            let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, bin_idx, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
+            let bin = self.decode_bin(ctx_idx_offset_abs + ctx_idx_inc)?;
+            if bin == 0 {
+                return Ok(prefix);
+            }
+            prefix += 1;
+        }
+
+        // Suffix: EG0 (Section 9.3.2.3)
+        let mut suffix_val = 0;
+        let mut k = 0;
+        loop {
+            let bit = self.decode_bypass()?;
+            if bit == 1 {
+                suffix_val += 1 << k;
+                k += 1;
+            } else {
+                let mut rem = 0;
+                for _ in 0..k {
+                    rem = (rem << 1) | self.decode_bypass()? as u32;
+                }
+                suffix_val += rem;
+                break;
+            }
+        }
+        Ok(prefix + suffix_val)
     }
 
 
@@ -1323,56 +1353,79 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             return Ok(super::macroblock::IMbType::I_PCM);
         }
 
-        // Bin 2
-        let ctx_idx_inc_2 = 3;
-        if self.decode_bin(ctx_idx_offset + ctx_idx_inc_2)? == 0 {
-            return self.parse_i_16x16_suffix(ctx_idx_offset, 0);
-        } else {
-            return self.parse_i_16x16_suffix(ctx_idx_offset, 12);
-        }
+        // Bins 2-6
+        self.parse_i_16x16_params(ctx_idx_offset)
     }
 
-    fn parse_i_16x16_suffix(&mut self, ctx_idx_offset: usize, base_type: u32) -> ParseResult<super::macroblock::IMbType> {
-        // Bins 3-6 (Fixed ctxIdx 3..6 + offset)
-        let bit3 = self.decode_bin(ctx_idx_offset + 4)?;
-        let bit4 = self.decode_bin(ctx_idx_offset + 5)?;
-        let bit5 = self.decode_bin(ctx_idx_offset + 6)?;
-        let bit6 = self.decode_bin(ctx_idx_offset + 7)?;
+    fn parse_i_16x16_params(&mut self, ctx_idx_offset: usize) -> ParseResult<super::macroblock::IMbType> {
+        let (inc2, inc3, inc4_0, inc4_1, inc5_0, inc5_1, inc6) = if ctx_idx_offset == 3 {
+            (3, 4, 6, 5, 7, 6, 7)
+        } else {
+            (1, 2, 3, 2, 3, 3, 3)
+        };
 
-        let offset = (bit3 as u32) << 3 | (bit4 as u32) << 2 | (bit5 as u32) << 1 | (bit6 as u32);
-        super::macroblock::IMbType::try_from(1 + base_type + offset).map_err(|e| e)
+        let cbpl = self.decode_bin(ctx_idx_offset + inc2)?;
+        let b3 = self.decode_bin(ctx_idx_offset + inc3)?;
+        let cbpc;
+        let imode;
+        if b3 == 0 {
+            cbpc = 0;
+            let imode_bit1 = self.decode_bin(ctx_idx_offset + inc4_0)?;
+            let imode_bit0 = self.decode_bin(ctx_idx_offset + inc5_0)?;
+            imode = (imode_bit1 << 1) | imode_bit0;
+        } else {
+            let b4 = self.decode_bin(ctx_idx_offset + inc4_1)?;
+            cbpc = if b4 == 0 { 1 } else { 2 };
+            let imode_bit1 = self.decode_bin(ctx_idx_offset + inc5_1)?;
+            let imode_bit0 = self.decode_bin(ctx_idx_offset + inc6)?;
+            imode = (imode_bit1 << 1) | imode_bit0;
+        }
+        let mb_type_val = 1 + imode as u32 + 4 * cbpc as u32 + 12 * cbpl as u32;
+        super::macroblock::IMbType::try_from(mb_type_val).map_err(|e| e)
     }
 
     pub fn parse_mb_type_p(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<CabacMbType> {
-        // Bin 0 (ctxIdx 14)
+        // Prefix part: ctxIdxOffset 14
+        // Bin 0
         if self.decode_bin(14)? == 1 {
-            // Intra. Bin 1 corresponds to Bin 0 of I-slice mb_type
+            // Intra. Suffix part: ctxIdxOffset 17
             let i_mb_type = self.parse_mb_type_i_suffix(17, slice, mb_addr)?;
             return Ok(CabacMbType::I(i_mb_type));
         }
 
-        // Bin 1 (ctxIdx 15)
-        if self.decode_bin(15)? == 1 {
-             // Bin 2 (ctxIdx 16)
-             if self.decode_bin(16)? == 1 {
-                 return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_16x8));
-             } else {
-                 return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_8x16));
-             }
+        // Bin 1
+        let b1 = self.decode_bin(15)?;
+
+        // Bin 2: Table 9-39, ctxIdxOffset 14, binIdx 2 uses ctxIdxInc 2 or 3
+        let ctx_idx_inc_2 = if b1 != 1 { 2 } else { 3 };
+        let b2 = self.decode_bin(14 + ctx_idx_inc_2)?;
+
+        if b1 == 1 {
+            if b2 == 1 {
+                Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_16x8))
+            } else {
+                Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_8x16))
+            }
         } else {
-             // Bin 2 (ctxIdx 16)
-             if self.decode_bin(16)? == 1 {
-                 return Ok(CabacMbType::P(super::macroblock::PMbType::P_8x8));
-             } else {
-                 return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_16x16));
-             }
+            if b2 == 1 {
+                Ok(CabacMbType::P(super::macroblock::PMbType::P_8x8))
+            } else {
+                Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_16x16))
+            }
         }
     }
 
     // Helper for P-slice Intra suffix
     fn parse_mb_type_i_suffix(&mut self, ctx_idx_offset: usize, slice: &Slice, mb_addr: MbAddr) -> ParseResult<super::macroblock::IMbType> {
-        // Bin 0 (of suffix, bin 1 of overall P mb_type)
-        let ctx_idx_inc_0 = Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr);
+        // Bin 0 (of suffix)
+        // Table 9-39: ctxIdxOffset 17 bin 0 uses ctxIdxInc 0.
+        // ctxIdxOffset 3 bin 0 uses derived ctxIdxInc.
+        let ctx_idx_inc_0 = if ctx_idx_offset == 3 {
+            Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr)
+        } else {
+            0
+        };
+
         if self.decode_bin(ctx_idx_offset + ctx_idx_inc_0)? == 0 {
             return Ok(super::macroblock::IMbType::I_NxN);
         }
@@ -1382,13 +1435,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             return Ok(super::macroblock::IMbType::I_PCM);
         }
 
-        // Bin 2
-        let ctx_idx_inc_2 = 3;
-        if self.decode_bin(ctx_idx_offset + ctx_idx_inc_2)? == 0 {
-            return self.parse_i_16x16_suffix(ctx_idx_offset, 0);
-        } else {
-            return self.parse_i_16x16_suffix(ctx_idx_offset, 12);
-        }
+        // Remaining bins of I_16x16
+        self.parse_i_16x16_params(ctx_idx_offset)
     }
 
     pub fn parse_sub_mb_type_p(&mut self, _slice: &Slice, _mb_addr: MbAddr) -> ParseResult<super::macroblock::SubMbType> {
@@ -1415,7 +1463,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // 9.3.3.1.1.8 Derivation process of ctxIdxInc for the syntax element intra_chroma_pred_mode
     fn get_ctx_idx_inc_intra_chroma_pred_mode(slice: &Slice, mb_addr: MbAddr) -> usize {
         let get_cond_term_flag = |mb: &super::macroblock::Macroblock| match mb {
-             super::macroblock::Macroblock::PCM(_) => true,
+             super::macroblock::Macroblock::PCM(_) => false, // Spec: condTermFlagN = 0 for I_PCM
              super::macroblock::Macroblock::I(m) => m.intra_chroma_pred_mode as u32 != 0,
              super::macroblock::Macroblock::P(_) => false,
         };

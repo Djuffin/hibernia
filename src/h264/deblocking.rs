@@ -576,15 +576,15 @@ fn get_bs(
 
         let y_blk = k / 4;
         let q_blk_x = edge_idx;
-        let q_idx = super::residual::scan_4x4(y_blk, q_blk_x);
+        let q_idx = super::macroblock::scan_4x4(y_blk, q_blk_x);
 
         if edge_idx == 0 {
             // p is in MB P, rightmost column (x=3)
-            let p_idx = super::residual::scan_4x4(y_blk, 3);
+            let p_idx = super::macroblock::scan_4x4(y_blk, 3);
             (q_idx, p_idx)
         } else {
             // p is in MB Q (internal)
-            let p_idx = super::residual::scan_4x4(y_blk, edge_idx - 1);
+            let p_idx = super::macroblock::scan_4x4(y_blk, edge_idx - 1);
             (q_idx, p_idx)
         }
     } else {
@@ -592,14 +592,14 @@ fn get_bs(
         // q is at (k, edge_idx * 4)
         let x_blk = k / 4;
         let q_blk_y = edge_idx;
-        let q_idx = super::residual::scan_4x4(q_blk_y, x_blk);
+        let q_idx = super::macroblock::scan_4x4(q_blk_y, x_blk);
 
         if edge_idx == 0 {
             // p is in MB P, bottom row (y=3)
-            let p_idx = super::residual::scan_4x4(3, x_blk);
+            let p_idx = super::macroblock::scan_4x4(3, x_blk);
             (q_idx, p_idx)
         } else {
-            let p_idx = super::residual::scan_4x4(edge_idx - 1, x_blk);
+            let p_idx = super::macroblock::scan_4x4(edge_idx - 1, x_blk);
             (q_idx, p_idx)
         }
     };
@@ -686,7 +686,7 @@ fn check_motion_discontinuity(
     let get_part = |mb: &Macroblock, idx: usize| -> Option<super::macroblock::PartitionInfo> {
         match mb {
             Macroblock::P(pmb) => {
-                let (y, x) = super::residual::unscan_4x4(idx);
+                let (y, x) = super::macroblock::unscan_4x4(idx);
                 Some(pmb.motion.partitions[y][x])
             }
             _ => None, // Intra/PCM have no motion

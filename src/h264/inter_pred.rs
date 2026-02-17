@@ -1,5 +1,8 @@
 use super::decoder::VideoFrame;
-use super::macroblock::MotionVector;
+use super::macroblock::{
+    MbAddr, MbMotion, MotionVector, PMbType, PartitionInfo, SubMacroblock, SubMbType,
+};
+use super::slice::Slice;
 use super::Point;
 use v_frame::plane::Plane;
 
@@ -551,4 +554,323 @@ mod tests {
         interpolate_chroma(&plane, 0, 0, 0, 0, 1, 1, MotionVector { x: 1, y: 0 }, &mut dst, 1);
         assert_eq!(dst[0], 108);
     }
+}
+
+// Gets the motion information for the 4x4 block covering the given absolute pixel coordinates.
+pub fn get_motion_at_coord(
+    slice: &Slice,
+    x: i32,
+    y: i32,
+    current_mb_addr: MbAddr,
+    current_mb_motion: Option<&MbMotion>,
+) -> Option<PartitionInfo> {
+    let pic_width_pixels = slice.sps.pic_width() as i32;
+    let pic_height_pixels = slice.sps.pic_height() as i32;
+
+    if x < 0 || y < 0 || x >= pic_width_pixels || y >= pic_height_pixels {
+        return None;
+    }
+
+    let mb_addr = slice.get_mb_addr_from_coords(x, y);
+
+    if mb_addr == current_mb_addr {
+        return if let Some(motion) = current_mb_motion {
+            let block_grid_x = ((x % 16) / 4) as usize;
+            let block_grid_y = ((y % 16) / 4) as usize;
+            let info = motion.partitions[block_grid_y][block_grid_x];
+            // 255 is used as a sentinel for "not yet decoded" in calculate_motion
+            if info.ref_idx_l0 == 255 {
+                None
+            } else {
+                Some(info)
+            }
+        } else {
+            None
+        };
+    }
+
+    let neighbor_mb = slice.get_mb(mb_addr)?;
+    if neighbor_mb.is_intra() {
+        return Some(PartitionInfo {
+            ref_idx_l0: u8::MAX,
+            mv_l0: MotionVector::default(),
+            mvd_l0: MotionVector::default(),
+        });
+    }
+    let motion_info = neighbor_mb.get_motion_info();
+
+    let block_grid_x = ((x % 16) / 4) as usize;
+    let block_grid_y = ((y % 16) / 4) as usize;
+
+    Some(motion_info.partitions[block_grid_y][block_grid_x])
+}
+
+// Section 8.4.1.2 Derivation process for motion vector prediction
+#[allow(clippy::too_many_arguments)]
+pub fn predict_mv_l0(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    part_x: u8,
+    part_y: u8,
+    part_w: u8,
+    part_h: u8,
+    ref_idx_l0: u8,
+    current_mb_motion: Option<&MbMotion>,
+) -> MotionVector {
+    let mb_loc = slice.get_mb_location(mb_addr);
+    let x = mb_loc.x as i32 + part_x as i32;
+    let y = mb_loc.y as i32 + part_y as i32;
+
+    // Helper to fetch neighbor info.
+    // Returns None if the neighbor is unavailable (e.g. out of bounds).
+    // Returns Some with ref_idx=MAX for Intra blocks (treated as ref_idx=-1).
+    let get_neighbor = |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
+
+    // Neighbors A (left), B (top), C (top-right), D (top-left)
+    let a = get_neighbor(x - 1, y);
+    let b = get_neighbor(x, y - 1);
+    let c = get_neighbor(x + part_w as i32, y - 1);
+    let d = get_neighbor(x - 1, y - 1);
+
+    // Directional segmentation prediction (8-203 to 8-206)
+    let is_16x8 = part_w == 16 && part_h == 8;
+    let is_8x16 = part_w == 8 && part_h == 16;
+
+    if is_16x8 {
+        if part_y == 0 {
+            // 16x8 Top partition (0): use B if references match
+            if let Some(info) = b {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
+            }
+        } else {
+            // 16x8 Bottom partition (1): use A if references match
+            if let Some(info) = a {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
+            }
+        }
+    } else if is_8x16 {
+        if part_x == 0 {
+            // 8x16 Left partition (0): use A if references match
+            if let Some(info) = a {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
+            }
+        } else {
+            // 8x16 Right partition (1): use C (or D) if references match
+            let c_eff = c.or(d);
+            if let Some(info) = c_eff {
+                if info.ref_idx_l0 == ref_idx_l0 {
+                    return info.mv_l0;
+                }
+            }
+        }
+    }
+
+    // Median prediction (Section 8.4.1.3.1)
+
+    // Step 1: Availability adjustments
+    // C is replaced by D if C is unavailable (8-214)
+    let mut mv_c = c.or(d);
+    let mut mv_b = b;
+    let mv_a = a;
+
+    // If B and C are unavailable and A is available, use A for everything (8-207)
+    if mv_b.is_none() && mv_c.is_none() && mv_a.is_some() {
+        mv_b = mv_a;
+        mv_c = mv_a;
+    }
+
+    // Helper to extract values for comparison/calculation.
+    // Unavailable neighbors are treated as zero MV and ref_idx = -1 (MAX).
+    let get_vals = |info: Option<PartitionInfo>| {
+        info.unwrap_or(PartitionInfo {
+            ref_idx_l0: u8::MAX,
+            mv_l0: MotionVector::default(),
+            mvd_l0: MotionVector::default(),
+        })
+    };
+
+    let val_a = get_vals(mv_a);
+    let val_b = get_vals(mv_b);
+    let val_c = get_vals(mv_c);
+
+    // Step 2: Reference index matching
+    // If one and only one of the reference indices is equal to the reference index of the current partition,
+    // use that motion vector (8-211).
+    let match_a = val_a.ref_idx_l0 == ref_idx_l0;
+    let match_b = val_b.ref_idx_l0 == ref_idx_l0;
+    let match_c = val_c.ref_idx_l0 == ref_idx_l0;
+
+    let match_count = (match_a as u8) + (match_b as u8) + (match_c as u8);
+
+    if match_count == 1 {
+        if match_a {
+            return val_a.mv_l0;
+        }
+        if match_b {
+            return val_b.mv_l0;
+        }
+        if match_c {
+            return val_c.mv_l0;
+        }
+    }
+
+    // Step 3: Median of components (8-212, 8-213)
+    let median = |a: i16, b: i16, c: i16| a + b + c - a.min(b).min(c) - a.max(b).max(c);
+
+    MotionVector {
+        x: median(val_a.mv_l0.x, val_b.mv_l0.x, val_c.mv_l0.x),
+        y: median(val_a.mv_l0.y, val_b.mv_l0.y, val_c.mv_l0.y),
+    }
+}
+
+pub fn calculate_motion(
+    slice: &Slice,
+    this_mb_addr: MbAddr,
+    mb_type: PMbType,
+    partitions: &[PartitionInfo; 4],
+    sub_macroblocks: &[SubMacroblock; 4],
+) -> MbMotion {
+    let mut motion = MbMotion::default();
+
+    // Mark all partitions as "Not yet decoded" (Unavailable) using sentinel ref_idx 255.
+    // This allows predict_mv_l0 to correctly identify unavailable neighbors within the same MB.
+    for row in motion.partitions.iter_mut() {
+        for part in row.iter_mut() {
+            part.ref_idx_l0 = 255;
+        }
+    }
+
+    // Helper to calculate motion vector and fill the grid
+    let mut fill_motion_grid =
+        |part_x: u8, part_y: u8, part_w: u8, part_h: u8, ref_idx: u8, mvd: MotionVector| {
+            let mvp = predict_mv_l0(
+                slice,
+                this_mb_addr,
+                part_x,
+                part_y,
+                part_w,
+                part_h,
+                ref_idx,
+                Some(&motion),
+            );
+            let final_mv =
+                MotionVector { x: mvp.x.wrapping_add(mvd.x), y: mvp.y.wrapping_add(mvd.y) };
+            let info = PartitionInfo { ref_idx_l0: ref_idx, mv_l0: final_mv, mvd_l0: mvd };
+
+            let grid_x_start = (part_x / 4) as usize;
+            let grid_y_start = (part_y / 4) as usize;
+            let grid_w = (part_w / 4) as usize;
+            let grid_h = (part_h / 4) as usize;
+
+            for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
+                row[grid_x_start..grid_x_start + grid_w].fill(info);
+            }
+        };
+
+    match mb_type {
+        PMbType::P_Skip => {
+            // Section 8.4.1.1 Derivation process for luma motion vectors for skipped macroblocks in P and SP slices
+            let mb_loc = slice.get_mb_location(this_mb_addr);
+
+            let is_zero_motion = |x, y| {
+                let mb_addr = slice.get_mb_addr_from_coords(x, y);
+                if let Some(mb) = slice.get_mb(mb_addr) {
+                    // If the macroblock is Intra, zero motion is 0 false.
+                    if mb.is_intra() {
+                        false
+                    } else if let Some(info) = get_motion_at_coord(slice, x, y, this_mb_addr, None)
+                    {
+                        info.ref_idx_l0 == 0 && info.mv_l0 == MotionVector::default()
+                    } else {
+                        false
+                    }
+                } else {
+                    // If the macroblock is not available, zero motion is true.
+                    true
+                }
+            };
+
+            let zero_a = is_zero_motion(mb_loc.x as i32 - 1, mb_loc.y as i32);
+            let zero_b = is_zero_motion(mb_loc.x as i32, mb_loc.y as i32 - 1);
+
+            let mv = if zero_a || zero_b {
+                MotionVector::default()
+            } else {
+                predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0, None)
+            };
+
+            let info = PartitionInfo { ref_idx_l0: 0, mv_l0: mv, mvd_l0: MotionVector::default() };
+            for row in motion.partitions.iter_mut() {
+                row.fill(info);
+            }
+        }
+        PMbType::P_8x8 | PMbType::P_8x8ref0 => {
+            // Section 8.4.1 Derivation process for motion vector components and reference indices
+            for (i, sub_mb) in sub_macroblocks.iter().enumerate() {
+                let sub_mb_x = (i as u8 % 2) * 8;
+                let sub_mb_y = (i as u8 / 2) * 8;
+
+                for j in 0..sub_mb.sub_mb_type.NumSubMbPart() {
+                    let mvd_info = sub_mb.partitions[j];
+                    // Table 7-18 – Sub-macroblock types in P macroblocks
+                    let (part_w, part_h, dx, dy) = match (sub_mb.sub_mb_type, j) {
+                        (SubMbType::P_L0_8x8, _) => (8, 8, 0, 0),
+                        (SubMbType::P_L0_8x4, 0) => (8, 4, 0, 0),
+                        (SubMbType::P_L0_8x4, 1) => (8, 4, 0, 4),
+                        (SubMbType::P_L0_4x8, 0) => (4, 8, 0, 0),
+                        (SubMbType::P_L0_4x8, 1) => (4, 8, 4, 0),
+                        (SubMbType::P_L0_4x4, 0) => (4, 4, 0, 0),
+                        (SubMbType::P_L0_4x4, 1) => (4, 4, 4, 0),
+                        (SubMbType::P_L0_4x4, 2) => (4, 4, 0, 4),
+                        (SubMbType::P_L0_4x4, 3) => (4, 4, 4, 4),
+                        _ => unreachable!(),
+                    };
+                    fill_motion_grid(
+                        sub_mb_x + dx,
+                        sub_mb_y + dy,
+                        part_w,
+                        part_h,
+                        mvd_info.ref_idx_l0,
+                        mvd_info.mv_l0,
+                    );
+                }
+            }
+        }
+        PMbType::P_L0_16x16 | PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => {
+            // Section 8.4.1 Derivation process for motion vector components and reference indices
+            let num_mb_part = match mb_type {
+                PMbType::P_L0_16x16 => 1,
+                PMbType::P_L0_L0_16x8 | PMbType::P_L0_L0_8x16 => 2,
+                _ => 0,
+            };
+
+            for i in 0..num_mb_part {
+                let mvd_info = partitions[i];
+                // Table 7-13 – Macroblock type values 0 to 4 for P and SP slices
+                let (part_w, part_h, part_x, part_y) = match (mb_type, i) {
+                    (PMbType::P_L0_16x16, _) => (16, 16, 0, 0),
+                    (PMbType::P_L0_L0_16x8, 0) => (16, 8, 0, 0),
+                    (PMbType::P_L0_L0_16x8, 1) => (16, 8, 0, 8),
+                    (PMbType::P_L0_L0_8x16, 0) => (8, 16, 0, 0),
+                    (PMbType::P_L0_L0_8x16, 1) => (8, 16, 8, 0),
+                    _ => unreachable!(),
+                };
+                fill_motion_grid(
+                    part_x,
+                    part_y,
+                    part_w,
+                    part_h,
+                    mvd_info.ref_idx_l0,
+                    mvd_info.mv_l0,
+                );
+            }
+        }
+    }
+    motion
 }

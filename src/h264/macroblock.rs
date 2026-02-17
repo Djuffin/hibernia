@@ -83,32 +83,14 @@ pub fn get_neighbor_mbs(
 
 // Section 6.4.3 Inverse 4x4 luma block scanning process
 pub const fn get_4x4luma_block_location(idx: u8) -> Point {
-    const LOCATIONS: [Point; 16] = [
-        Point { x: 0, y: 0 },
-        Point { x: 4, y: 0 },
-        Point { x: 0, y: 4 },
-        Point { x: 4, y: 4 },
-        Point { x: 8, y: 0 },
-        Point { x: 12, y: 0 },
-        Point { x: 8, y: 4 },
-        Point { x: 12, y: 4 },
-        Point { x: 0, y: 8 },
-        Point { x: 4, y: 8 },
-        Point { x: 0, y: 12 },
-        Point { x: 4, y: 12 },
-        Point { x: 8, y: 8 },
-        Point { x: 12, y: 8 },
-        Point { x: 8, y: 12 },
-        Point { x: 12, y: 12 },
-    ];
-    LOCATIONS[idx as usize]
+    let (row, col) = unscan_4x4(idx as usize);
+    Point { x: (col * 4) as u32, y: (row * 4) as u32 }
 }
 
 // Section 6.4.7 Inverse 4x4 chroma block scanning process
 pub const fn get_4x4chroma_block_location(idx: u8) -> Point {
-    const LOCATIONS: [Point; 4] =
-        [Point { x: 0, y: 0 }, Point { x: 4, y: 0 }, Point { x: 0, y: 4 }, Point { x: 4, y: 4 }];
-    LOCATIONS[idx as usize]
+    let (row, col) = unscan_2x2(idx as usize);
+    Point { x: (col * 4) as u32, y: (row * 4) as u32 }
 }
 
 // Section 6.4.13.1 Derivation process for 4x4 luma block indices
@@ -163,6 +145,42 @@ pub fn get_4x4chroma_block_neighbor(idx: u8, n: MbNeighborName) -> (u8, Option<M
     } else {
         (idx, Some(n))
     }
+}
+
+// Figure 8-6 – Assignment of the indices of dcY to luma4x4BlkIdx
+#[inline]
+pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
+    const TABLE: [(usize, usize); 16] = [
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (1, 1),
+        (0, 2),
+        (0, 3),
+        (1, 2),
+        (1, 3),
+        (2, 0),
+        (2, 1),
+        (3, 0),
+        (3, 1),
+        (2, 2),
+        (2, 3),
+        (3, 2),
+        (3, 3),
+    ];
+    TABLE[idx]
+}
+
+#[inline]
+pub const fn scan_4x4(row: usize, col: usize) -> usize {
+    (row / 2) * 8 + (col / 2) * 4 + (row % 2) * 2 + (col % 2)
+}
+
+// Figure 8-7 – Assignment of the indices of dcC to chroma4x4BlkIdx
+#[inline]
+pub const fn unscan_2x2(idx: usize) -> (/* row */ usize, /* column */ usize) {
+    const TABLE: [(usize, usize); 4] = [(0, 0), (0, 1), (1, 0), (1, 1)];
+    TABLE[idx]
 }
 
 // Table 7-11 – Macroblock types for I slices
@@ -672,6 +690,14 @@ mod tests {
         assert_eq!(get_4x4chroma_block_neighbor(1, b), (3, Some(b)));
         assert_eq!(get_4x4chroma_block_neighbor(2, b), (0, None));
         assert_eq!(get_4x4chroma_block_neighbor(3, b), (1, None));
+    }
+
+    #[test]
+    pub fn test_scan_unscan_4x4() {
+        for i in 0..16 {
+            let (r, c) = unscan_4x4(i);
+            assert_eq!(scan_4x4(r, c), i);
+        }
     }
 
     #[test]

@@ -117,7 +117,7 @@ impl Residual {
 
                 for blk_idx in 0..16 {
                     let mut idct_coefficients = [0i32; 16];
-                    let (dc_row, dc_column) = unscan_4x4(blk_idx);
+                    let (dc_row, dc_column) = macroblock::unscan_4x4(blk_idx);
                     idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
                     idct_coefficients[1..].copy_from_slice(&self.ac_level16x16[blk_idx]);
                     level_scale_4x4_block(
@@ -163,7 +163,7 @@ impl Residual {
                     _ => unreachable!(),
                 };
                 let mut idct_coefficients = [0i32; 16];
-                let (dc_row, dc_column) = unscan_2x2(blk_idx);
+                let (dc_row, dc_column) = macroblock::unscan_2x2(blk_idx);
                 idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
                 idct_coefficients[1..].copy_from_slice(acs);
                 level_scale_4x4_block(
@@ -182,41 +182,6 @@ impl Residual {
     }
 }
 
-// Figure 8-6 – Assignment of the indices of dcY to luma4x4BlkIdx
-#[inline]
-pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
-    const TABLE: [(usize, usize); 16] = [
-        (0, 0),
-        (0, 1),
-        (1, 0),
-        (1, 1),
-        (0, 2),
-        (0, 3),
-        (1, 2),
-        (1, 3),
-        (2, 0),
-        (2, 1),
-        (3, 0),
-        (3, 1),
-        (2, 2),
-        (2, 3),
-        (3, 2),
-        (3, 3),
-    ];
-    TABLE[idx]
-}
-
-#[inline]
-pub const fn scan_4x4(row: usize, col: usize) -> usize {
-    (row / 2) * 8 + (col / 2) * 4 + (row % 2) * 2 + (col % 2)
-}
-
-// Figure 8-7 – Assignment of the indices of dcC to chroma4x4BlkIdx
-#[inline]
-pub const fn unscan_2x2(idx: usize) -> (/* row */ usize, /* column */ usize) {
-    const TABLE: [(usize, usize); 4] = [(0, 0), (0, 1), (1, 0), (1, 1)];
-    TABLE[idx]
-}
 
 // Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
 #[inline]
@@ -388,7 +353,7 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
 pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
     let mut result = Block4x4::default();
     for (idx, value) in block.iter().enumerate() {
-        let (row, column) = unscan_4x4(idx);
+        let (row, column) = macroblock::unscan_4x4(idx);
         result.samples[row][column] = *value;
     }
     result
@@ -558,11 +523,4 @@ mod tests {
         assert_eq!(block, unscan_block_4x4(&input));
     }
 
-    #[test]
-    pub fn test_scan_unscan_4x4() {
-        for i in 0..16 {
-            let (r, c) = unscan_4x4(i);
-            assert_eq!(scan_4x4(r, c), i);
-        }
-    }
 }

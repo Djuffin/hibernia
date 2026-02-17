@@ -1524,7 +1524,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if slice.header.slice_type == super::slice::SliceType::P {
             let skipped = self.parse_mb_skip_flag(slice, mb_addr)?;
             if skipped {
-                let motion = super::parser::calculate_motion(
+                let motion = super::inter_pred::calculate_motion(
                     slice,
                     mb_addr,
                     super::macroblock::PMbType::P_Skip,
@@ -1622,7 +1622,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         for i in 0..16 {
                             let prev_intra_pred_mode_flag = self.decode_bin(68)? == 1;
                             let prev_mode =
-                                super::parser::calc_prev_intra4x4_pred_mode(slice, &mb, mb_addr, i);
+                                super::intra_pred::calc_prev_intra4x4_pred_mode(slice, &mb, mb_addr, i);
 
                             if prev_intra_pred_mode_flag {
                                 mb.rem_intra4x4_pred_mode[i] = prev_mode;
@@ -1863,7 +1863,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 let cbp = self.parse_coded_block_pattern_cabac(slice, mb_addr, &mut curr_mb)?;
                 let mut mb = super::macroblock::PMb {
                     mb_type: p_type,
-                    motion: super::parser::calculate_motion(
+                    motion: super::inter_pred::calculate_motion(
                         slice, mb_addr, p_type, &partitions, &sub_mbs,
                     ),
                     coded_block_pattern: cbp,

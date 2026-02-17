@@ -4,8 +4,8 @@ use v_frame::plane::{Plane, PlaneOffset};
 
 use super::macroblock::{
     get_4x4chroma_block_location, get_4x4luma_block_location, get_4x4luma_block_neighbor, IMb,
-    Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, MbAddr,
-    MbNeighborName,
+    Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock,
+    MbAddr, MbNeighborName, MbPredictionMode,
 };
 use super::residual::Block4x4;
 use super::slice::Slice;
@@ -274,6 +274,39 @@ pub fn render_luma_4x4_intra_prediction(
             }
         }
     }
+}
+
+// Section 8.3.1.1 Derivation process for Intra4x4PredMode
+pub fn calc_prev_intra4x4_pred_mode(
+    slice: &Slice,
+    mb: &IMb,
+    mb_addr: MbAddr,
+    blk_idx: usize,
+) -> Intra_4x4_SamplePredMode {
+    let mut result = Intra_4x4_SamplePredMode::max_mode();
+    let default_mode = Intra_4x4_SamplePredMode::DC;
+    for neighbor in [MbNeighborName::A, MbNeighborName::B] {
+        let (block_neighbor_idx, mb_neighbor) = get_4x4luma_block_neighbor(blk_idx as u8, neighbor);
+        let mode = if let Some(mb_neighbor) = mb_neighbor {
+            if let Some(mb) = slice.get_mb_neighbor(mb_addr, mb_neighbor) {
+                if let Macroblock::I(mb) = mb {
+                    if mb.MbPartPredMode(0) == MbPredictionMode::Intra_4x4 {
+                        mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
+                    } else {
+                        default_mode
+                    }
+                } else {
+                    default_mode
+                }
+            } else {
+                return default_mode;
+            }
+        } else {
+            mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
+        };
+        result = std::cmp::min(result, mode);
+    }
+    result
 }
 
 pub fn render_luma_16x16_intra_prediction(

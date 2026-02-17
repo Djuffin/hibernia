@@ -1,5 +1,8 @@
+use super::macroblock::{get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, MbNeighborName};
 use super::parser::{BitReader, ParseResult};
-use super::tables;
+use super::residual::Residual;
+use super::slice::Slice;
+use super::{tables, ColorPlane};
 use crate::{cast_or_error, read_value};
 use log::trace;
 
@@ -316,6 +319,33 @@ pub fn parse_residual_block(
     }
     trace!("coeff_level: {:?}", coeff_level);
     Ok(coeff_token.total_coeffs)
+}
+
+pub fn calculate_nc(slice: &Slice, blk_idx: u8, residual: &Residual, plane: ColorPlane) -> i32 {
+    let get_block_neighbor =
+        if plane.is_luma() { get_4x4luma_block_neighbor } else { get_4x4chroma_block_neighbor };
+
+    let mut total_nc = 0;
+    let mut nc_counted = 0;
+    let this_mb_addr = slice.get_next_mb_addr();
+    for neighbor in [MbNeighborName::A, MbNeighborName::B] {
+        let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx, neighbor);
+        if let Some(mb_neighbor) = mb_neighbor {
+            if let Some(mb) = slice.get_mb_neighbor(this_mb_addr, mb_neighbor) {
+                let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
+                total_nc += nc;
+                nc_counted += 1;
+            }
+        } else {
+            let nc = residual.get_nc(block_neighbor_idx, plane) as i32;
+            total_nc += nc;
+            nc_counted += 1;
+        }
+    }
+    if nc_counted == 2 {
+        total_nc = (total_nc + 1) / 2;
+    }
+    total_nc
 }
 
 #[cfg(test)]

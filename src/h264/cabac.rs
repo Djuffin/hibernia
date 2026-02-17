@@ -688,7 +688,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 super::macroblock::get_4x4luma_block_neighbor(blk_idx as u8, nb);
 
             if mb_neighbor.is_some() && accessor.get_mb_type_is_skipped(blk_idx as u8, nb) {
-                return 0;
+                return 1;
             }
 
             // Check bit
@@ -697,12 +697,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 // 8x8 block index = neighbor_blk_idx / 4
                 let bit_idx = neighbor_blk_idx / 4;
                 if (cbp.luma() >> bit_idx) & 1 != 0 {
-                    1
-                } else {
                     0
+                } else {
+                    1
                 }
             } else {
-                0
+                1
             }
         };
 

@@ -2,7 +2,8 @@ use super::cabac_tables::{
     get_init_table, RANGE_TAB_LPS, TRANS_IDX_LPS, TRANS_IDX_MPS,
 };
 use super::macroblock::{
-    CodedBlockPattern, MbAddr, MbMotion, MbNeighborName, MotionVector, PartitionInfo, SubMbType,
+    CodedBlockPattern, MbAddr, MbMotion, MbNeighborName, MotionVector, PartitionInfo, PcmMb,
+    SubMbType,
 };
 use super::parser::{BitReader, ParseResult};
 use super::residual::Residual;
@@ -1542,7 +1543,46 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         match mb_type {
             CabacMbType::I(i_type) => {
                 if i_type == super::macroblock::IMbType::I_PCM {
-                    return Err("PCM not fully supported in CABAC yet".to_string());
+                    self.reader.align();
+
+                    let mut pcm_mb = PcmMb { qp: 0, ..PcmMb::default() };
+
+                    // Luma: 256 samples
+                    let bit_depth_luma = slice.sps.bit_depth_luma_minus8 + 8;
+                    let luma_size = 256;
+                    pcm_mb.pcm_sample_luma.reserve(luma_size);
+                    for _ in 0..luma_size {
+                        pcm_mb.pcm_sample_luma.push(self.reader.u(bit_depth_luma)? as u8);
+                    }
+
+                    // Chroma
+                    let chroma_format = slice.sps.ChromaArrayType();
+                    if chroma_format != super::ChromaFormat::Monochrome {
+                        let shift = chroma_format.get_chroma_shift();
+                        let width_c = 16 >> shift.width;
+                        let height_c = 16 >> shift.height;
+                        let chroma_size = (width_c * height_c) as usize;
+                        let bit_depth_chroma = slice.sps.bit_depth_chroma_minus8 + 8;
+
+                        pcm_mb.pcm_sample_chroma_cb.reserve(chroma_size);
+                        for _ in 0..chroma_size {
+                            pcm_mb
+                                .pcm_sample_chroma_cb
+                                .push(self.reader.u(bit_depth_chroma)? as u8);
+                        }
+
+                        pcm_mb.pcm_sample_chroma_cr.reserve(chroma_size);
+                        for _ in 0..chroma_size {
+                            pcm_mb
+                                .pcm_sample_chroma_cr
+                                .push(self.reader.u(bit_depth_chroma)? as u8);
+                        }
+                    }
+
+                    // Initialize decoding engine
+                    self.init_decoding_engine()?;
+
+                    return Ok(super::macroblock::Macroblock::PCM(pcm_mb));
                 }
 
                 let mut mb = super::macroblock::IMb {

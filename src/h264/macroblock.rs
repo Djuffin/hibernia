@@ -378,6 +378,16 @@ pub struct PcmMb {
     pub qp: u8,
 }
 
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CbfInfo {
+    pub luma_dc: bool,
+    pub luma_ac: u16, // 16 bits
+    pub cb_dc: bool,
+    pub cb_ac: u8, // 4 bits
+    pub cr_dc: bool,
+    pub cr_ac: u8, // 4 bits
+}
+
 // Macroblock of type I
 #[derive(Clone, Debug, Default)]
 pub struct IMb {
@@ -389,6 +399,7 @@ pub struct IMb {
     pub mb_qp_delta: i32,
     pub qp: u8,
     pub residual: Option<Box<Residual>>,
+    pub cbf_info: CbfInfo,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -460,6 +471,7 @@ pub struct PMb {
     pub qp: u8,
     pub transform_size_8x8_flag: bool,
     pub residual: Option<Box<Residual>>,
+    pub cbf_info: CbfInfo,
 }
 
 #[derive(Clone, Debug)]
@@ -588,6 +600,14 @@ impl Macroblock {
             Macroblock::I(m) => m.qp = qp,
             Macroblock::P(m) => m.qp = qp,
             Macroblock::PCM(m) => m.qp = qp,
+        }
+    }
+
+    pub fn get_cbf_info(&self) -> CbfInfo {
+        match self {
+            Macroblock::I(mb) => mb.cbf_info,
+            Macroblock::P(mb) => mb.cbf_info,
+            Macroblock::PCM(_) => CbfInfo::default(),
         }
     }
 }

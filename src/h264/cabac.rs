@@ -2,23 +2,13 @@ use super::cabac_tables::{
     get_init_table, RANGE_TAB_LPS, TRANS_IDX_LPS, TRANS_IDX_MPS,
 };
 use super::macroblock::{
-    CodedBlockPattern, MbAddr, MbMotion, MbNeighborName, MotionVector, PartitionInfo, PcmMb,
-    SubMbType,
+    CbfInfo, CodedBlockPattern, MbAddr, MbMotion, MbNeighborName, MotionVector, PartitionInfo,
+    PcmMb, SubMbType,
 };
 use super::parser::{BitReader, ParseResult};
 use super::residual::Residual;
 use super::slice::Slice;
 use std::cmp::min;
-
-#[derive(Default)]
-struct CbfInfo {
-    luma_dc: bool,
-    luma_ac: u16, // 16 bits
-    cb_dc: bool,
-    cb_ac: u8, // 4 bits
-    cr_dc: bool,
-    cr_ac: u8, // 4 bits
-}
 
 struct CurrentMbInfo {
     mb_type: CabacMbType,
@@ -252,18 +242,14 @@ impl<'a> NeighborAccessor<'a> {
                 .slice
                 .get_mb_neighbor(self.mb_addr, nb_name)
                 .map(|mb| {
-                    mb.get_nc(
-                        neighbor_blk_idx,
-                        if ctx_block_cat >= 3 {
-                            if comp_idx == 0 {
-                                super::ColorPlane::Cb
-                            } else {
-                                super::ColorPlane::Cr
-                            }
-                        } else {
-                            super::ColorPlane::Y
-                        },
-                    ) > 0
+                    let cbf_info = mb.get_cbf_info();
+                    match ctx_block_cat {
+                        0 => cbf_info.luma_dc,
+                        1 | 2 | 5 => (cbf_info.luma_ac >> neighbor_blk_idx) & 1 != 0,
+                        3 => if comp_idx == 0 { cbf_info.cb_dc } else { cbf_info.cr_dc },
+                        4 => if comp_idx == 0 { (cbf_info.cb_ac >> neighbor_blk_idx) & 1 != 0 } else { (cbf_info.cr_ac >> neighbor_blk_idx) & 1 != 0 },
+                        _ => false,
+                    }
                 }),
         }
     }
@@ -1551,6 +1537,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     coded_block_pattern: CodedBlockPattern::new(0, 0),
                     mb_qp_delta: 0,
                     qp: slice.slice_qp_y() as u8,
+                    cbf_info: CbfInfo::default(),
                     ..Default::default()
                 };
                 return Ok(super::macroblock::Macroblock::P(mb));
@@ -1696,6 +1683,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 let mut residual = super::residual::Residual::default();
                 self.parse_residual_cabac(slice, mb_addr, &mut curr_mb, &mut residual)?;
                 mb.residual = Some(Box::new(residual));
+                mb.cbf_info = curr_mb.cbf;
 
                 Ok(super::macroblock::Macroblock::I(mb))
             }
@@ -1883,6 +1871,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     qp: slice.slice_qp_y() as u8,
                     transform_size_8x8_flag: false,
                     residual: None,
+                    cbf_info: CbfInfo::default(),
                 };
 
                 if !mb.coded_block_pattern.is_zero()
@@ -1894,6 +1883,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 let mut residual = super::residual::Residual::default();
                 self.parse_residual_cabac(slice, mb_addr, &mut curr_mb, &mut residual)?;
                 mb.residual = Some(Box::new(residual));
+                mb.cbf_info = curr_mb.cbf;
 
                 Ok(super::macroblock::Macroblock::P(mb))
             }

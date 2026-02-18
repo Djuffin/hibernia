@@ -335,20 +335,140 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         Ok(())
     }
 
+    pub fn get_ctx_idx_inc(&self, se: SyntaxElement, bin_idx: u32, derived_inc: Option<usize>) -> usize {
+        // Special case for CoeffAbsLevelMinus1
+        if let SyntaxElement::CoeffAbsLevelMinus1(cat) = se {
+            let packed_counts = derived_inc.expect("counts required for coeff_abs_level_minus1");
+            let num_decod_abs_level_gt1 = (packed_counts >> 16) & 0xFFFF;
+            let num_decod_abs_level_eq1 = packed_counts & 0xFFFF;
+
+            // 9.3.3.1.3
+            return if bin_idx == 0 {
+                if num_decod_abs_level_gt1 != 0 {
+                    0
+                } else {
+                    min(4, 1 + num_decod_abs_level_eq1)
+                }
+            } else {
+                let limit = if cat == 3 { 3 } else { 4 };
+                5 + min(limit, num_decod_abs_level_gt1)
+            };
+        }
+
+        let props = get_syntax_element_properties(se);
+        let ctx_idx_offset = props.ctx_idx_offset as usize;
+        let effective_bin_idx = min(bin_idx, props.max_bin_idx_ctx) as usize;
+
+        match ctx_idx_offset {
+            0 => { // mb_type (SI)
+                if bin_idx == 0 {
+                    derived_inc.expect("derived_inc required for mb_type SI bin 0")
+                } else {
+                    0
+                }
+            }
+            3 => { // mb_type (I)
+                match bin_idx {
+                    0 => derived_inc.expect("derived_inc required for mb_type I bin 0"),
+                    1 => 276 - 3,
+                    2 => 3,
+                    3 => 4,
+                    4 => 5,
+                    _ => 0,
+                }
+            }
+            11 => derived_inc.expect("derived_inc required for mb_skip_flag P"),
+            14 => { // mb_type (P, SP) - Prefix
+                match effective_bin_idx {
+                    0 => 1,
+                    1 => 2,
+                    _ => 0
+                }
+            }
+            17 => { // mb_type (P, SP) - Suffix
+                match effective_bin_idx {
+                    0 => 276 - 17,
+                    1 => 1,
+                    2 => 2,
+                    _ => 3
+                }
+            }
+            21 => { // sub_mb_type (P, SP)
+                match effective_bin_idx {
+                    0 => 1,
+                    1 => 2,
+                    2 => 2,
+                    _ => 2
+                }
+            }
+            24 => derived_inc.expect("derived_inc required for mb_skip_flag B"),
+            27 => { // mb_type (B) - Prefix
+                match effective_bin_idx {
+                    0 => derived_inc.expect("derived_inc required for mb_type B bin 0"),
+                    1 => 3,
+                    2 => 4,
+                    _ => 5
+                }
+            }
+            36 => { // sub_mb_type (B)
+                match effective_bin_idx {
+                    0 => 1,
+                    1 => 2,
+                    2 => 3,
+                    _ => 3
+                }
+            }
+            40 | 47 => { // mvd
+                match effective_bin_idx {
+                    0 | 1 | 2 => derived_inc.expect("derived_inc required for mvd"),
+                    3 => 6,
+                    4 => 6,
+                    _ => 6,
+                }
+            }
+            54 => { // ref_idx
+                match effective_bin_idx {
+                    0 => derived_inc.expect("derived_inc required for ref_idx"),
+                    1 => 4,
+                    _ => 5,
+                }
+            }
+            60 => { // mb_qp_delta
+                match effective_bin_idx {
+                    0 => derived_inc.expect("derived_inc required for mb_qp_delta"),
+                    1 => 2,
+                    _ => 3,
+                }
+            }
+            64 => { // intra_chroma_pred_mode
+                match effective_bin_idx {
+                    0 => derived_inc.expect("derived_inc required for intra_chroma_pred_mode"),
+                    _ => 3,
+                }
+            }
+            68 | 69 => 0,
+            70 | 73 | 77 | 399 => derived_inc.expect("derived_inc required"),
+            276 => 0,
+            // Residuals and others
+            _ => derived_inc.expect("derived_inc required for residuals or others")
+        }
+    }
+
     // 9.3.2.1 Unary (U) binarization process
-    pub fn parse_unary_bin<F>(
+    pub fn parse_unary_bin(
         &mut self,
-        max_bin_idx_ctx: u32,
-        mut get_ctx_idx: F,
+        se: SyntaxElement,
+        derived_inc: Option<usize>,
     ) -> ParseResult<u32>
-    where
-        F: FnMut(u32) -> usize,
     {
+        let props = get_syntax_element_properties(se);
+        let ctx_idx_offset = props.ctx_idx_offset as usize;
+        let max_bin_idx_ctx = props.max_bin_idx_ctx;
+
         let mut bin_idx = 0;
         loop {
-            // 9.3.3.1: All bins with binIdx greater than maxBinIdxCtx are parsed using the value of ctxIdx being assigned to binIdx equal to maxBinIdxCtx.
-            let effective_bin_idx = std::cmp::min(bin_idx, max_bin_idx_ctx);
-            let ctx_idx = get_ctx_idx(effective_bin_idx);
+            let ctx_idx_inc = self.get_ctx_idx_inc(se, bin_idx, derived_inc);
+            let ctx_idx = ctx_idx_offset + ctx_idx_inc;
             let bin = self.decode_bin(ctx_idx)?;
 
             if bin == 0 {
@@ -359,19 +479,21 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.2.2 Truncated unary (TU) binarization process
-    pub fn parse_truncated_unary_bin<F>(
+    pub fn parse_truncated_unary_bin(
         &mut self,
+        se: SyntaxElement,
         c_max: u32,
-        max_bin_idx_ctx: u32,
-        mut get_ctx_idx: F,
+        derived_inc: Option<usize>,
     ) -> ParseResult<u32>
-    where
-        F: FnMut(u32) -> usize,
     {
+        let props = get_syntax_element_properties(se);
+        let ctx_idx_offset = props.ctx_idx_offset as usize;
+        let max_bin_idx_ctx = props.max_bin_idx_ctx;
+
         let mut bin_idx = 0;
         while bin_idx < c_max {
-            let effective_bin_idx = std::cmp::min(bin_idx, max_bin_idx_ctx);
-            let ctx_idx = get_ctx_idx(effective_bin_idx);
+            let ctx_idx_inc = self.get_ctx_idx_inc(se, bin_idx, derived_inc);
+            let ctx_idx = ctx_idx_offset + ctx_idx_inc;
             let bin = self.decode_bin(ctx_idx)?;
 
             if bin == 0 {
@@ -383,19 +505,20 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.2.3 Concatenated unary/ k-th order Exp-Golomb (UEGk) binarization process
-    pub fn parse_ueg_k<F>(
+    pub fn parse_ueg_k(
         &mut self,
-        u_coff: u32,
-        k_val: u32,
-        signed_val_flag: bool,
-        max_bin_idx_ctx: u32,
-        mut get_ctx_idx: F,
+        se: SyntaxElement,
+        derived_inc: Option<usize>,
     ) -> ParseResult<i32>
-    where
-        F: FnMut(u32) -> usize,
     {
+        let props = get_syntax_element_properties(se);
+        let (k_val, signed_val_flag, u_coff) = match props.binarization {
+            BinarizationType::UEGk { k, signed_val_flag, u_coff } => (k, signed_val_flag, u_coff),
+            _ => return Err(format!("Invalid binarization type for UEGk parsing: {:?}", se)),
+        };
+
         // Prefix: TU with cMax = uCoff
-        let prefix = self.parse_truncated_unary_bin(u_coff, max_bin_idx_ctx, &mut get_ctx_idx)?;
+        let prefix = self.parse_truncated_unary_bin(se, u_coff, derived_inc)?;
 
         if prefix < u_coff {
             let val = prefix as i32;
@@ -766,24 +889,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     fn parse_mb_qp_delta_cabac(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<i32> {
-        let props = get_syntax_element_properties(SyntaxElement::MbQpDelta);
-        let ctx_idx_offset = props.ctx_idx_offset as usize;
         let ctx_idx_inc = Self::get_ctx_idx_inc_mb_qp_delta(slice, mb_addr);
-
-        // Table 9-39: binIdx 0 uses derived ctxIdxInc, binIdx 1 uses 2, binIdx >= 2 uses 3.
-        let get_ctx_idx = |bin_idx| {
-            if bin_idx == 0 {
-                ctx_idx_offset + ctx_idx_inc
-            } else if bin_idx == 1 {
-                ctx_idx_offset + 2
-            } else {
-                ctx_idx_offset + 3
-            }
-        };
 
         // Table 9-34 says maxBinIdxCtx=2 for MbQpDelta.
         // 9.3.2.7 says it's Unary binarization.
-        let mapped_val = self.parse_unary_bin(props.max_bin_idx_ctx, get_ctx_idx)?;
+        let mapped_val = self.parse_unary_bin(SyntaxElement::MbQpDelta, Some(ctx_idx_inc))?;
 
         // Map back to signed value (Table 9-3)
         let val = mapped_val as i32;
@@ -860,6 +970,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         } else {
             SyntaxElement::MbSkipFlagP
         };
+        let ctx_idx_inc = self.get_ctx_idx_inc(se, 0, Some(ctx_idx_inc));
         let props = get_syntax_element_properties(se);
         let bin = self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)?;
         Ok(bin == 1)
@@ -873,24 +984,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         num_ref_idx_active_minus1: u32,
         mb_part_idx: usize,
     ) -> ParseResult<u8> {
-        let props = get_syntax_element_properties(SyntaxElement::RefIdx(list_idx));
-        let ctx_idx_offset = props.ctx_idx_offset as usize;
-        let get_ctx_idx = |bin_idx| {
-            let ctx_idx_inc = if bin_idx == 0 {
-                Self::get_ctx_idx_inc_ref_idx(accessor, mb_part_idx, list_idx)
-            } else {
-                // Table 9-39: binIdx 1 -> 4, binIdx > 1 -> 5.
-                if bin_idx == 1 {
-                    4
-                } else {
-                    5
-                }
-            };
-            ctx_idx_offset + ctx_idx_inc
-        };
+        let ctx_idx_inc = Self::get_ctx_idx_inc_ref_idx(accessor, mb_part_idx, list_idx);
 
         // Table 9-34 specifies U binarization for ref_idx_l0/l1.
-        let val = self.parse_unary_bin(props.max_bin_idx_ctx, get_ctx_idx)?;
+        let val = self.parse_unary_bin(SyntaxElement::RefIdx(list_idx), Some(ctx_idx_inc))?;
 
         if val > num_ref_idx_active_minus1 {
             return Err(format!(
@@ -910,27 +1007,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         comp_idx: usize,
         blk_idx: usize,
     ) -> ParseResult<i16> {
-        let props = get_syntax_element_properties(SyntaxElement::Mvd(list_idx, comp_idx));
-        let base_offset = props.ctx_idx_offset as usize;
-
         let ctx_idx_inc_0 = Self::get_ctx_idx_inc_mvd(accessor, list_idx, comp_idx, blk_idx);
 
-        let get_ctx_idx = |bin_idx| {
-            let ctx_idx_inc = if bin_idx == 0 {
-                ctx_idx_inc_0
-            } else {
-                // Table 9-39: binIdx 1->3, 2->4, 3->5, 4->6, >=5->6
-                min(bin_idx as usize + 2, 6)
-            };
-            base_offset + ctx_idx_inc
-        };
-
-        if let BinarizationType::UEGk { k, signed_val_flag, u_coff } = props.binarization {
-             let val = self.parse_ueg_k(u_coff, k, signed_val_flag, props.max_bin_idx_ctx, get_ctx_idx)?;
-             Ok(val as i16)
-        } else {
-            Err("Invalid binarization for MVD".to_string())
-        }
+        let val = self.parse_ueg_k(SyntaxElement::Mvd(list_idx, comp_idx), Some(ctx_idx_inc_0))?;
+        Ok(val as i16)
     }
 
     // 9.3.3.1.3 Assignment process of ctxIdxInc for syntax elements significant_coeff_flag, last_significant_coeff_flag, and coeff_abs_level_minus1
@@ -1202,6 +1282,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             );
             drop(accessor);
 
+            let ctx_idx_inc = self.get_ctx_idx_inc(SyntaxElement::CodedBlockFlag(ctx_block_cat), 0, Some(ctx_idx_inc));
             self.decode_bin(ctx_idx_offset_cbf + ctx_idx_inc)? == 1
         } else {
             true
@@ -1261,12 +1342,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
 
             let ctx_idx_inc_sig = Self::get_ctx_idx_inc_sig_coeff_flag(ctx_block_cat, i);
+            let ctx_idx_inc_sig = self.get_ctx_idx_inc(SyntaxElement::SignificantCoeffFlag(ctx_block_cat), 0, Some(ctx_idx_inc_sig));
             let sig = self.decode_bin(ctx_idx_offset_sig + ctx_idx_inc_sig)? == 1;
             significant_coeff_flag[i] = sig;
             if sig {
                 num_coeff += 1;
 
                 let ctx_idx_inc_last = Self::get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat, i);
+                let ctx_idx_inc_last = self.get_ctx_idx_inc(SyntaxElement::LastSignificantCoeffFlag(ctx_block_cat), 0, Some(ctx_idx_inc_last));
                 let last = self.decode_bin(ctx_idx_offset_last + ctx_idx_inc_last)? == 1;
                 last_significant_coeff_flag[i] = last;
                 if last {
@@ -1287,7 +1370,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // Reverse scan
         for i in (0..=last_scan_pos as usize).rev() {
             if significant_coeff_flag[i] {
-                let val_minus1 = self.parse_abs_level_minus1(ctx_block_cat, ctx_idx_offset_abs, num_decod_abs_level_gt1, num_decod_abs_level_eq1)?;
+                let val_minus1 = self.parse_abs_level_minus1(ctx_block_cat, num_decod_abs_level_gt1, num_decod_abs_level_eq1)?;
                 let abs_level = (val_minus1 + 1) as i32;
 
                 // Update counters
@@ -1331,20 +1414,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         Ok(true)
     }
 
-    fn parse_abs_level_minus1(&mut self, ctx_block_cat: usize, ctx_idx_offset_abs: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> ParseResult<u32> {
-        let props = get_syntax_element_properties(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat));
-
-        let get_ctx_idx = |bin_idx| {
-             let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, bin_idx, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
-             ctx_idx_offset_abs + ctx_idx_inc
-        };
-
-        if let BinarizationType::UEGk { k, signed_val_flag, u_coff } = props.binarization {
-             let val = self.parse_ueg_k(u_coff, k, signed_val_flag, props.max_bin_idx_ctx, get_ctx_idx)?;
-             Ok(val as u32)
-        } else {
-             Err("Invalid binarization for CoeffAbsLevelMinus1".to_string())
-        }
+    fn parse_abs_level_minus1(&mut self, ctx_block_cat: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> ParseResult<u32> {
+        let derived_val = (num_decod_abs_level_gt1 << 16) | num_decod_abs_level_eq1;
+        let val = self.parse_ueg_k(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat), Some(derived_val))?;
+        Ok(val as u32)
     }
 
 
@@ -1375,6 +1448,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         // Bin 0
         let ctx_idx_inc_0 = Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr);
+        let ctx_idx_inc_0 = self.get_ctx_idx_inc(SyntaxElement::MbTypeI, 0, Some(ctx_idx_inc_0));
         if self.decode_bin(ctx_idx_offset + ctx_idx_inc_0)? == 0 {
             trace!("parse_mb_type_i type={:?}", super::macroblock::IMbType::I_NxN);
             return Ok(super::macroblock::IMbType::I_NxN);
@@ -1527,20 +1601,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     pub fn parse_intra_chroma_pred_mode(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<super::macroblock::Intra_Chroma_Pred_Mode> {
-        let props = get_syntax_element_properties(SyntaxElement::IntraChromaPredMode);
-        let ctx_idx_offset = props.ctx_idx_offset as usize;
         let ctx_idx_inc = Self::get_ctx_idx_inc_intra_chroma_pred_mode(slice, mb_addr);
 
-        let get_ctx_idx = |bin_idx| {
-            if bin_idx == 0 {
-                ctx_idx_offset + ctx_idx_inc
-            } else {
-                ctx_idx_offset + 3
-            }
-        };
-
         // Table 9-34: maxBinIdxCtx = 1.
-        let val = self.parse_truncated_unary_bin(3, props.max_bin_idx_ctx, get_ctx_idx)?;
+        let val = self.parse_truncated_unary_bin(SyntaxElement::IntraChromaPredMode, 3, Some(ctx_idx_inc))?;
         super::macroblock::Intra_Chroma_Pred_Mode::try_from(val).map_err(|e| e)
     }
 
@@ -1653,6 +1717,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         let ctx_idx_inc = Self::get_ctx_idx_inc_transform_size_8x8_flag(&accessor);
                         drop(accessor);
 
+                        let ctx_idx_inc = self.get_ctx_idx_inc(SyntaxElement::TransformSize8x8Flag, 0, Some(ctx_idx_inc));
                         let props = get_syntax_element_properties(SyntaxElement::TransformSize8x8Flag);
                         let flag = self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)? == 1;
                         mb.transform_size_8x8_flag = flag;

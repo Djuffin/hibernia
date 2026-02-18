@@ -366,6 +366,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         se: SyntaxElement,
         c_max_override: Option<u32>,
         initial_ctx_idx_inc: usize,
+        // (numDecodAbsLevelGt1, numDecodAbsLevelEq1) for CoeffAbsLevelMinus1
         abs_level_ctx: Option<(usize, usize)>,
     ) -> ParseResult<u32> {
         let props = get_syntax_element_properties(se);
@@ -1057,6 +1058,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
     }
 
+    // Helper to derive ctxIdxInc for syntax elements in Table 9-39 that depend on binIdx.
     fn get_ctx_idx_inc(
         se: SyntaxElement,
         bin_idx: u32,
@@ -1100,7 +1102,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 let (gt1, eq1) = abs_level_ctx.expect("AbsLevel context required");
                 Self::get_ctx_idx_inc_abs_level(ctx_block_cat, bin_idx, gt1, eq1)
             }
-            _ => panic!("get_ctx_idx_inc not implemented for {:?}", se),
+            // Should be unreachable for syntax elements that don't rely on Table 9-39 or custom ctxIdxInc derivation logic
+            // implemented here (e.g. those using pure FL or prefix/suffix split handled elsewhere).
+            _ => unreachable!("get_ctx_idx_inc not implemented/needed for {:?}", se),
         }
     }
 

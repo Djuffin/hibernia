@@ -766,7 +766,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         };
         
-        let prefix = self.parse_unary_bin(2, get_ctx_idx)?;
+        // Table 9-34: TU with cMax = 5.
+        // Spec 9.3.3.1 defines context for binIdx=0 and binIdx>0.
+        // This implies all bins use context models.
+        let prefix = self.parse_truncated_unary_bin(5, 5, get_ctx_idx)?;
         
         // Map back to signed value (Table 9-3)
         let val = prefix as i32;
@@ -1299,15 +1302,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     fn parse_abs_level_minus1(&mut self, ctx_block_cat: usize, ctx_idx_offset_abs: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> ParseResult<u32> {
-        // prefix: TU with cMax = 14. maxBinIdxCtx = 1.
+        // prefix: TU with cMax = 14.
+        // Spec 9.3.3.1.3 defines context for binIdx=0 and binIdx>0.
+        // This implies all bins of the prefix (0..13) use context models.
         let mut prefix = 0;
         while prefix < 14 {
-            let bin = if prefix < 2 {
-                let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, prefix, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
-                self.decode_bin(ctx_idx_offset_abs + ctx_idx_inc)?
-            } else {
-                self.decode_bypass()?
-            };
+            let ctx_idx_inc = Self::get_ctx_idx_inc_abs_level(ctx_block_cat, prefix, num_decod_abs_level_gt1, num_decod_abs_level_eq1);
+            let bin = self.decode_bin(ctx_idx_offset_abs + ctx_idx_inc)?;
 
             if bin == 0 {
                 return Ok(prefix);
@@ -1511,7 +1512,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         };
 
-        let val = self.parse_truncated_unary_bin(3, 1, get_ctx_idx)?;
+        // Table 9-34: maxBinIdxCtx = 3.
+        let val = self.parse_truncated_unary_bin(3, 3, get_ctx_idx)?;
         super::macroblock::Intra_Chroma_Pred_Mode::try_from(val).map_err(|e| e)
     }
 

@@ -47,7 +47,7 @@ impl<'a> NeighborAccessor<'a> {
                 .slice
                 .get_mb_neighbor(self.mb_addr, nb_name)
                 .map(|mb| mb.is_intra())
-                .unwrap_or(false), // Unavailable -> 0 for condTermFlag usually, but this is just is_intra
+                .unwrap_or(false),
         }
     }
 
@@ -218,7 +218,6 @@ impl<'a> NeighborAccessor<'a> {
 
         match mb_neighbor {
             None => {
-                // In current MB
                 match ctx_block_cat {
                     0 => Some(self.curr_mb.cbf.luma_dc),
                     1 | 2 | 5 => Some((self.curr_mb.cbf.luma_ac >> neighbor_blk_idx) & 1 != 0),
@@ -1038,7 +1037,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if ctx_block_cat == 3 {
             // Chroma DC
             // Eq 9-22: Min( levelListIdx / NumC8x8, 2 )
-            // unimplemented!("Generic chroma support (NumC8x8 > 1) in sig_coeff_flag context derivation");
             min(scanning_pos, 2)
         } else if matches!(ctx_block_cat, 5 | 9 | 13) {
             unimplemented!("Table 9-43 context mapping for 8x8 blocks");
@@ -1051,7 +1049,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat: usize, scanning_pos: usize) -> usize {
         // Section 9.3.3.1.3
         if ctx_block_cat == 3 {
-            // unimplemented!("Generic chroma support (NumC8x8 > 1) in last_sig_coeff_flag context derivation");
             min(scanning_pos, 2)
         } else if matches!(ctx_block_cat, 5 | 9 | 13) {
             unimplemented!("Table 9-43 context mapping for 8x8 blocks");
@@ -1123,11 +1120,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             (SyntaxElement::MbTypeI, CtxIncParams::MbType { prior }) => {
                 // Table 9-39 Offset 3
                 match bin_idx {
-                    2 => 3, // b2
-                    3 => 4, // b3
-                    4 => if prior == 0 { 6 } else { 5 }, // b4 (dep on b3)
-                    5 => if prior == 0 { 7 } else { 6 }, // b5 (dep on b3)
-                    6 => 7, // b6
+                    2 => 3,
+                    3 => 4,
+                    4 => if prior == 0 { 6 } else { 5 },
+                    5 => if prior == 0 { 7 } else { 6 },
+                    6 => 7,
                     _ => unreachable!("Invalid binIdx {} for MbTypeI with prior", bin_idx),
                 }
             }
@@ -1148,8 +1145,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
             (SyntaxElement::MbTypeISuffix, CtxIncParams::Standard(initial)) => {
                 // Table 9-39 Offset 17 (P-slice Intra suffix)
-                // Bin 0 corresponds to the I_NxN check (if coded) or I_PCM check depending on flow.
-                // In our parsing flow, we use the initial neighbor context for the first bin of the suffix.
+                // Bin 0 of the suffix corresponds to the I_NxN check.
                 if bin_idx == 0 { initial } else { unreachable!("MbTypeISuffix bin {} needs CtxIncParams::MbType", bin_idx) }
             }
             (SyntaxElement::MbTypeISuffix, CtxIncParams::MbType { prior }) => {
@@ -1427,7 +1423,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     fn parse_abs_level_minus1(&mut self, ctx_block_cat: usize, _ctx_idx_offset_abs: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> ParseResult<u32> {
-        // initial_ctx_idx_inc is not used for CoeffAbsLevelMinus1 (it's derived from gt1/eq1)
         let val = self.parse_ueg_k(
             SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat),
             CtxIncParams::AbsLevel { gt1: num_decod_abs_level_gt1, eq1: num_decod_abs_level_eq1 },

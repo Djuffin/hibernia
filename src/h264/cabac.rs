@@ -119,7 +119,7 @@ impl<'a> NeighborAccessor<'a> {
                 if list_idx == 0 {
                     Some(p_info.ref_idx_l0)
                 } else {
-                    None // TODO: L1
+                    unimplemented!("B-slice L1 reference support in get_ref_idx")
                 }
             }
             Some(nb_name) => self
@@ -134,7 +134,7 @@ impl<'a> NeighborAccessor<'a> {
                         if list_idx == 0 {
                             pmb.motion.partitions[y][x].ref_idx_l0
                         } else {
-                            0 // TODO
+                            unimplemented!("B-slice L1 reference support in get_ref_idx")
                         }
                     }
                     super::macroblock::Macroblock::I(_)
@@ -161,7 +161,7 @@ impl<'a> NeighborAccessor<'a> {
                 if list_idx == 0 {
                     Some(p_info.mvd_l0)
                 } else {
-                    None
+                    unimplemented!("B-slice L1 reference support in get_mvd")
                 }
             }
             Some(nb_name) => self
@@ -175,7 +175,7 @@ impl<'a> NeighborAccessor<'a> {
                         if list_idx == 0 {
                             pmb.motion.partitions[y][x].mvd_l0
                         } else {
-                            MotionVector::default()
+                            unimplemented!("B-slice L1 reference support in get_mvd")
                         }
                     }
                     _ => MotionVector::default(),
@@ -609,6 +609,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             if accessor.get_mb_type_is_intra(blk_idx, nb) {
                 return 0;
             }
+            if accessor.slice.MbaffFrameFlag() {
+                unimplemented!("MBAFF field macroblock logic for RefIdx context derivation (Eq 9-12)");
+            }
             // predModeEqualFlagN: P slices always Pred_L0 unless B slice logic (not impl)
             // refIdxZeroFlagN: ref_idx > 0
             let ref_idx = accessor.get_ref_idx(blk_idx, nb, list_idx).unwrap_or(0);
@@ -639,10 +642,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             if accessor.get_mb_type_is_skipped(blk_idx as u8, nb) {
                 return 0;
             }
-            if accessor.get_mb_type_is_intra(blk_idx as u8, nb) {
-                return 0;
-            }
             // predModeEqualFlagN: P slices always Pred_L0 unless B slice logic
+            if accessor.slice.MbaffFrameFlag() {
+                unimplemented!("MBAFF field macroblock scaling for MVD context derivation (Eq 9-15, 9-16)");
+            }
             let mvd = accessor
                 .get_mvd(blk_idx as u8, nb, list_idx)
                 .unwrap_or_default();
@@ -666,7 +669,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         }
     }
-    
+
     // 9.3.3.1.1.4 Derivation process of ctxIdxInc for the syntax element coded_block_pattern
     fn get_ctx_idx_inc_cbp_luma(accessor: &NeighborAccessor, bin_idx: u32) -> usize {
         let blk_idx = bin_idx * 4; // Top-left 4x4 block of the 8x8 block
@@ -1022,6 +1025,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         }
                         accessor.get_cbf(blk_idx as u8, nb, 5, 0).unwrap_or(false) as usize
                     }
+                    6..=13 => {
+                        unimplemented!("Coded block flag context derivation for categories 6-13 (ChromaArrayType 3)");
+                    }
                     _ => 0,
                 }
             } else {
@@ -1039,7 +1045,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // Section 9.3.3.1.3
         if ctx_block_cat == 3 {
             // Chroma DC
+            // Eq 9-22: Min( levelListIdx / NumC8x8, 2 )
+            // unimplemented!("Generic chroma support (NumC8x8 > 1) in sig_coeff_flag context derivation");
             min(scanning_pos, 2)
+        } else if matches!(ctx_block_cat, 5 | 9 | 13) {
+            unimplemented!("Table 9-43 context mapping for 8x8 blocks");
         } else {
             // Luma DC, AC, 4x4 and Chroma AC
             scanning_pos
@@ -1049,7 +1059,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat: usize, scanning_pos: usize) -> usize {
         // Section 9.3.3.1.3
         if ctx_block_cat == 3 {
+            // unimplemented!("Generic chroma support (NumC8x8 > 1) in last_sig_coeff_flag context derivation");
             min(scanning_pos, 2)
+        } else if matches!(ctx_block_cat, 5 | 9 | 13) {
+            unimplemented!("Table 9-43 context mapping for 8x8 blocks");
         } else {
             scanning_pos
         }
@@ -1123,10 +1136,15 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if slice.sps.ChromaArrayType().is_chroma_subsampled()
             && residual.coded_block_pattern.chroma() != 0
         {
+            if slice.sps.ChromaArrayType() == super::ChromaFormat::YUV422 {
+                 unimplemented!("Chroma DC residual parsing for YUV422 (NumC8x8 > 1)");
+            }
             // Cb DC: Cat 3, comp_idx 0
             self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 3, 0, 0, 4)?;
             // Cr DC: Cat 3, comp_idx 1
             self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 3, 0, 1, 4)?;
+        } else if slice.sps.ChromaArrayType() == super::ChromaFormat::YUV444 {
+            unimplemented!("Chroma DC/AC residual parsing for YUV444 (Categories 6-13)");
         }
 
         // 4. Chroma AC
@@ -1143,6 +1161,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     slice, mb_addr, curr_mb, residual, 4, i, 1, 15,
                 )?;
             }
+        }
+
+        if curr_mb.transform_size_8x8_flag {
+            unimplemented!("Luma 8x8 residual parsing (Category 5)");
         }
 
         Ok(())
@@ -1162,6 +1184,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     ) -> ParseResult<bool> {
         trace!("parse_residual_block_cabac cat={} blk={} comp={}", ctx_block_cat, blk_idx, comp_idx);
         // 1. coded_block_flag
+        if slice.header.field_pic_flag {
+            unimplemented!("Field-coded macroblock support (ctxIdxOffset 277 etc)");
+        }
         let cbf_props = get_syntax_element_properties(SyntaxElement::CodedBlockFlag(ctx_block_cat));
         let ctx_idx_offset_cbf = cbf_props.ctx_idx_offset as usize;
 
@@ -1215,18 +1240,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // 2. significant_coeff_flag and last_significant_coeff_flag
-        let mut significant_coeff_flag = [false; 64]; 
+        let mut significant_coeff_flag = [false; 64];
         let mut last_significant_coeff_flag = [false; 64];
         let mut num_coeff = 0;
-        
+
         let sig_props = get_syntax_element_properties(SyntaxElement::SignificantCoeffFlag(ctx_block_cat));
         let ctx_idx_offset_sig = sig_props.ctx_idx_offset as usize;
 
         let last_props = get_syntax_element_properties(SyntaxElement::LastSignificantCoeffFlag(ctx_block_cat));
         let ctx_idx_offset_last = last_props.ctx_idx_offset as usize;
-        
+
         let mut last_scan_pos = -1;
-        
+
         for i in 0..max_num_coeff {
             if i == max_num_coeff - 1 {
                 significant_coeff_flag[i] = true;
@@ -1240,7 +1265,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             significant_coeff_flag[i] = sig;
             if sig {
                 num_coeff += 1;
-                
+
                 let ctx_idx_inc_last = Self::get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat, i);
                 let last = self.decode_bin(ctx_idx_offset_last + ctx_idx_inc_last)? == 1;
                 last_significant_coeff_flag[i] = last;
@@ -1250,12 +1275,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 }
             }
         }
-        
+
         // 3. coeff_abs_level_minus1
         let mut num_decod_abs_level_eq1 = 0;
         let mut num_decod_abs_level_gt1 = 0;
         let mut coeff_level = [0i32; 64];
-        
+
         let abs_props = get_syntax_element_properties(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat));
         let ctx_idx_offset_abs = abs_props.ctx_idx_offset as usize;
 
@@ -1277,7 +1302,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 coeff_level[i] = if sign == 1 { -abs_level } else { abs_level };
             }
         }
-        
+
         // Store coefficients in Residual
         match ctx_block_cat {
             0 => { // Luma DC (16 coeffs)
@@ -1302,7 +1327,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             },
             _ => {},
         }
-        
+
         Ok(true)
     }
 
@@ -1526,6 +1551,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mb_addr = slice.get_next_mb_addr();
         trace!("parse_macroblock addr={}", mb_addr);
 
+        if slice.MbaffFrameFlag() {
+             unimplemented!("MBAFF mb_field_decoding_flag parsing");
+        }
+
         if slice.header.slice_type == super::slice::SliceType::P {
             let skipped = self.parse_mb_skip_flag(slice, mb_addr)?;
             if skipped {
@@ -1547,10 +1576,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 };
                 return Ok(super::macroblock::Macroblock::P(mb));
             }
+        } else if slice.header.slice_type == super::slice::SliceType::B {
+            unimplemented!("B-slice mb_skip_flag parsing");
         }
 
-        let mb_type = if slice.header.slice_type.is_intra() {
+        let mb_type = if slice.header.slice_type == super::slice::SliceType::I {
             CabacMbType::I(self.parse_mb_type_i(slice, mb_addr)?)
+        } else if slice.header.slice_type == super::slice::SliceType::SI {
+            unimplemented!("SI slice mb_type parsing");
         } else {
             self.parse_mb_type_p(slice, mb_addr)?
         };
@@ -1627,7 +1660,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     }
 
                     if mb.transform_size_8x8_flag {
-                        return Err("Intra 8x8 not supported".to_string());
+                        unimplemented!("Intra 8x8 prediction parsing (prev_intra8x8_pred_mode_flag, rem_intra8x8_pred_mode)");
                     } else {
                         let prev_intra_props = get_syntax_element_properties(SyntaxElement::PrevIntra4x4PredModeFlag);
                         let rem_intra_props = get_syntax_element_properties(SyntaxElement::RemIntra4x4PredMode);
@@ -1704,6 +1737,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             CabacMbType::P(p_type) => {
                 let mut partitions = [PartitionInfo::default(); 4];
                 let mut sub_mbs = [super::macroblock::SubMacroblock::default(); 4];
+
+                if slice.header.slice_type == super::slice::SliceType::B {
+                    unimplemented!("B-slice mb_type and partition parsing");
+                }
 
                 // Sub MB pred
                 if p_type == super::macroblock::PMbType::P_8x8 {

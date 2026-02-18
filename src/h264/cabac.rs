@@ -793,14 +793,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mapped_val = self.parse_unary_bin(SyntaxElement::MbQpDelta, ctx_idx_inc)?;
 
         // Map back to signed value (Table 9-3)
-        let val = mapped_val as i32;
-        let delta = if val == 0 {
-            0
-        } else if val % 2 == 0 {
-            -(val / 2)
-        } else {
-            (val + 1) / 2
-        };
+        let delta = decode_signed_mapping(mapped_val);
 
         trace!("parse_mb_qp_delta_cabac delta={}", delta);
         Ok(delta)
@@ -1722,17 +1715,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                     }
                 } else {
-                    // Intra_16x16: Derived CBP
-                    let type_val = i_type as u32 - 1;
-                    let cbp_chroma = match (type_val / 4) % 3 {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        _ => 0,
-                    };
-                    // Table 7-11: mb_types 1..12 have CbpL=0, 13..24 have CbpL=1 (represented as 15 internally)
-                    let cbp_luma = if type_val >= 12 { 15 } else { 0 };
-                    mb.coded_block_pattern = CodedBlockPattern::new(cbp_chroma, cbp_luma);
+                    // Intra_16x16: Derived CBP from mb_type (Table 7-11)
+                    mb.coded_block_pattern = super::tables::mb_type_to_coded_block_pattern(i_type)
+                        .expect("Intra_16x16 mb_type should have a valid CBP");
                     curr_mb.coded_block_pattern = mb.coded_block_pattern;
                     mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                 }
@@ -1957,6 +1942,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             self.offset = (self.offset << 1) | (self.reader.u(1)? as u32);
         }
         Ok(())
+    }
+}
+
+/// Map CABAC unsigned value back to signed value (Table 9-3 / clause 9.1.1)
+fn decode_signed_mapping(val: u32) -> i32 {
+    let val = val as i32;
+    if val == 0 {
+        0
+    } else if val % 2 == 0 {
+        -(val / 2)
+    } else {
+        (val + 1) / 2
     }
 }
 

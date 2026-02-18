@@ -753,25 +753,37 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         cond_term_flag_a + 2 * cond_term_flag_b + if bin_idx == 1 { 4 } else { 0 }
     }
 
+    // 9.3.3.1.1.10 Derivation process of ctxIdxInc for the syntax element transform_size_8x8_flag
+    fn get_ctx_idx_inc_transform_size_8x8_flag(accessor: &NeighborAccessor) -> usize {
+        let blk_idx = 0;
+        let cond_term_flag_a = accessor.get_transform_size_8x8_flag(blk_idx, MbNeighborName::A) as usize;
+        let cond_term_flag_b = accessor.get_transform_size_8x8_flag(blk_idx, MbNeighborName::B) as usize;
+
+        cond_term_flag_a + cond_term_flag_b
+    }
+
     fn parse_mb_qp_delta_cabac(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<i32> {
         let props = get_syntax_element_properties(SyntaxElement::MbQpDelta);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
         let ctx_idx_inc = Self::get_ctx_idx_inc_mb_qp_delta(slice, mb_addr);
-        
-        // Table 9-39: binIdx 0 uses ctxIdxInc, binIdx > 0 uses ctxIdxInc = 2.
+
+        // Table 9-39: binIdx 0 uses derived ctxIdxInc, binIdx 1 uses 2, binIdx >= 2 uses 3.
         let get_ctx_idx = |bin_idx| {
             if bin_idx == 0 {
                 ctx_idx_offset + ctx_idx_inc
-            } else {
+            } else if bin_idx == 1 {
                 ctx_idx_offset + 2
+            } else {
+                ctx_idx_offset + 3
             }
         };
-        
+
         // Table 9-34 says maxBinIdxCtx=2 for MbQpDelta.
-        let prefix = self.parse_truncated_unary_bin(5, props.max_bin_idx_ctx, get_ctx_idx)?;
-        
+        // 9.3.2.7 says it's Unary binarization.
+        let mapped_val = self.parse_unary_bin(props.max_bin_idx_ctx, get_ctx_idx)?;
+
         // Map back to signed value (Table 9-3)
-        let val = prefix as i32;
+        let val = mapped_val as i32;
         let delta = if val == 0 {
             0
         } else if val % 2 == 0 {
@@ -779,7 +791,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         } else {
             (val + 1) / 2
         };
-        
+
         trace!("parse_mb_qp_delta_cabac delta={}", delta);
         Ok(delta)
     }
@@ -1604,8 +1616,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 // Intra prediction
                 if i_type == super::macroblock::IMbType::I_NxN {
                     if slice.pps.transform_8x8_mode_flag {
+                        let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
+                        let ctx_idx_inc = Self::get_ctx_idx_inc_transform_size_8x8_flag(&accessor);
+                        drop(accessor);
+
                         let props = get_syntax_element_properties(SyntaxElement::TransformSize8x8Flag);
-                        let flag = self.decode_bin(props.ctx_idx_offset as usize)? == 1;
+                        let flag = self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)? == 1;
                         mb.transform_size_8x8_flag = flag;
                         curr_mb.transform_size_8x8_flag = flag;
                     }
@@ -2095,16 +2111,16 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
                      _ => unreachable!(),
                  },
                  5 => 1012, // ctxBlockCat == 5
-                 6..=8 => 460, // 5 < ctxBlockCat < 9
-                 9 => 1012,
-                 10..=12 => 472, // 9 < ctxBlockCat < 13
-                 13 => 1012,
+                 6..=8 => 460 + (cat - 6) * 4, // 5 < ctxBlockCat < 9
+                 9 => 1016, // 1012 + 4
+                 10..=12 => 472 + (cat - 10) * 4, // 9 < ctxBlockCat < 13
+                 13 => 1020, // 1012 + 8
                  _ => 85,
              };
              CabacTableEntry {
                 binarization: BinarizationType::FL { c_max: 1 },
                 max_bin_idx_ctx: 0,
-                ctx_idx_offset: offset,
+                ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
@@ -2121,16 +2137,26 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
                      _ => unreachable!(),
                  },
                  5 => 402,
-                 6..=8 => 484,
+                 6..=8 => 484 + match cat {
+                     6 => 0,
+                     7 => 15,
+                     8 => 29,
+                     _ => unreachable!(),
+                 },
                  9 => 660,
-                 10..=12 => 528,
+                 10..=12 => 528 + match cat {
+                     10 => 0,
+                     11 => 15,
+                     12 => 29,
+                     _ => unreachable!(),
+                 },
                  13 => 718,
                  _ => 105,
              };
              CabacTableEntry {
                 binarization: BinarizationType::FL { c_max: 1 },
                 max_bin_idx_ctx: 0,
-                ctx_idx_offset: offset,
+                ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
@@ -2147,16 +2173,26 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
                      _ => unreachable!(),
                  },
                  5 => 417,
-                 6..=8 => 572,
+                 6..=8 => 572 + match cat {
+                     6 => 0,
+                     7 => 15,
+                     8 => 29,
+                     _ => unreachable!(),
+                 },
                  9 => 690,
-                 10..=12 => 616,
+                 10..=12 => 616 + match cat {
+                     10 => 0,
+                     11 => 15,
+                     12 => 29,
+                     _ => unreachable!(),
+                 },
                  13 => 748,
                  _ => 166,
              };
              CabacTableEntry {
                 binarization: BinarizationType::FL { c_max: 1 },
                 max_bin_idx_ctx: 0,
-                ctx_idx_offset: offset,
+                ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
@@ -2173,16 +2209,26 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
                      _ => unreachable!(),
                  },
                  5 => 426,
-                 6..=8 => 952,
+                 6..=8 => 952 + match cat {
+                     6 => 0,
+                     7 => 10,
+                     8 => 20,
+                     _ => unreachable!(),
+                 },
                  9 => 708,
-                 10..=12 => 982,
+                 10..=12 => 982 + match cat {
+                     10 => 0,
+                     11 => 10,
+                     12 => 20,
+                     _ => unreachable!(),
+                 },
                  13 => 766,
                  _ => 227,
              };
              CabacTableEntry {
                 binarization: BinarizationType::UEGk { k: 0, signed_val_flag: false, u_coff: 14 },
                 max_bin_idx_ctx: 1,
-                ctx_idx_offset: offset,
+                ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }

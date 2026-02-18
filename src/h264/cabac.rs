@@ -1426,7 +1426,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         // Prefix part: ctxIdxOffset 14
         // Bin 0
-        if self.decode_bin(ctx_idx_offset)? == 1 {
+        if self.decode_bin(ctx_idx_offset + 1)? == 1 {
             // Intra. Suffix part: ctxIdxOffset 17
             let i_mb_type = self.parse_mb_type_i_suffix(ctx_idx_offset_suffix, slice, mb_addr)?;
             trace!("parse_mb_type_p type=I({:?})", i_mb_type);
@@ -1434,7 +1434,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // Bin 1
-        let b1 = self.decode_bin(ctx_idx_offset + 1)?;
+        let b1 = self.decode_bin(ctx_idx_offset + 2)?;
 
         // Bin 2: Table 9-39, ctxIdxOffset 14, binIdx 2 uses ctxIdxInc 2 or 3
         let ctx_idx_inc_2 = if b1 != 1 { 2 } else { 3 };
@@ -1488,12 +1488,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let ctx_idx_offset = props.ctx_idx_offset as usize;
 
         // Bin 0 (ctxIdx 21)
-        if self.decode_bin(ctx_idx_offset)? == 1 {
+        if self.decode_bin(ctx_idx_offset + 1)? == 1 {
             return Ok(super::macroblock::SubMbType::P_L0_8x8);
         }
 
         // Bin 1 (ctxIdx 22)
-        if self.decode_bin(ctx_idx_offset + 1)? == 0 {
+        if self.decode_bin(ctx_idx_offset + 2)? == 0 {
             return Ok(super::macroblock::SubMbType::P_L0_8x4);
         }
 

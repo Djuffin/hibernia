@@ -1498,7 +1498,7 @@ pub fn parse_slice_data_cabac(input: &mut BitReader, slice: &mut Slice) -> Parse
         let mb = cabac_ctx.parse_macroblock(slice)?;
         slice.append_mb(mb);
 
-        if cabac_ctx.decode_terminate()? {
+        if cabac_ctx.decode_terminate("end_of_slice_flag", 0)? {
             break;
         }
     }

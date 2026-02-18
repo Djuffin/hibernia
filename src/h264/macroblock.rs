@@ -378,6 +378,9 @@ pub struct PcmMb {
     pub qp: u8,
 }
 
+/// Helper structure to track Coded Block Flags (CBF) for CABAC context modeling.
+/// It stores whether specific blocks (DC or AC) within the macroblock contain non-zero coefficients.
+/// This information is required when deriving context indices for neighboring blocks.
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CbfInfo {
     pub luma_dc: bool,

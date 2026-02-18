@@ -1488,12 +1488,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let ctx_idx_offset = props.ctx_idx_offset as usize;
 
         // Bin 0 (ctxIdx 21)
-        if self.decode_bin(ctx_idx_offset)? == 1 {
+        if self.decode_bin(ctx_idx_offset + 1)? == 1 {
             return Ok(super::macroblock::SubMbType::P_L0_8x8);
         }
 
         // Bin 1 (ctxIdx 22)
-        if self.decode_bin(ctx_idx_offset + 1)? == 0 {
+        if self.decode_bin(ctx_idx_offset + 2)? == 0 {
             return Ok(super::macroblock::SubMbType::P_L0_8x4);
         }
 

@@ -11,6 +11,14 @@ use super::residual::Residual;
 use super::slice::Slice;
 use std::cmp::min;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum CtxIncResult {
+    Inc(usize),
+    Terminate,
+    Neighbors,
+    Na,
+}
+
 struct CurrentMbInfo {
     mb_type: CabacMbType,
     motion: MbMotion,
@@ -1051,6 +1059,69 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
     }
 
+    // Table 9-39 - Assignment of ctxIdxInc to binIdx
+    fn get_table9_39_ctx_idx_inc(
+        ctx_idx_offset: usize,
+        bin_idx: u32,
+        prev_bins: &[u8],
+    ) -> CtxIncResult {
+        match ctx_idx_offset {
+            3 => match bin_idx {
+                0 => CtxIncResult::Neighbors,
+                1 => CtxIncResult::Terminate,
+                2 => CtxIncResult::Inc(3),
+                3 => CtxIncResult::Inc(4),
+                4 => {
+                    if prev_bins.get(3).cloned().unwrap_or(0) != 0 {
+                        CtxIncResult::Inc(5)
+                    } else {
+                        CtxIncResult::Inc(6)
+                    }
+                }
+                5 => {
+                    if prev_bins.get(3).cloned().unwrap_or(0) != 0 {
+                        CtxIncResult::Inc(6)
+                    } else {
+                        CtxIncResult::Inc(7)
+                    }
+                }
+                _ => CtxIncResult::Inc(7),
+            },
+            14 => match bin_idx {
+                0 => CtxIncResult::Inc(0),
+                1 => CtxIncResult::Inc(1),
+                2 => CtxIncResult::Inc(if prev_bins.get(1).cloned().unwrap_or(0) != 1 {
+                    2
+                } else {
+                    3
+                }),
+                _ => CtxIncResult::Na,
+            },
+            17 => match bin_idx {
+                0 => CtxIncResult::Inc(0),
+                1 => CtxIncResult::Terminate,
+                2 => CtxIncResult::Inc(1),
+                3 => CtxIncResult::Inc(2),
+                4 => {
+                    if prev_bins.get(3).cloned().unwrap_or(0) != 0 {
+                        CtxIncResult::Inc(2)
+                    } else {
+                        CtxIncResult::Inc(3)
+                    }
+                }
+                _ => CtxIncResult::Inc(3),
+            },
+            21 => match bin_idx {
+                0 => CtxIncResult::Inc(0),
+                1 => CtxIncResult::Inc(1),
+                2 => CtxIncResult::Inc(2),
+                _ => CtxIncResult::Na,
+            },
+            // B-slice types (27, 32, 36) omitted as B-slices are not fully supported yet
+            _ => CtxIncResult::Na,
+        }
+    }
+
     // Helper to derive ctxIdxInc for syntax elements in Table 9-39 that depend on binIdx.
     fn get_ctx_idx_inc(
         se: SyntaxElement,
@@ -1386,46 +1457,118 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let props = get_syntax_element_properties(SyntaxElement::MbTypeI);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
 
+        let mut bins = [0u8; 8];
+        let mut n_bins = 0;
+
         // Bin 0
-        let ctx_idx_inc_0 = Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr);
-        if self.decode_bin(ctx_idx_offset + ctx_idx_inc_0)? == 0 {
+        let ctx_inc_res = Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 0, &bins[..n_bins]);
+        let bin0 = match ctx_inc_res {
+            CtxIncResult::Neighbors => {
+                let inc = Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr);
+                self.decode_bin(ctx_idx_offset + inc)?
+            }
+            CtxIncResult::Inc(inc) => self.decode_bin(ctx_idx_offset + inc)?,
+            _ => return Err("Invalid ctx inc for MbTypeI bin 0".to_string()),
+        };
+        bins[n_bins] = bin0;
+        n_bins += 1;
+
+        if bin0 == 0 {
             trace!("parse_mb_type_i type={:?}", super::macroblock::IMbType::I_NxN);
             return Ok(super::macroblock::IMbType::I_NxN);
         }
 
         // Bin 1: I_PCM check (Terminal)
-        if self.decode_terminate()? {
-            trace!("parse_mb_type_i type={:?}", super::macroblock::IMbType::I_PCM);
-            return Ok(super::macroblock::IMbType::I_PCM);
+        let ctx_inc_res = Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 1, &bins[..n_bins]);
+        if ctx_inc_res == CtxIncResult::Terminate {
+            if self.decode_terminate()? {
+                trace!("parse_mb_type_i type={:?}", super::macroblock::IMbType::I_PCM);
+                return Ok(super::macroblock::IMbType::I_PCM);
+            }
+        } else {
+             return Err("Expected Terminate for MbTypeI bin 1".to_string());
         }
+        bins[n_bins] = 0;
+        n_bins += 1;
 
         // Bins 2-6
-        let res = self.parse_i_16x16_params(ctx_idx_offset)?;
+        let res = self.parse_i_16x16_params(ctx_idx_offset, &mut bins, &mut n_bins)?;
         trace!("parse_mb_type_i type={:?}", res);
         Ok(res)
     }
 
-    fn parse_i_16x16_params(&mut self, ctx_idx_offset: usize) -> ParseResult<super::macroblock::IMbType> {
-        let (inc2, inc3, inc4_0, inc4_1, inc5_0, inc5_1, inc6) = if ctx_idx_offset == 3 {
-            (3, 4, 6, 5, 7, 6, 7)
-        } else {
-            (1, 2, 3, 2, 3, 3, 3)
+    fn parse_i_16x16_params(&mut self, ctx_idx_offset: usize, bins: &mut [u8; 8], n_bins: &mut usize) -> ParseResult<super::macroblock::IMbType> {
+        // Bin 2 (cbpl)
+        let inc2 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 2, &bins[..*n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for bin 2".to_string()),
         };
-
         let cbpl = self.decode_bin(ctx_idx_offset + inc2)?;
+        bins[*n_bins] = cbpl;
+        *n_bins += 1;
+
+        // Bin 3
+        let inc3 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 3, &bins[..*n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for bin 3".to_string()),
+        };
         let b3 = self.decode_bin(ctx_idx_offset + inc3)?;
+        bins[*n_bins] = b3;
+        *n_bins += 1;
+
         let cbpc;
         let imode;
         if b3 == 0 {
             cbpc = 0;
-            let imode_bit1 = self.decode_bin(ctx_idx_offset + inc4_0)?;
-            let imode_bit0 = self.decode_bin(ctx_idx_offset + inc5_0)?;
+            // Bin 4
+            let inc4 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 4, &bins[..*n_bins]) {
+                CtxIncResult::Inc(inc) => inc,
+                _ => return Err("Invalid ctx inc for bin 4".to_string()),
+            };
+            let imode_bit1 = self.decode_bin(ctx_idx_offset + inc4)?;
+            bins[*n_bins] = imode_bit1;
+            *n_bins += 1;
+
+            // Bin 5
+            let inc5 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 5, &bins[..*n_bins]) {
+                CtxIncResult::Inc(inc) => inc,
+                _ => return Err("Invalid ctx inc for bin 5".to_string()),
+            };
+            let imode_bit0 = self.decode_bin(ctx_idx_offset + inc5)?;
+            bins[*n_bins] = imode_bit0;
+            *n_bins += 1;
+
             imode = (imode_bit1 << 1) | imode_bit0;
         } else {
-            let b4 = self.decode_bin(ctx_idx_offset + inc4_1)?;
+            // Bin 4
+            let inc4 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 4, &bins[..*n_bins]) {
+                CtxIncResult::Inc(inc) => inc,
+                _ => return Err("Invalid ctx inc for bin 4".to_string()),
+            };
+            let b4 = self.decode_bin(ctx_idx_offset + inc4)?;
+            bins[*n_bins] = b4;
+            *n_bins += 1;
+
             cbpc = if b4 == 0 { 1 } else { 2 };
-            let imode_bit1 = self.decode_bin(ctx_idx_offset + inc5_1)?;
+
+            // Bin 5
+            let inc5 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 5, &bins[..*n_bins]) {
+                CtxIncResult::Inc(inc) => inc,
+                _ => return Err("Invalid ctx inc for bin 5".to_string()),
+            };
+            let imode_bit1 = self.decode_bin(ctx_idx_offset + inc5)?;
+            bins[*n_bins] = imode_bit1;
+            *n_bins += 1;
+
+            // Bin 6
+            let inc6 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 6, &bins[..*n_bins]) {
+                CtxIncResult::Inc(inc) => inc,
+                _ => return Err("Invalid ctx inc for bin 6".to_string()),
+            };
             let imode_bit0 = self.decode_bin(ctx_idx_offset + inc6)?;
+            bins[*n_bins] = imode_bit0;
+            *n_bins += 1;
+
             imode = (imode_bit1 << 1) | imode_bit0;
         }
         let mb_type_val = 1 + imode as u32 + 4 * cbpc as u32 + 12 * cbpl as u32;
@@ -1437,9 +1580,20 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let ctx_idx_offset = props.ctx_idx_offset as usize;
         let ctx_idx_offset_suffix = props.ctx_idx_offset_suffix.unwrap() as usize;
 
+        let mut bins = [0u8; 8];
+        let mut n_bins = 0;
+
         // Prefix part: ctxIdxOffset 14
         // Bin 0
-        if self.decode_bin(ctx_idx_offset)? == 1 {
+        let inc0 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 0, &bins[..n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for MbTypeP bin 0".to_string()),
+        };
+        let b0 = self.decode_bin(ctx_idx_offset + inc0)?;
+        bins[n_bins] = b0;
+        n_bins += 1;
+
+        if b0 == 1 {
             // Intra. Suffix part: ctxIdxOffset 17
             let i_mb_type = self.parse_mb_type_i_suffix(ctx_idx_offset_suffix, slice, mb_addr)?;
             trace!("parse_mb_type_p type=I({:?})", i_mb_type);
@@ -1447,11 +1601,20 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // Bin 1
-        let b1 = self.decode_bin(ctx_idx_offset + 1)?;
+        let inc1 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 1, &bins[..n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for MbTypeP bin 1".to_string()),
+        };
+        let b1 = self.decode_bin(ctx_idx_offset + inc1)?;
+        bins[n_bins] = b1;
+        n_bins += 1;
 
-        // Bin 2: Table 9-39, ctxIdxOffset 14, binIdx 2 uses ctxIdxInc 2 or 3
-        let ctx_idx_inc_2 = if b1 != 1 { 2 } else { 3 };
-        let b2 = self.decode_bin(ctx_idx_offset + ctx_idx_inc_2)?;
+        // Bin 2
+        let inc2 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 2, &bins[..n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for MbTypeP bin 2".to_string()),
+        };
+        let b2 = self.decode_bin(ctx_idx_offset + inc2)?;
 
         let res = if b1 == 1 {
             if b2 == 1 {
@@ -1474,44 +1637,83 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
     // Helper for P-slice Intra suffix
     fn parse_mb_type_i_suffix(&mut self, ctx_idx_offset: usize, slice: &Slice, mb_addr: MbAddr) -> ParseResult<super::macroblock::IMbType> {
-        // Bin 0 (of suffix)
-        // Table 9-39: ctxIdxOffset 17 bin 0 uses ctxIdxInc 0.
-        // ctxIdxOffset 3 bin 0 uses derived ctxIdxInc.
-        let ctx_idx_inc_0 = if ctx_idx_offset == 3 {
-            Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr)
-        } else {
-            0
-        };
+        let mut bins = [0u8; 8];
+        let mut n_bins = 0;
 
-        if self.decode_bin(ctx_idx_offset + ctx_idx_inc_0)? == 0 {
+        // Bin 0 (of suffix)
+        let ctx_inc_res = Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 0, &bins[..n_bins]);
+        let bin0 = match ctx_inc_res {
+            CtxIncResult::Neighbors => {
+                let inc = Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr);
+                self.decode_bin(ctx_idx_offset + inc)?
+            }
+            CtxIncResult::Inc(inc) => self.decode_bin(ctx_idx_offset + inc)?,
+            _ => return Err("Invalid ctx inc for MbTypeI suffix bin 0".to_string()),
+        };
+        bins[n_bins] = bin0;
+        n_bins += 1;
+
+        if bin0 == 0 {
             return Ok(super::macroblock::IMbType::I_NxN);
         }
 
         // Bin 1 (Terminal) -> I_PCM
-        if self.decode_terminate()? {
-            return Ok(super::macroblock::IMbType::I_PCM);
+        let ctx_inc_res = Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 1, &bins[..n_bins]);
+        if ctx_inc_res == CtxIncResult::Terminate {
+            if self.decode_terminate()? {
+                return Ok(super::macroblock::IMbType::I_PCM);
+            }
+        } else {
+            return Err("Expected Terminate for MbTypeI suffix bin 1".to_string());
         }
+        bins[n_bins] = 0;
+        n_bins += 1;
 
         // Remaining bins of I_16x16
-        self.parse_i_16x16_params(ctx_idx_offset)
+        self.parse_i_16x16_params(ctx_idx_offset, &mut bins, &mut n_bins)
     }
 
     pub fn parse_sub_mb_type_p(&mut self, _slice: &Slice, _mb_addr: MbAddr) -> ParseResult<super::macroblock::SubMbType> {
         let props = get_syntax_element_properties(SyntaxElement::SubMbTypeP);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
 
-        // Bin 0 (ctxIdx 21)
-        if self.decode_bin(ctx_idx_offset)? == 1 {
+        let mut bins = [0u8; 8];
+        let mut n_bins = 0;
+
+        // Bin 0
+        let inc0 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 0, &bins[..n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for SubMbTypeP bin 0".to_string()),
+        };
+        let b0 = self.decode_bin(ctx_idx_offset + inc0)?;
+        bins[n_bins] = b0;
+        n_bins += 1;
+
+        if b0 == 1 {
             return Ok(super::macroblock::SubMbType::P_L0_8x8);
         }
 
-        // Bin 1 (ctxIdx 22)
-        if self.decode_bin(ctx_idx_offset + 1)? == 0 {
+        // Bin 1
+        let inc1 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 1, &bins[..n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for SubMbTypeP bin 1".to_string()),
+        };
+        let b1 = self.decode_bin(ctx_idx_offset + inc1)?;
+        bins[n_bins] = b1;
+        n_bins += 1;
+
+        if b1 == 0 {
             return Ok(super::macroblock::SubMbType::P_L0_8x4);
         }
 
-        // Bin 2 (ctxIdx 23)
-        if self.decode_bin(ctx_idx_offset + 2)? == 1 {
+        // Bin 2
+        let inc2 = match Self::get_table9_39_ctx_idx_inc(ctx_idx_offset, 2, &bins[..n_bins]) {
+            CtxIncResult::Inc(inc) => inc,
+            _ => return Err("Invalid ctx inc for SubMbTypeP bin 2".to_string()),
+        };
+        let b2 = self.decode_bin(ctx_idx_offset + inc2)?;
+
+        if b2 == 1 {
             return Ok(super::macroblock::SubMbType::P_L0_4x8);
         } else {
             return Ok(super::macroblock::SubMbType::P_L0_4x4);

@@ -2036,25 +2036,187 @@ pub enum CabacMbType {
 #[cfg(test)]
 mod tests {
     use super::super::pps::PicParameterSet;
-    use super::super::slice::{Slice, SliceHeader};
+    use super::super::slice::{Slice, SliceHeader, SliceType};
     use super::super::sps::SequenceParameterSet;
+    use super::super::macroblock::{Macroblock, PcmMb, PMbType, IMbType};
+    use super::super::{Profile, ChromaFormat};
     use super::*;
 
-    fn make_dummy_slice() -> Slice {
-        let sps = SequenceParameterSet::default();
+    fn make_dummy_slice(slice_type: SliceType) -> Slice {
+        let sps = SequenceParameterSet {
+            profile: Profile::Baseline,
+            level_idc: 20,
+            seq_parameter_set_id: 0,
+            chroma_format_idc: ChromaFormat::YUV420,
+            separate_color_plane_flag: false,
+            log2_max_frame_num_minus4: 0,
+            log2_max_pic_order_cnt_lsb_minus4: 0,
+            max_num_ref_frames: 1,
+            pic_width_in_mbs_minus1: 3,
+            pic_height_in_map_units_minus1: 3,
+            frame_mbs_only_flag: true,
+            vui_parameters: None,
+            ..SequenceParameterSet::default()
+        };
         let pps = PicParameterSet::default();
-        let header = SliceHeader::default();
+        let header = SliceHeader {
+            slice_type,
+            first_mb_in_slice: 0,
+            cabac_init_idc: 0,
+            slice_qp_delta: 0, // slice_qp_y = 26 + 0 = 26
+            ..SliceHeader::default()
+        };
         Slice::new(sps, pps, header)
     }
 
     #[test]
-    fn test_cabac_init() {
-        let data = [0u8; 10]; // enough zeros
+    fn test_cabac_init_context_variables() {
+        let data = [0u8; 10];
         let mut reader = BitReader::new(&data);
-        let slice = make_dummy_slice();
+        let slice = make_dummy_slice(SliceType::P); // P slice
 
-        let ctx = CabacContext::new(&mut reader, &slice);
-        assert!(ctx.is_ok());
+        let mut ctx = CabacContext {
+            reader: &mut reader,
+            range: 510,
+            offset: 0,
+            ctx_table: [0; 1024],
+        };
+
+        ctx.init_context_variables(&slice);
+
+        // Check a specific context.
+        // For example, ctxIdx 11 (mb_skip_flag) for P slice.
+        // Table 9-13: cabac_init_idc = 0 -> m=23, n=33.
+        // SliceQPY = 26.
+        // preCtxState = Clip3(1, 126, ((23 * 26) >> 4) + 33) = ((598 >> 4) + 33) = 37 + 33 = 70.
+        // preCtxState > 63 -> pStateIdx = 70 - 64 = 6, valMPS = 1.
+        // ctx_table[11] = (pStateIdx << 1) | valMPS = (6 << 1) | 1 = 13.
+        assert_eq!(ctx.ctx_table[11], 13, "ctxIdx 11 initialization failed");
+    }
+
+    #[test]
+    fn test_cabac_decoding_engine() {
+        // codIOffset is 9 bits.
+        // Let's provide 0x00 0x80 ... -> 00000000 10000000 ...
+        // 9 bits: 00000000 1 -> offset = 1.
+        // This is valid (not 510 or 511).
+        let data = [0x00, 0x80, 0xFF, 0x00, 0xFF];
+        let mut reader = BitReader::new(&data);
+        let slice = make_dummy_slice(SliceType::I);
+
+        let mut ctx = CabacContext::new(&mut reader, &slice).expect("CabacContext::new failed");
+
+        assert_eq!(ctx.offset, 1);
+        assert_eq!(ctx.range, 510);
+
+        // Decode a bin. ctxIdx 0.
+        // Just checking it doesn't panic and consumes something.
+        let _ = ctx.decode_bin(0).unwrap();
+
+        // Decode bypass
+        let _ = ctx.decode_bypass().unwrap();
+
+        // Decode terminate
+        let _ = ctx.decode_terminate().unwrap();
+    }
+
+    #[test]
+    fn test_parse_mb_skip_flag() {
+        let mut slice = make_dummy_slice(SliceType::P);
+
+        // Populate neighbor A (left) and B (top)
+        // Current MB is 5 (x=1, y=1 if width=4)
+        // width in mbs = 4.
+        // 0 1 2 3
+        // 4 5 6 7
+        // A is 4, B is 1.
+
+        // MB 1: Not skipped.
+        let mut mb1 = super::super::macroblock::PMb::default();
+        mb1.mb_type = super::super::macroblock::PMbType::P_L0_16x16;
+        slice.append_mb(Macroblock::P(mb1));
+
+        slice.append_mb(Macroblock::PCM(PcmMb::default())); // 2
+        slice.append_mb(Macroblock::PCM(PcmMb::default())); // 3
+
+        // MB 4: Skipped.
+        let mut mb4 = super::super::macroblock::PMb::default();
+        mb4.mb_type = super::super::macroblock::PMbType::P_Skip;
+        slice.append_mb(Macroblock::P(mb4));
+
+        let data = [0x00, 0x80, 0x00]; // Dummy data
+        let mut reader = BitReader::new(&data);
+        let mut ctx = CabacContext::new(&mut reader, &slice).unwrap();
+
+        // Testing for MB 5.
+        // condTermFlagA (MB 4): is skipped -> 0.
+        // condTermFlagB (MB 1): is not skipped -> 1.
+        // ctxIdxInc = 0 + 1 = 1.
+        // This function computes ctxIdxInc internally. We verify it works.
+        let res = ctx.parse_mb_skip_flag(&slice, 5);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_parse_mb_type_i() {
+        let slice = make_dummy_slice(SliceType::I);
+
+        // Test I_NxN (bin 0 is 0)
+        // Need to construct bitstream where bin 0 decoding results in 0.
+        // It's hard to predict exact bits without running encoder logic,
+        // but we can try with zeros or ones.
+
+        // With offset=0, range=510.
+        // decode_bin(ctxIdx):
+        // valMPS depends on initialization.
+        // rangeLPS depends on state.
+
+        // If we provide all zeros, offset remains 0.
+        // If valMPS is 0, binVal = 0.
+
+        let data = [0x00, 0x00, 0x00, 0x00];
+        let mut reader = BitReader::new(&data);
+        let mut ctx = CabacContext::new(&mut reader, &slice).unwrap();
+
+        // parse_mb_type_i uses ctxIdx 3 for bin 0.
+        // I slice initialization. Table 9-12 for ctxIdx 3: m=20, n=-15.
+        // QP=26. preCtxState = ((20*26)>>4) - 15 = 32 - 15 = 17.
+        // 17 <= 63 -> pStateIdx = 63 - 17 = 46. valMPS = 0.
+
+        // So initially valMPS=0.
+        // We have offset=0.
+        // rangeLPS for pStateIdx=46.
+        // range=510. qCodIRangeIdx = (510>>6)&3 = 3.
+        // Table 9-44: pStateIdx=46, q=3 -> rangeLPS=22.
+        // range -= 22 -> 488.
+        // offset < range (0 < 488). binVal = valMPS = 0.
+        // So bin 0 is 0.
+        // This corresponds to I_NxN.
+
+        let mb_type = ctx.parse_mb_type_i(&slice, 0).unwrap();
+        assert_eq!(mb_type, IMbType::I_NxN);
+    }
+
+    #[test]
+    fn test_parse_coded_block_pattern_cabac() {
+        let slice = make_dummy_slice(SliceType::I);
+
+        // With all zeros input, and context initialization, we expect parsing to succeed.
+        // We provide enough zeros.
+        let data = [0x00; 10];
+        let mut reader = BitReader::new(&data);
+        let mut ctx = CabacContext::new(&mut reader, &slice).unwrap();
+
+        let mut curr_mb = CurrentMbInfo {
+            mb_type: CabacMbType::I(IMbType::I_NxN),
+            motion: MbMotion::default(),
+            coded_block_pattern: CodedBlockPattern::new(0, 0),
+            transform_size_8x8_flag: false,
+            cbf: CbfInfo::default(),
+        };
+
+        let cbp = ctx.parse_coded_block_pattern_cabac(&slice, 0, &mut curr_mb);
+        assert!(cbp.is_ok());
     }
 }
 

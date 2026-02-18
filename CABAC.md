@@ -158,235 +158,286 @@ These tables drive the core mathematical engine. They replace complex multiplica
     *   **Purpose**: Determines the *next* probability state based on the current state and the decoded bin.
     *   **Dynamics**:
         *   **Decode MPS**: Move to a state with higher probability for the MPS (saturates at state 62).
-        *   **Decode LPS**: Move to a state with lower probability (faster adaptation). If at state 0, flip the MPS value (0 becomes 1 or vice versa).
+        *   **Decode LPS**: Move to a state with lower probability (faster adaptation). If at state 0, flip the MPS value (0 <-> 1).
 
 ---
 
-# cabac.rs
-This module implements the Context-based Adaptive Binary Arithmetic Coding (CABAC) decoding process as specified in Section 9.3 of the ITU-T H.264
-Recommendation.
-
-
-It handles the initialization of the decoding engine, the derivation of context models (probability estimates) based on syntax elements and neighbors,
-the binarization of values, and the arithmetic decoding of bins.
-
-
-1. Structs and Helpers
-
-
-CbfInfo
-Purpose: Stores the "Coded Block Flag" (CBF) status for the current macroblock.
-Usage: Used during Context Modeling (Section 9.3.3.1.1.9) to derive the context for coded_block_flag elements. The CBF context often depends on the CBF
-values of neighboring blocks or previous blocks within the same macroblock.
-
-
-CurrentMbInfo
-Purpose: Holds state information for the Macroblock currently being parsed.
-Fields:
-* mb_type: The decoded macroblock type (I or P).
-* motion: Motion vectors and reference indices.
-* coded_block_pattern (CBP): Which blocks have non-zero coefficients.
-* cbf: The CbfInfo struct described above.
-Usage: Passed to NeighborAccessor to provide "current" values when neighbors are not available or fall within the current MB.
-
-
-NeighborAccessor
-Purpose: Abstracts the complexity of accessing data from neighboring blocks (Left 'A' and Above 'B').
-Spec Reference: Section 6.4 (Derivation processes for neighbours).
-Key Methods:
-* new: Creates an accessor bound to the Slice and the CurrentMbInfo.
-* is_available(blk_idx, neighbor): Checks if a neighbor exists (Section 6.4.8).
-* get_mb_type_is_intra, get_mb_type_is_skipped: Used for condition checks in context derivation (e.g., condTermFlagN).
-* get_ref_idx, get_mvd: Retrieves motion data for context derivation of ref_idx and mvd (Section 9.3.3.1.1.6 - 7).
-* get_cbp, get_cbf: Retrieves residual flags for context derivation of CBP and CBF.
-
----
-
-
-2. The CABAC Context (CabacContext)
-
-
-CabacContext::new
-Purpose: Initializes the CABAC decoder for a slice.
-Logic:
-1. Creates the struct with default state.
-2. Calls init_context_variables to set up probability models.
-3. Calls init_decoding_engine to prime the arithmetic decoder.
-
-
-init_context_variables
-Spec Reference: Section 9.3.1.1 (Initialization process for context variables).
-Logic:
-* Derives the initial probability state (pStateIdx) and MPS value (valMPS) for all 1024 context models (ctxIdx 0..1023).
-* Uses SliceQPY (quantization parameter) and initialization tables (Tables 9-12 to 9-33) selected via cabac_init_idc.
-* Formula: preCtxState = Clip3(1, 126, ((m * Clip3(0, 51, SliceQPY)) >> 4) + n).
-
-
-init_decoding_engine
-Spec Reference: Section 9.3.1.2 (Initialization process for the arithmetic decoding engine).
-Logic:
-* Aligns the bitstream.
-* Sets codIRange (range) to 510.
-* Reads 9 bits into codIOffset (offset) to initialize the engine.
-
----
-
-
-3. Arithmetic Decoding Engine (Low-Level)
-
-
-decode_bin(ctx_idx)
-Spec Reference: Section 9.3.3.2 (Arithmetic decoding process).
-Purpose: Decodes a single bin using a specific context model.
-Logic:
-1. LPS Range: Looks up codIRangeLPS in RANGE_TAB_LPS using the current state pStateIdx and quantized range.
-2. Subdivision: Splits the current interval range into MPS and LPS sub-intervals.
-3. Decision: Compares offset with the split point to determine if the bin is MPS (0) or LPS (1).
-4. Update: Updates range and offset. Updates the context model (pStateIdx and valMPS) using TRANS_IDX_MPS or TRANS_IDX_LPS.
-5. Renormalize: Calls renorm() to ensure precision.
-
-
-decode_bypass
-Spec Reference: Section 9.3.3.2.3 (Bypass decoding process).
-Purpose: Decodes a bin assuming uniform probability (0.5), bypassing the context update overhead. Used for sign bits and suffix bins.
-
-
-decode_terminate
-Spec Reference: Section 9.3.3.2.4 (Decoding process for binary decisions before termination).
-Purpose: Decodes the end_of_slice_flag or I_PCM flag. These events are treated as having a very low probability of being 1.
-
-
-renorm
-Spec Reference: Section 9.3.3.2.2 (Renormalization process).
-Purpose: Keeps codIRange within valid bounds (>= 256) by left-shifting codIRange and shifting new bits into codIOffset.
-
----
-
-
-4. Binarization Helpers (Section 9.3.2)
-
-
-These methods implement the inverse binarization: reading bins until a valid syntax element value is formed.
-
-
-parse_unary_bin
-Spec Reference: Section 9.3.2.1 (Unary binarization).
-Logic: Reads bins until a '0' is found. The result is the count of '1's.
-
-
-parse_truncated_unary_bin
-Spec Reference: Section 9.3.2.2 (Truncated unary binarization).
-Logic: Like Unary, but stops if the count reaches cMax.
-
-
-parse_ueg_k
-Spec Reference: Section 9.3.2.3 (UEGk binarization).
-Logic:
-1. Parses a Prefix using Truncated Unary (cMax = uCoff).
-2. If the prefix equals uCoff, parses a Suffix using k-th order Exp-Golomb (EGk) via decode_bypass.
-3. Combines them: val = prefix + suffix.
-4. Handles signedValFlag if required.
-
----
-
-
-5. Context Derivation (Section 9.3.3.1)
-
-
-These functions calculate ctxIdxInc (Context Index Increment) based on syntax element rules.
-
-
-get_ctx_idx_inc_mb_skip_flag
-Spec Reference: 9.3.3.1.1.1.
-Logic: Depends on skip_flag of neighbors A and B.
-
-
-get_ctx_idx_inc_mb_type_i
-Spec Reference: 9.3.3.1.1.3.
-Logic: Depends on whether neighbors A and B are I_NxN (vs other types).
-
-
-get_ctx_idx_inc_cbp_luma / get_ctx_idx_inc_cbp_chroma
-Spec Reference: 9.3.3.1.1.4.
-Logic: Depends on the corresponding CBP bit of neighbors A and B.
-
-
-get_ctx_idx_inc_mb_qp_delta
-Spec Reference: 9.3.3.1.1.5.
-Logic: Depends on whether the previous macroblock (in decoding order) had a non-zero QP delta.
-
-
-get_ctx_idx_inc_ref_idx
-Spec Reference: 9.3.3.1.1.6.
-Logic: Depends on whether reference indices of A and B are > 0.
-
-
-get_ctx_idx_inc_mvd
-Spec Reference: 9.3.3.1.1.7.
-Logic: Depends on the magnitude of the MVD components of neighbors A and B.
-
-
-get_ctx_idx_inc_intra_chroma_pred_mode
-Spec Reference: 9.3.3.1.1.8.
-Logic: Depends on whether neighbors A and B have non-zero intra chroma prediction modes.
-
-
-get_ctx_idx_inc_coded_block_flag
-Spec Reference: 9.3.3.1.1.9.
-Logic: Depends on the coded_block_flag of neighbors A and B. Requires mapping 8x8 block indices to 4x4 neighbors.
-
-
-Residual Contexts (Section 9.3.3.1.3)
-* get_ctx_idx_inc_sig_coeff_flag: Based on scanning position.
-* get_ctx_idx_inc_last_sig_coeff_flag: Based on scanning position.
-* get_ctx_idx_inc_abs_level: Based on the number of previously decoded coefficients with absolute level > 1 and = 1.
-
----
-
-6. Parsing Functions (Higher Level)
-
-
-parse_macroblock
-Purpose: The main entry point for decoding a macroblock in CABAC mode.
-Logic:
-1. Skip Flag: Parses mb_skip_flag (for P/B slices). If skipped, infers motion and returns P_Skip MB.
-2. MB Type: Parses mb_type using parse_mb_type_i or parse_mb_type_p.
-3. I_PCM Handling: (New) If type is I_PCM:
-    * Aligns reader.
-    * Reads raw PCM samples (Luma + Chroma).
-    * Re-initializes the CABAC engine (init_decoding_engine).
-    * Returns the PCM MB.
-4. Prediction:
-    * Intra: Parses intra prediction modes (luma and chroma).
-    * Inter: Parses sub_mb_type (if 8x8), ref_idx, and mvd for partitions.
-5. Coded Block Pattern (CBP): Calls parse_coded_block_pattern_cabac.
-6. MB QP Delta: Parses mb_qp_delta if CBP is non-zero.
-7. Residuals: Calls parse_residual_cabac to decode transform coefficients.
-
-
-parse_mb_type_i / parse_mb_type_p / parse_sub_mb_type_p
-Spec Reference: Section 9.3.2.5 (Binarization for macroblock type).
-Logic: Decodes the bin string for mb_type using appropriate context offsets (ctxIdxOffset) and trees described in Tables 9-36, 9-37, 9-38.
-
-
-parse_residual_cabac
-Purpose: Iterates over all luma and chroma blocks in the MB to parse residuals.
-Logic: Determines ctxBlockCat (Block Category: DC/AC/4x4/8x8) and calls parse_residual_block_cabac.
-
-
-parse_residual_block_cabac
-Spec Reference: Section 7.3.5.3.3 (Residual block CABAC syntax).
-Logic:
-1. CBF: Decodes coded_block_flag. If 0, returns early.
-2. Significance Map: Decodes significant_coeff_flag and last_significant_coeff_flag to determine the position of non-zero coefficients.
-3. Levels: Decodes coeff_abs_level_minus1 (using parse_abs_level_minus1) and coeff_sign_flag (bypass) for each significant coefficient (in reverse
-    scan order).
-
-
-parse_abs_level_minus1
-Spec Reference: Section 9.3.2.3 (UEG0 binarization).
-Logic:
-* Uses Contexts for the first bin (binIdx=0, "greater_than_1") and second bin (binIdx=1, "greater_than_2").
-* Uses Bypass for the rest of the prefix and the EG0 suffix.
-* This split logic handles the maxBinIdxCtx = 1 rule from Table 9-34.
-
+## 8. Table 9-34: Syntax Elements and Binarization
+
+This table is the master reference that connects each syntax element to its binarization method and its set of context models. It is fundamental for initiating the decoding process for any given element.
+
+### How to Use This Table:
+
+1.  **Find the Syntax Element**: Locate the syntax element you need to decode (e.g., `mb_type` for a B slice).
+2.  **Identify Binarization Type**: The "Type of binarization" column tells you which scheme to use (e.g., "prefix and suffix as specified in clause 9.3.2.5").
+3.  **Get Context Information**:
+    *   **`ctxIdxOffset`**: This is the base index for the context models used for this element. The actual context index (`ctxIdx`) will be this offset plus an increment (`ctxIdxInc`) determined by other factors (like neighboring blocks or the bin index).
+    *   **`maxBinIdxCtx`**: This specifies how many bins of the binarized string use the regular context modeling process. Bins beyond this index are often decoded using the faster "Bypass" mode.
+    *   **`na` (Not Applicable)**: If the offset is `na`, it signifies that all bins for that element (or part of it, like a suffix) are decoded in Bypass mode, skipping the context modeling stage entirely.
+
+Below is a list representation of the data from Table 9-34.
+
+*   **mb_type (SI slices only)**
+    *   **Type of binarization:** prefix and suffix as specified in clause 9.3.2.5
+    *   **maxBinIdxCtx:**
+        *   prefix: 0
+        *   suffix: 6
+    *   **ctxIdxOffset:**
+        *   prefix: 0
+        *   suffix: 3
+*   **mb_type (I slices only)**
+    *   **Type of binarization:** as specified in clause 9.3.2.5
+    *   **maxBinIdxCtx:** 6
+    *   **ctxIdxOffset:** 3
+*   **mb_skip_flag (P, SP slices only)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 11
+*   **mb_type (P, SP slices only)**
+    *   **Type of binarization:** prefix and suffix as specified in clause 9.3.2.5
+    *   **maxBinIdxCtx:**
+        *   prefix: 2
+        *   suffix: 5
+    *   **ctxIdxOffset:**
+        *   prefix: 14
+        *   suffix: 17
+*   **sub_mb_type[ ] (P, SP slices only)**
+    *   **Type of binarization:** as specified in clause 9.3.2.5
+    *   **maxBinIdxCtx:** 2
+    *   **ctxIdxOffset:** 21
+*   **mb_skip_flag (B slices only)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 24
+*   **mb_type (B slices only)**
+    *   **Type of binarization:** prefix and suffix as specified in clause 9.3.2.5
+    *   **maxBinIdxCtx:**
+        *   prefix: 3
+        *   suffix: 5
+    *   **ctxIdxOffset:**
+        *   prefix: 27
+        *   suffix: 32
+*   **sub_mb_type[ ] (B slices only)**
+    *   **Type of binarization:** as specified in clause 9.3.2.5
+    *   **maxBinIdxCtx:** 3
+    *   **ctxIdxOffset:** 36
+*   **mvd_l0[ ][ ][ 0 ], mvd_l1[ ][ ][ 0 ]**
+    *   **Type of binarization:** prefix and suffix as given by UEG3 with signedValFlag=1, uCoff=9
+    *   **maxBinIdxCtx:**
+        *   prefix: 4
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 40
+        *   suffix: na (uses DecodeBypass)
+*   **mvd_l0[ ][ ][ 1 ], mvd_l1[ ][ ][ 1 ]**
+    *   **Type of binarization:** prefix and suffix as given by UEG3 with signedValFlag=1, uCoff=9
+    *   **maxBinIdxCtx:**
+        *   prefix: 4
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 47
+        *   suffix: na (uses DecodeBypass)
+*   **ref_idx_l0, ref_idx_l1**
+    *   **Type of binarization:** U
+    *   **maxBinIdxCtx:** 2
+    *   **ctxIdxOffset:** 54
+*   **mb_qp_delta**
+    *   **Type of binarization:** as specified in clause 9.3.2.7
+    *   **maxBinIdxCtx:** 2
+    *   **ctxIdxOffset:** 60
+*   **intra_chroma_pred_mode**
+    *   **Type of binarization:** TU, cMax=3
+    *   **maxBinIdxCtx:** 1
+    *   **ctxIdxOffset:** 64
+*   **prev_intra4x4_pred_mode_flag, prev_intra8x8_pred_mode_flag**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 68
+*   **rem_intra4x4_pred_mode, rem_intra8x8_pred_mode**
+    *   **Type of binarization:** FL, cMax=7
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 69
+*   **mb_field_decoding_flag**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 70
+*   **coded_block_pattern**
+    *   **Type of binarization:** prefix and suffix as specified in clause 9.3.2.6
+    *   **maxBinIdxCtx:**
+        *   prefix: 3
+        *   suffix: 1
+    *   **ctxIdxOffset:**
+        *   prefix: 73
+        *   suffix: 77
+*   **coded_block_flag (blocks with ctxBlockCat < 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 85
+*   **significant_coeff_flag (frame coded blocks with ctxBlockCat < 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 105
+*   **last_significant_coeff_flag (frame coded blocks with ctxBlockCat < 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 166
+*   **coeff_abs_level_minus1 (blocks with ctxBlockCat < 5)**
+    *   **Type of binarization:** prefix and suffix as given by UEG0 with signedValFlag=0, uCoff=14
+    *   **maxBinIdxCtx:**
+        *   prefix: 1
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 227
+        *   suffix: na, (uses DecodeBypass)
+*   **coeff_sign_flag**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** na, (uses DecodeBypass)
+*   **end_of_slice_flag**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 276
+*   **significant_coeff_flag (field coded blocks with ctxBlockCat < 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 277
+*   **last_significant_coeff_flag (field coded blocks with ctxBlockCat < 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 338
+*   **transform_size_8x8_flag**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 399
+*   **significant_coeff_flag (frame coded blocks with ctxBlockCat == 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 402
+*   **last_significant_coeff_flag (frame coded blocks with ctxBlockCat == 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 417
+*   **coeff_abs_level_minus1 (blocks with ctxBlockCat == 5)**
+    *   **Type of binarization:** prefix and suffix as given by UEG0 with signedValFlag=0, uCoff=14
+    *   **maxBinIdxCtx:**
+        *   prefix: 1
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 426
+        *   suffix: na, (uses DecodeBypass)
+*   **significant_coeff_flag (field coded blocks with ctxBlockCat == 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 436
+*   **last_significant_coeff_flag (field coded blocks with ctxBlockCat == 5)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 451
+*   **coded_block_flag (5 < ctxBlockCat < 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 460
+*   **coded_block_flag (9 < ctxBlockCat < 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 472
+*   **coded_block_flag (ctxBlockCat == 5, 9, or 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 1012
+*   **significant_coeff_flag (frame coded blocks with 5 < ctxBlockCat < 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 484
+*   **significant_coeff_flag (frame coded blocks with 9 < ctxBlockCat < 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 528
+*   **last_significant_coeff_flag (frame coded blocks with 5 < ctxBlockCat < 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 572
+*   **last_significant_coeff_flag (frame coded blocks with 9 < ctxBlockCat < 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 616
+*   **coeff_abs_level_minus1 (blocks with 5 < ctxBlockCat < 9)**
+    *   **Type of binarization:** prefix and suffix as given by UEG0 with signedValFlag=0, uCoff=14
+    *   **maxBinIdxCtx:**
+        *   prefix: 1
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 952
+        *   suffix: na, (uses DecodeBypass)
+*   **coeff_abs_level_minus1 (blocks with 9 < ctxBlockCat < 13)**
+    *   **Type of binarization:** prefix and suffix as given by UEG0 with signedValFlag=0, uCoff=14
+    *   **maxBinIdxCtx:**
+        *   prefix: 1
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 982
+        *   suffix: na, (uses DecodeBypass)
+*   **significant_coeff_flag (field coded blocks with 5 < ctxBlockCat < 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 776
+*   **significant_coeff_flag (field coded blocks with 9 < ctxBlockCat < 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 820
+*   **last_significant_coeff_flag (field coded blocks with 5 < ctxBlockCat < 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 864
+*   **last_significant_coeff_flag (field coded blocks with 9 < ctxBlockCat < 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 908
+*   **significant_coeff_flag (frame coded blocks with ctxBlockCat == 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 660
+*   **significant_coeff_flag (frame coded blocks with ctxBlockCat == 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 718
+*   **last_significant_coeff_flag (frame coded blocks with ctxBlockCat == 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 690
+*   **last_significant_coeff_flag (frame coded blocks with ctxBlockCat == 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 748
+*   **coeff_abs_level_minus1 (blocks with ctxBlockCat == 9)**
+    *   **Type of binarization:** prefix and suffix as given by UEG0 with signedValFlag=0, uCoff=14
+    *   **maxBinIdxCtx:**
+        *   prefix: 1
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 708
+        *   suffix: na, (uses DecodeBypass)
+*   **coeff_abs_level_minus1 (blocks with ctxBlockCat == 13)**
+    *   **Type of binarization:** prefix and suffix as given by UEG0 with signedValFlag=0, uCoff=14
+    *   **maxBinIdxCtx:**
+        *   prefix: 1
+        *   suffix: na
+    *   **ctxIdxOffset:**
+        *   prefix: 766
+        *   suffix: na, (uses DecodeBypass)
+*   **significant_coeff_flag (field coded blocks with ctxBlockCat == 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 675
+*   **significant_coeff_flag (field coded blocks with ctxBlockCat == 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 733
+*   **last_significant_coeff_flag (field coded blocks with ctxBlockCat == 9)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 699
+*   **last_significant_coeff_flag (field coded blocks with ctxBlockCat == 13)**
+    *   **Type of binarization:** FL, cMax=1
+    *   **maxBinIdxCtx:** 0
+    *   **ctxIdxOffset:** 757

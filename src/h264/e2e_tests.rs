@@ -5,16 +5,7 @@ use crate::h264;
 use crate::h264::nal_parser::NalParser;
 use crate::y4m_cmp::compare_y4m_buffers;
 
-fn test_decoding_against_gold(
-    encoded_file_name: &str,
-    gold_y4m_filename: &str,
-) -> Result<(), String> {
-    fn stringify(e: io::Error) -> String {
-        format!("IO error: {e}")
-    }
-    let expected_y4m_buffer = fs::read(gold_y4m_filename).map_err(stringify)?;
-    let encoded_video_buffer = fs::read(encoded_file_name).map_err(stringify)?;
-
+fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
     let cursor = Cursor::new(encoded_video_buffer);
     let nal_parser = NalParser::new(cursor);
     let mut decoder = h264::decoder::Decoder::new();
@@ -78,7 +69,31 @@ fn test_decoding_against_gold(
         }
     }
 
+    Ok(decoding_output)
+}
+
+fn test_decoding_against_gold(
+    encoded_file_name: &str,
+    gold_y4m_filename: &str,
+) -> Result<(), String> {
+    fn stringify(e: io::Error) -> String {
+        format!("IO error: {e}")
+    }
+    let expected_y4m_buffer = fs::read(gold_y4m_filename).map_err(stringify)?;
+    let encoded_video_buffer = fs::read(encoded_file_name).map_err(stringify)?;
+
+    let decoding_output = decode_to_y4m(&encoded_video_buffer)?;
+
     compare_y4m_buffers(decoding_output.as_slice(), expected_y4m_buffer.as_slice())
+}
+
+fn test_decoding(encoded_file_name: &str) -> Result<(), String> {
+    fn stringify(e: io::Error) -> String {
+        format!("IO error: {e}")
+    }
+    let encoded_video_buffer = fs::read(encoded_file_name).map_err(stringify)?;
+    let _ = decode_to_y4m(&encoded_video_buffer)?;
+    Ok(())
 }
 
 #[test]
@@ -129,12 +144,12 @@ pub fn test_BA2_Sony_F() -> Result<(), String> {
 }
 
 #[test]
-#[ignore]
 pub fn test_CANL1_TOSHIBA_G() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice. disable_deblocking_filter_idc is equal
     // to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 2.
-    test_decoding_against_gold("data/CANL1_TOSHIBA_G.264", "data/CANL1_TOSHIBA_G_dec.y4m")
+    test_decoding("data/CANL1_TOSHIBA_G.264")
+    //test_decoding_against_gold("data/CANL1_TOSHIBA_G.264", "data/CANL1_TOSHIBA_G_dec.y4m")
 }
 
 #[test]

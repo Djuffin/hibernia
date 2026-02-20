@@ -415,7 +415,11 @@ pub struct MotionVector {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct PartitionInfo {
     pub ref_idx_l0: u8,
+    /// Motion Vector (MV) = MVP + MVD
+    /// This is the final vector used for prediction.
     pub mv_l0: MotionVector,
+    /// Motion Vector Difference (MVD)
+    /// This is the delta value parsed from the bitstream.
     pub mvd_l0: MotionVector,
 }
 

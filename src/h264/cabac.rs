@@ -1918,8 +1918,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let mvd_y = self.parse_mvd_cabac(&accessor, 0, 1, blk_idx)?;
                             drop(accessor);
 
-                            sub_mbs[i].partitions[p_idx].mvd_l0 =
-                                MotionVector { x: mvd_x, y: mvd_y };
+                            let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
+                            sub_mbs[i].partitions[p_idx].mvd_l0 = mvd_vec;
 
                             // Update curr_mb.motion
                             let (w, h) = match sub_mbs[i].sub_mb_type {
@@ -1935,7 +1935,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             for y in 0..h {
                                 for x in 0..w {
                                     curr_mb.motion.partitions[start_blk_y + y][start_blk_x + x]
-                                        .mvd_l0 = MotionVector { x: mvd_x, y: mvd_y };
+                                        .mvd_l0 = mvd_vec;
                                 }
                             }
                         }
@@ -1991,7 +1991,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         let mvd_x = self.parse_mvd_cabac(&accessor, 0, 0, blk_idx)?;
                         let mvd_y = self.parse_mvd_cabac(&accessor, 0, 1, blk_idx)?;
                         drop(accessor);
-                        partitions[i].mvd_l0 = MotionVector { x: mvd_x, y: mvd_y };
+                        let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
+                        partitions[i].mvd_l0 = mvd_vec;
 
                         // Update curr_mb.motion
                         let (w, h) = match p_type {
@@ -2006,7 +2007,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         for y in 0..h {
                             for x in 0..w {
                                 curr_mb.motion.partitions[start_blk_y + y][start_blk_x + x]
-                                    .mvd_l0 = MotionVector { x: mvd_x, y: mvd_y };
+                                    .mvd_l0 = mvd_vec;
                             }
                         }
                     }

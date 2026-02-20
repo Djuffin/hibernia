@@ -1231,7 +1231,7 @@ pub fn calculate_motion(
                         part_w,
                         part_h,
                         mvd_info.ref_idx_l0,
-                        mvd_info.mv_l0,
+                        mvd_info.mvd_l0,
                     );
                 }
             }
@@ -1255,20 +1255,19 @@ pub fn calculate_motion(
                     (PMbType::P_L0_L0_8x16, 1) => (8, 16, 8, 0),
                     _ => unreachable!(),
                 };
-                fill_motion_grid(
-                    part_x,
-                    part_y,
-                    part_w,
-                    part_h,
-                    mvd_info.ref_idx_l0,
-                    mvd_info.mv_l0,
-                );
-            }
-        }
-    }
-    motion
-}
-
+                            fill_motion_grid(
+                                part_x,
+                                part_y,
+                                part_w,
+                                part_h,
+                                mvd_info.ref_idx_l0,
+                                mvd_info.mvd_l0,
+                            );
+                        }
+                    }
+                }
+                motion
+                }
 pub fn parse_p_macroblock(
     input: &mut BitReader,
     slice: &Slice,
@@ -1303,7 +1302,7 @@ pub fn parse_p_macroblock(
                 let mvd_y: i32;
                 read_value!(input, mvd_x, se);
                 read_value!(input, mvd_y, se);
-                partitions[i].mv_l0 = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+                partitions[i].mvd_l0 = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
             }
         }
     } else {
@@ -1350,7 +1349,7 @@ pub fn parse_p_macroblock(
             let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
             for j in 0..num_sub_mb_part {
                 sub_macroblocks[i].partitions[j].ref_idx_l0 = ref_idx_l0[i];
-                sub_macroblocks[i].partitions[j].mv_l0 = mvd_l0[i][j];
+                sub_macroblocks[i].partitions[j].mvd_l0 = mvd_l0[i][j];
             }
         }
     }

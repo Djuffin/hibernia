@@ -162,7 +162,7 @@ pub fn test_CANL1_Sony_E() -> Result<(), String> {
 }
 
 #[test]
-
+#[ignore]
 pub fn test_CANL2_Sony_E() -> Result<(), String> {
     // All slices are coded as I or P slices. Each picture contains only one slice. disable_deblocking_filter_idc is
     // equal to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the

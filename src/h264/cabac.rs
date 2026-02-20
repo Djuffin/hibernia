@@ -907,7 +907,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let ctx_idx_inc = Self::get_ctx_idx_inc_ref_idx(accessor, mb_part_idx, list_idx);
 
         // Table 9-34 specifies U binarization for ref_idx_l0/l1.
-        let val = self.parse_unary_bin(SyntaxElement::RefIdx(list_idx), CtxIncParams::Standard(ctx_idx_inc))?;
+        // However, the value is bounded by num_ref_idx_active_minus1, effectively making it Truncated Unary.
+        let val = self.parse_truncated_unary_bin(
+            SyntaxElement::RefIdx(list_idx),
+            Some(num_ref_idx_active_minus1),
+            CtxIncParams::Standard(ctx_idx_inc),
+        )?;
 
         if val > num_ref_idx_active_minus1 {
             return Err(format!(

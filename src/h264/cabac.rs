@@ -1539,41 +1539,45 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let ctx_idx_offset = props.ctx_idx_offset as usize;
         let ctx_idx_offset_suffix = props.ctx_idx_offset_suffix.unwrap() as usize;
 
-        // Prefix part: ctxIdxOffset 14
         // Bin 0
         let inc0 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeP, 0, CtxIncParams::Standard(0));
         if self.decode_bin(ctx_idx_offset + inc0)? == 1 {
-            // Intra. Suffix part: ctxIdxOffset 17
-            let i_mb_type = self.parse_mb_type_i_suffix(ctx_idx_offset_suffix, slice, mb_addr)?;
-            trace!("parse_mb_type_p type=I({:?})", i_mb_type);
-            return Ok(CabacMbType::I(i_mb_type));
+            // Bin 0 == 1 -> P_L0_16x16 (Type 0)
+            trace!("parse_mb_type_p type={:?}", super::macroblock::PMbType::P_L0_16x16);
+            return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_16x16));
         }
 
+        // Bin 0 == 0 -> Check Bin 1
         // Bin 1
         let inc1 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeP, 1, CtxIncParams::Standard(0));
         let b1 = self.decode_bin(ctx_idx_offset + inc1)?;
 
-        // Bin 2: Table 9-39, ctxIdxOffset 14, binIdx 2 uses ctxIdxInc 2 or 3
-        let inc2 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeP, 2, CtxIncParams::MbType { prior: b1 });
-        let b2 = self.decode_bin(ctx_idx_offset + inc2)?;
-
-        let res = if b1 == 1 {
-            if b2 == 1 {
-                Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_16x8))
+        if b1 == 1 {
+            // Bin 1 == 1 -> Check Bin 2
+            let inc2 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeP, 2, CtxIncParams::MbType { prior: 1 });
+            if self.decode_bin(ctx_idx_offset + inc2)? == 0 {
+                // Bin 2 == 0 -> P_L0_L0_16x8 (Type 1)
+                trace!("parse_mb_type_p type={:?}", super::macroblock::PMbType::P_L0_L0_16x8);
+                return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_16x8));
             } else {
-                Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_8x16))
+                // Bin 2 == 1 -> P_L0_L0_8x16 (Type 2)
+                trace!("parse_mb_type_p type={:?}", super::macroblock::PMbType::P_L0_L0_8x16);
+                return Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_L0_8x16));
             }
         } else {
-            if b2 == 1 {
-                Ok(CabacMbType::P(super::macroblock::PMbType::P_8x8))
+            // Bin 1 == 0 -> Check Bin 2
+            let inc2 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeP, 2, CtxIncParams::MbType { prior: 0 });
+            if self.decode_bin(ctx_idx_offset + inc2)? == 1 {
+                // Bin 2 == 1 -> P_8x8 (Type 3)
+                trace!("parse_mb_type_p type={:?}", super::macroblock::PMbType::P_8x8);
+                return Ok(CabacMbType::P(super::macroblock::PMbType::P_8x8));
             } else {
-                Ok(CabacMbType::P(super::macroblock::PMbType::P_L0_16x16))
+                // Bin 2 == 0 -> Check Bin 3 (Intra Suffix)
+                let i_mb_type = self.parse_mb_type_i_suffix(ctx_idx_offset_suffix, slice, mb_addr)?;
+                trace!("parse_mb_type_p type=I({:?})", i_mb_type);
+                return Ok(CabacMbType::I(i_mb_type));
             }
-        };
-        if let Ok(ref t) = res {
-            trace!("parse_mb_type_p type={:?}", t);
         }
-        res
     }
 
     // Helper for P-slice Intra suffix

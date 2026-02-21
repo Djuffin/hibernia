@@ -893,7 +893,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let bin = self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)?;
         let skip = bin == 1;
         trace!("parse_mb_skip_flag skip={}", skip);
-        println!("parse_mb_skip_flag skip={}", skip);
         Ok(skip)
     }
 

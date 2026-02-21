@@ -2093,6 +2093,23 @@ mod tests {
         let ctx = CabacContext::new(&mut reader, &slice);
         assert!(ctx.is_ok());
     }
+
+    #[test]
+    fn test_parse_mb_type_p() {
+        use super::super::slice::SliceType;
+        let data = [0u8; 100];
+        let mut reader = BitReader::new(&data);
+        let mut slice = make_dummy_slice();
+        slice.header.slice_type = SliceType::P;
+
+        let mut ctx = CabacContext::new(&mut reader, &slice).unwrap();
+        // With all zeros, we expect:
+        // Bin 0 (0) -> Inter
+        // Bin 1 (0) -> not 16x8
+        // Bin 2 (0) -> 16x16
+        let res = ctx.parse_mb_type_p(&slice, 0);
+        assert_eq!(res.unwrap(), CabacMbType::P(super::super::macroblock::PMbType::P_L0_16x16));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

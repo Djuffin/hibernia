@@ -197,3 +197,56 @@ pub fn get_init_table(slice_type: SliceType, cabac_init_idc: u8) -> &'static [(i
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cabac_tables_verification() {
+        // Verify RANGE_TAB_LPS (Table 9-44)
+        // Row 0
+        assert_eq!(RANGE_TAB_LPS[0], [128, 176, 208, 240]);
+        // Row 32
+        assert_eq!(RANGE_TAB_LPS[32], [27, 33, 39, 45]);
+        // Row 63
+        assert_eq!(RANGE_TAB_LPS[63], [2, 2, 2, 2]);
+
+        // Verify TRANS_IDX_LPS (Table 9-45)
+        assert_eq!(TRANS_IDX_LPS[0], 0);
+        assert_eq!(TRANS_IDX_LPS[1], 0);
+        assert_eq!(TRANS_IDX_LPS[62], 38);
+        assert_eq!(TRANS_IDX_LPS[63], 63);
+
+        // Verify TRANS_IDX_MPS (Table 9-45)
+        assert_eq!(TRANS_IDX_MPS[0], 1);
+        assert_eq!(TRANS_IDX_MPS[62], 62);
+        assert_eq!(TRANS_IDX_MPS[63], 63);
+
+        // Verify INIT_CTX_I (Table 9-12 to 9-33 for I slices)
+        // ctxIdx 0 (mb_type): m=20, n=-15 (Table 9-12)
+        assert_eq!(INIT_CTX_I[0], (20, -15));
+        // ctxIdx 60 (mb_qp_delta): m=0, n=41 (Table 9-17)
+        assert_eq!(INIT_CTX_I[60], (0, 41));
+        // ctxIdx 277 (significant_coeff_flag field): m=-6, n=93 (Table 9-22)
+        assert_eq!(INIT_CTX_I[277], (-6, 93));
+
+        // Verify INIT_CTX_PB_0 (Table 9-12 to 9-33 for P/B slices, cabac_init_idc=0)
+        // ctxIdx 11 (mb_skip_flag): m=23, n=33 (Table 9-13)
+        assert_eq!(INIT_CTX_PB_0[11], (23, 33));
+        // ctxIdx 85 (coded_block_flag): m=-7, n=92 (Table 9-18)
+        assert_eq!(INIT_CTX_PB_0[85], (-7, 92));
+
+        // Verify INIT_CTX_PB_1 (cabac_init_idc=1)
+        // ctxIdx 11: m=22, n=25 (Table 9-13)
+        assert_eq!(INIT_CTX_PB_1[11], (22, 25));
+        // ctxIdx 85: m=0, n=80 (Table 9-18)
+        assert_eq!(INIT_CTX_PB_1[85], (0, 80));
+
+        // Verify INIT_CTX_PB_2 (cabac_init_idc=2)
+        // ctxIdx 11: m=29, n=16 (Table 9-13)
+        assert_eq!(INIT_CTX_PB_2[11], (29, 16));
+        // ctxIdx 85: m=11, n=80 (Table 9-18)
+        assert_eq!(INIT_CTX_PB_2[85], (11, 80));
+    }
+}

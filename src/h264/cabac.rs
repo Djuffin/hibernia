@@ -613,6 +613,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.3.1.1.6 Derivation process of ctxIdxInc for the syntax elements ref_idx_l0 and ref_idx_l1
+    // NOTE: predModeEqualFlagN check is currently omitted as only P-slices (Pred_L0) are supported,
+    // which ensures predModeEqualFlagN is always 1 for non-Intra blocks.
     fn get_ctx_idx_inc_ref_idx(
         accessor: &NeighborAccessor,
         mb_part_idx: usize,
@@ -677,6 +679,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.3.1.1.7 Derivation process of ctxIdxInc for the syntax elements mvd_l0 and mvd_l1
+    // NOTE: predModeEqualFlagN check is currently omitted as only P-slices (Pred_L0) are supported.
     fn get_ctx_idx_inc_mvd(
         accessor: &NeighborAccessor,
         list_idx: usize,
@@ -2092,6 +2095,16 @@ mod tests {
 
         let ctx = CabacContext::new(&mut reader, &slice);
         assert!(ctx.is_ok());
+    }
+
+    #[test]
+    fn test_decode_signed_mapping() {
+        // Table 9-3 of H.264 spec
+        assert_eq!(decode_signed_mapping(0), 0);
+        assert_eq!(decode_signed_mapping(1), 1);
+        assert_eq!(decode_signed_mapping(2), -1);
+        assert_eq!(decode_signed_mapping(3), 2);
+        assert_eq!(decode_signed_mapping(4), -2);
     }
 }
 

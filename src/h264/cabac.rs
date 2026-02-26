@@ -2093,6 +2093,28 @@ mod tests {
         let ctx = CabacContext::new(&mut reader, &slice);
         assert!(ctx.is_ok());
     }
+
+    #[test]
+    fn test_parse_mb_type_p() {
+        use super::super::slice::SliceType;
+        let data = [0u8; 100];
+        let mut reader = BitReader::new(&data);
+        let mut slice = make_dummy_slice();
+        slice.header.slice_type = SliceType::P;
+
+        let mut ctx = CabacContext::new(&mut reader, &slice).unwrap();
+        // With all zeros, we expect P_L0_16x16.
+        // Spec Table 9-37 (as provided in spec/sections/9.3_CABAC_parsing_process_for_slice_data.md):
+        // Row 1: 0 (P_L0_16x16) | Bin string: 0 | Col4: 0 | Col5: 0 ... -> "0 0 0"
+        // Row 6: 5 to 30 (Intra, prefix only) | Bin string: 1
+        // Since Intra starts with 1, Inter types must start with 0.
+        // P_L0_16x16 is "0 0 0".
+        // P_8x8 is "0 0 1".
+        // P_L0_L0_8x16 is "0 1 0".
+        // P_L0_L0_16x8 is "0 1 1".
+        let res = ctx.parse_mb_type_p(&slice, 0);
+        assert_eq!(res.unwrap(), CabacMbType::P(super::super::macroblock::PMbType::P_L0_16x16));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

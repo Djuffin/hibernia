@@ -104,8 +104,7 @@ impl<R: BufRead> Iterator for NalParser<R> {
                     if self.first_start_code_found {
                         // We found the END of the current NAL unit (and start of next).
                         // Emit the collected buffer.
-                        let nal = self.buffer.clone();
-                        self.buffer.clear();
+                        let nal = std::mem::take(&mut self.buffer);
                         nal_found = Some(Ok(nal));
                         split_idx = Some(i + 1);
                         // Reset zeros count for the next NAL.

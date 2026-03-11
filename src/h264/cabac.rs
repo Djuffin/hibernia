@@ -1850,7 +1850,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     }
 
                     let num_ref_idx_l0_active_minus1 = slice.header.num_ref_idx_l0_active_minus1;
-                    if num_ref_idx_l0_active_minus1 > 0 || slice.header.field_pic_flag {
+                    // Section 7.3.5.2: ref_idx_l0 is parsed if num_ref_idx_l0_active_minus1 > 0
+                    // In non-MBAFF pictures, mb_field_decoding_flag == field_pic_flag, so the second term is false.
+                    if num_ref_idx_l0_active_minus1 > 0 {
                         for i in 0..4 {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let ref_idx = self.parse_ref_idx_cabac(
@@ -1944,7 +1946,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     let num_part = p_type.NumMbPart();
                     let num_ref_idx_l0_active_minus1 = slice.header.num_ref_idx_l0_active_minus1;
 
-                    if num_ref_idx_l0_active_minus1 > 0 || slice.header.field_pic_flag {
+                    // Section 7.3.5.1: ref_idx_l0 is parsed if num_ref_idx_l0_active_minus1 > 0
+                    // In non-MBAFF pictures, mb_field_decoding_flag == field_pic_flag, so the second term is false.
+                    if num_ref_idx_l0_active_minus1 > 0 {
                         for i in 0..num_part {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let ref_idx = self.parse_ref_idx_cabac(

@@ -46,5 +46,5 @@ The code effectively treats every Inter-coded neighbor as a "match" for the curr
 2. **Context Model Selection:** According to the spec, if the current macroblock is decoding data for **List 0** and the neighbor uses only **List 1**, `predModeEqualFlagN` must be 0. This in turn sets `condTermFlagN` to 0.
 3. **P-Slice Behavior:** In **P-slices**, this mismatch has no effect because all Inter-coded neighbors necessarily use List 0, meaning the "match" assumption happens to be correct.
 4. **Implementation Deviation:** By ignoring the prediction mode check in B-slices, the decoder calculates an incorrect `ctxIdxInc`.
-4. **Arithmetic Failure:** Selecting the wrong context model means the arithmetic engine uses an incorrect probability distribution to decode the bin. This results in incorrect values for motion vectors or reference indices, which typically causes the decoder to crash or produce visual artifacts shortly after.
-5. **Skipped Blocks:** The implementation lacks logic to handle `B_Skip` and `B_Direct_16x16` neighbors correctly for these context derivations.
+5. **Arithmetic Failure:** Selecting the wrong context model means the arithmetic engine uses an incorrect probability distribution to decode the bin. This results in incorrect values for motion vectors or reference indices, which typically causes the decoder to crash or produce visual artifacts shortly after.
+6. **Skipped Blocks:** The implementation lacks logic to handle `B_Skip` and `B_Direct_16x16` neighbors correctly for these context derivations.

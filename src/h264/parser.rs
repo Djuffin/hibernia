@@ -979,13 +979,7 @@ pub fn get_motion_at_coord(
         return if let Some(motion) = current_mb_motion {
             let block_grid_x = ((x % 16) / 4) as usize;
             let block_grid_y = ((y % 16) / 4) as usize;
-            let info = motion.partitions[block_grid_y][block_grid_x];
-            // 255 is used as a sentinel for "not yet decoded" in calculate_motion
-            if info.ref_idx_l0 == 255 {
-                None
-            } else {
-                Some(info)
-            }
+            motion.partitions[block_grid_y][block_grid_x]
         } else {
             None
         };
@@ -1000,7 +994,7 @@ pub fn get_motion_at_coord(
     let block_grid_x = ((x % 16) / 4) as usize;
     let block_grid_y = ((y % 16) / 4) as usize;
 
-    Some(motion_info.partitions[block_grid_y][block_grid_x])
+    motion_info.partitions[block_grid_y][block_grid_x]
 }
 
 // Section 8.4.1.2 Derivation process for motion vector prediction
@@ -1132,14 +1126,6 @@ pub fn calculate_motion(
 ) -> MbMotion {
     let mut motion = MbMotion::default();
 
-    // Mark all partitions as "Not yet decoded" (Unavailable) using sentinel ref_idx 255.
-    // This allows predict_mv_l0 to correctly identify unavailable neighbors within the same MB.
-    for row in motion.partitions.iter_mut() {
-        for part in row.iter_mut() {
-            part.ref_idx_l0 = 255;
-        }
-    }
-
     // Helper to calculate motion vector and fill the grid
     let mut fill_motion_grid =
         |part_x: u8, part_y: u8, part_w: u8, part_h: u8, ref_idx: u8, mvd: MotionVector| {
@@ -1163,7 +1149,7 @@ pub fn calculate_motion(
             let grid_h = (part_h / 4) as usize;
 
             for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
-                row[grid_x_start..grid_x_start + grid_w].fill(info);
+                row[grid_x_start..grid_x_start + grid_w].fill(Some(info));
             }
         };
 
@@ -1201,7 +1187,7 @@ pub fn calculate_motion(
 
             let info = PartitionInfo { ref_idx_l0: 0, mv_l0: mv, mvd_l0: MotionVector::default() };
             for row in motion.partitions.iter_mut() {
-                row.fill(info);
+                row.fill(Some(info));
             }
         }
         PMbType::P_8x8 | PMbType::P_8x8ref0 => {

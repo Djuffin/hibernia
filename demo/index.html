@@ -121,7 +121,7 @@
     <div class="status" id="status">Loading WASM and Video...</div>
     
     <div class="video-container">
-        <video id="videoElement" controls playsinline></video>
+        <video id="videoElement" controls playsinline autoplay muted></video>
     </div>
 </main>
 
@@ -165,7 +165,7 @@
             // Setup Video Stream
             setupVideoStream();
             
-            statusEl.textContent = 'Ready to play';
+            statusEl.textContent = 'Playing';
             statusEl.className = 'status ready';
             
             // Hook up video controls
@@ -180,6 +180,14 @@
             
             // Load first frame so poster shows up
             await decodeAndQueueFrame();
+            
+            // Attempt to start playback automatically
+            try {
+                await videoElement.play();
+            } catch (err) {
+                console.warn("Autoplay prevented:", err);
+                statusEl.textContent = 'Ready to play (Autoplay prevented)';
+            }
 
         } catch (error) {
             statusEl.textContent = `Error: ${error.message}`;

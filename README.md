@@ -13,6 +13,10 @@ A clean-room implementation of an H.264 (AVC) video decoder written in pure Rust
 *   **Spec-Compliant**: Implementation matches the [ITU-T H.264 Specification](https://www.itu.int/rec/T-REC-H.264).
 *   **Safe**: Prioritizes safe Rust code.
 
+## Demo
+
+You can try out the live WebAssembly demo here: **[Hibernia Decoder Demo](https://Djuffin.github.io/hibernia/demo/)**
+
 ## Usage
 
 Add `hibernia` to your `Cargo.toml`:

@@ -1,6 +1,6 @@
 use num_traits::cast::FromPrimitive;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum NalUnitType {
     #[default]
     Unspecified = 0,
@@ -38,7 +38,7 @@ impl TryFrom<u32> for NalUnitType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct NalHeader {
     pub nal_ref_idc: u8,
     pub nal_unit_type: NalUnitType,

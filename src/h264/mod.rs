@@ -25,7 +25,7 @@ pub mod e2e_tests;
 
 use num_traits::cast::FromPrimitive;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum Profile {
     #[default]
     Baseline = 66,
@@ -65,7 +65,7 @@ impl TryFrom<u32> for Profile {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
 pub enum ChromaFormat {
     Monochrome = 0,
     #[default]
@@ -90,7 +90,7 @@ impl ChromaFormat {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ColorPlane {
     Y = 0,
     Cb = 1,
@@ -110,19 +110,19 @@ impl TryFrom<u32> for ChromaFormat {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct Point {
     pub x: u32,
     pub y: u32,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct Size {
     pub width: u32,
     pub height: u32,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct Rect {
     pub origin: Point,
     pub size: Size,

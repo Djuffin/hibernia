@@ -1,10 +1,10 @@
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SliceRect {
     pub top_left: u32,
     pub bottom_right: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub enum SliceGroupChangeType {
     #[default]
     BoxOut,
@@ -12,7 +12,7 @@ pub enum SliceGroupChangeType {
     WipeOut,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum SliceGroup {
     Interleaved {
         run_length_minus1: Vec<u32>,
@@ -38,7 +38,7 @@ pub enum SliceGroup {
 use super::ColorPlane;
 
 // Section 7.4.2.2 Picture parameter set RBSP semantics
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct PicParameterSet {
     pub pic_parameter_set_id: u8,
     pub seq_parameter_set_id: u8,

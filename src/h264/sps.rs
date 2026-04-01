@@ -1,9 +1,9 @@
 use super::{tables, ChromaFormat, Profile};
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct HdrParameters {}
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct VuiParameters {
     pub aspect_ratio_info_present_flag: bool,
     pub aspect_ratio_idc: u8,
@@ -46,7 +46,7 @@ pub struct VuiParameters {
     pub max_dec_frame_buffering: u8,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct FrameCrop {
     pub top: u32,
     pub left: u32,
@@ -55,7 +55,7 @@ pub struct FrameCrop {
 }
 
 // Section 7.4.2.1.1 Sequence parameter set data semantics
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct SequenceParameterSet {
     pub profile: Profile,
     pub constraint_set0_flag: bool,

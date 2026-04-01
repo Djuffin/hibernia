@@ -23,6 +23,9 @@ pub mod tables;
 #[cfg(test)]
 pub mod e2e_tests;
 
+#[cfg(test)]
+pub mod json_tests;
+
 use num_traits::cast::FromPrimitive;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]

@@ -1675,7 +1675,7 @@ mod tests {
         assert_eq!(dec_ref_pic_marking.long_term_reference_flag, Some(false));
 
         let mut writer = RbspWriter::new();
-        header.write_slice_header(&sps, &pps, true, &mut writer).unwrap();
+        crate::h264::writer::write_slice_header(&header, &sps, &pps, true, &mut writer).unwrap();
         writer.align().unwrap();
         let written_data = writer.into_inner();
         let mut reader2 = reader(&written_data);
@@ -1718,7 +1718,7 @@ mod tests {
         assert_eq!(sps.pic_height_in_map_units_minus1, 3, "pic_width_in_mbs_minus1");
 
         let mut writer = RbspWriter::new();
-        sps.write_sps(&mut writer).unwrap();
+        crate::h264::writer::write_sps(&sps, &mut writer).unwrap();
         let written_data = writer.into_inner();
         let sps2 = parse_sps_test(&written_data);
         assert_eq!(sps, sps2);
@@ -1758,7 +1758,7 @@ mod tests {
         assert!(vui.bitstream_restriction_flag);
 
         let mut writer = RbspWriter::new();
-        sps.write_sps(&mut writer).unwrap();
+        crate::h264::writer::write_sps(&sps, &mut writer).unwrap();
         let written_data = writer.into_inner();
         let sps2 = parse_sps_test(&written_data);
         assert_eq!(sps, sps2);
@@ -1772,7 +1772,7 @@ mod tests {
         assert_eq!(pps.seq_parameter_set_id, 0, "seq_parameter_set_id");
 
         let mut writer = RbspWriter::new();
-        pps.write_pps(&mut writer).unwrap();
+        crate::h264::writer::write_pps(&pps, &mut writer).unwrap();
         let written_data = writer.into_inner();
         let pps2 = parse_pps_test(&written_data);
         assert_eq!(pps, pps2);
@@ -1790,7 +1790,7 @@ mod tests {
         assert!(!pps.entropy_coding_mode_flag);
 
         let mut writer = RbspWriter::new();
-        pps.write_pps(&mut writer).unwrap();
+        crate::h264::writer::write_pps(&pps, &mut writer).unwrap();
         let written_data = writer.into_inner();
         let pps2 = parse_pps_test(&written_data);
         assert_eq!(pps, pps2);

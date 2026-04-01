@@ -17,6 +17,7 @@ pub mod rbsp_writer;
 pub mod residual;
 pub mod slice;
 pub mod sps;
+pub mod writer;
 pub mod tables;
 
 #[cfg(test)]

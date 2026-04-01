@@ -136,6 +136,7 @@ impl SequenceParameterSet {
                 writer.ue(self.log2_max_pic_order_cnt_lsb_minus4 as u32)?;
             }
             1 => {
+                writer.f(self.delta_pic_order_always_zero_flag)?;
                 writer.se(self.offset_for_non_ref_pic)?;
                 writer.se(self.offset_for_top_to_bottom_field)?;
 

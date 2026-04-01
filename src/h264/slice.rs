@@ -298,7 +298,7 @@ pub struct SliceHeader {
     pub delta_pic_order_cnt: [i32; 2],
     pub redundant_pic_cnt: Option<u32>,
 
-    //pub direct_spatial_mv_pred_flag: Option<bool>,
+    pub direct_spatial_mv_pred_flag: Option<bool>,
     pub num_ref_idx_l0_active_minus1: u32,
     pub num_ref_idx_l1_active_minus1: u32,
 
@@ -309,10 +309,11 @@ pub struct SliceHeader {
     pub cabac_init_idc: u32,
     pub slice_qp_delta: i32,
     pub sp_for_switch_flag: Option<bool>,
-    pub slice_qs: Option<u32>,
+    pub slice_qs_delta: Option<i32>,
     pub deblocking_filter_idc: DeblockingFilterIdc,
     pub slice_alpha_c0_offset_div2: i32,
     pub slice_beta_offset_div2: i32,
+    pub slice_group_change_cycle: Option<u32>,
 }
 
 impl SliceHeader {
@@ -393,6 +394,15 @@ impl SliceHeader {
             if self.deblocking_filter_idc != DeblockingFilterIdc::Off {
                 writer.se(self.slice_alpha_c0_offset_div2)?;
                 writer.se(self.slice_beta_offset_div2)?;
+            }
+        }
+        
+        if pps.slice_group.as_ref().map_or(false, |sg| matches!(sg, super::pps::SliceGroup::Changing { .. })) {
+            if let Some(super::pps::SliceGroup::Changing { slice_group_change_rate_minus1, .. }) = pps.slice_group.as_ref() {
+                let pic_size_in_map_units = (sps.pic_width_in_mbs_minus1 as u32 + 1) * (sps.pic_height_in_map_units_minus1 as u32 + 1);
+                let slice_group_change_rate = slice_group_change_rate_minus1 + 1;
+                let bits = ((pic_size_in_map_units as f64 / slice_group_change_rate as f64) + 1.0).log2().ceil() as u8;
+                writer.u(bits, self.slice_group_change_cycle.unwrap_or(0))?;
             }
         }
         

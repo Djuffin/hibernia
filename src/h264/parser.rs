@@ -225,6 +225,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
             read_value!(input, sps.log2_max_pic_order_cnt_lsb_minus4, ue, 8);
         }
         1 => {
+            read_value!(input, sps.delta_pic_order_always_zero_flag, f);
             read_value!(input, sps.offset_for_non_ref_pic, se);
             read_value!(input, sps.offset_for_top_to_bottom_field, se);
 
@@ -774,6 +775,12 @@ pub fn parse_slice_header(
     if pps.redundant_pic_cnt_present_flag {
         read_value!(input, header.redundant_pic_cnt, ue);
     }
+    
+    if header.slice_type == SliceType::B {
+        let direct_spatial_mv_pred_flag: bool;
+        read_value!(input, direct_spatial_mv_pred_flag, f);
+        header.direct_spatial_mv_pred_flag = Some(direct_spatial_mv_pred_flag);
+    }
 
     if matches!(header.slice_type, SliceType::P | SliceType::SP | SliceType::B) {
         let num_ref_idx_active_override_flag: bool;
@@ -800,13 +807,40 @@ pub fn parse_slice_header(
     if nal.nal_ref_idc != 0 {
         header.dec_ref_pic_marking = Some(parse_dec_ref_pic_marking(input, idr_pic_flag)?);
     }
+    
+    if pps.entropy_coding_mode_flag && header.slice_type != SliceType::I && header.slice_type != SliceType::SI {
+        read_value!(input, header.cabac_init_idc, ue, 8);
+    }
 
     read_value!(input, header.slice_qp_delta, se);
+    
+    if header.slice_type == SliceType::SP || header.slice_type == SliceType::SI {
+        if header.slice_type == SliceType::SP {
+            let sp_for_switch_flag: bool;
+            read_value!(input, sp_for_switch_flag, f);
+            header.sp_for_switch_flag = Some(sp_for_switch_flag);
+        }
+        let slice_qs_delta: i32;
+        read_value!(input, slice_qs_delta, se);
+        header.slice_qs_delta = Some(slice_qs_delta);
+    }
+    
     if pps.deblocking_filter_control_present_flag {
         read_value!(input, header.deblocking_filter_idc, ue, 8);
         if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
             read_value!(input, header.slice_alpha_c0_offset_div2, se);
             read_value!(input, header.slice_beta_offset_div2, se);
+        }
+    }
+    
+    if pps.slice_group.as_ref().map_or(false, |sg| matches!(sg, SliceGroup::Changing { .. })) {
+        if let Some(SliceGroup::Changing { slice_group_change_rate_minus1, .. }) = pps.slice_group.as_ref() {
+            let pic_size_in_map_units = (sps.pic_width_in_mbs_minus1 as u32 + 1) * (sps.pic_height_in_map_units_minus1 as u32 + 1);
+            let slice_group_change_rate = slice_group_change_rate_minus1 + 1;
+            let bits = ((pic_size_in_map_units as f64 / slice_group_change_rate as f64) + 1.0).log2().ceil() as u8;
+            let slice_group_change_cycle: u32;
+            read_value!(input, slice_group_change_cycle, u, bits);
+            header.slice_group_change_cycle = Some(slice_group_change_cycle);
         }
     }
 

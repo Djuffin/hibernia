@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     pub fn test_writer_reader_roundtrip() {
-        use super::super::rbsp::RbspReader;
+        use crate::h264::rbsp::RbspReader;
         let mut writer = RbspWriter::new();
         writer.u(8, 0x55).unwrap();
         writer.f(true).unwrap();

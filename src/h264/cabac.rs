@@ -2076,9 +2076,9 @@ pub enum CabacMbType {
 
 #[cfg(test)]
 mod tests {
-    use super::super::pps::PicParameterSet;
-    use super::super::slice::{Slice, SliceHeader};
-    use super::super::sps::SequenceParameterSet;
+    use crate::h264::pps::PicParameterSet;
+    use crate::h264::slice::{Slice, SliceHeader};
+    use crate::h264::sps::SequenceParameterSet;
     use super::*;
 
     fn make_dummy_slice() -> Slice {

@@ -1558,6 +1558,7 @@ pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> Parse
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::h264::rbsp_writer::RbspWriter;
 
     pub fn reader(bytes: &[u8]) -> BitReader<'_> {
         BitReader::new(bytes)
@@ -1613,8 +1614,8 @@ mod tests {
             ..PicParameterSet::default()
         };
         let mut ctx = DecoderContext::default();
-        ctx.put_sps(sps);
-        ctx.put_pps(pps);
+        ctx.put_sps(sps.clone());
+        ctx.put_pps(pps.clone());
 
         let slice_data = [
             0x65, 0xB8, 0x00, 0x04, 0x00, 0x00, 0x09, 0xFF, 0xFF, 0xF8, 0x7A, 0x28, 0x00, 0x08,
@@ -1638,6 +1639,14 @@ mod tests {
             header.dec_ref_pic_marking.as_ref().expect("dec_ref_pic_marking is missing");
         assert_eq!(dec_ref_pic_marking.no_output_of_prior_pics_flag, Some(false));
         assert_eq!(dec_ref_pic_marking.long_term_reference_flag, Some(false));
+
+        let mut writer = RbspWriter::new();
+        header.write_slice_header(&sps, &pps, true, &mut writer).unwrap();
+        writer.align().unwrap();
+        let written_data = writer.into_inner();
+        let mut reader2 = reader(&written_data);
+        let slice2 = parse_slice_header(&ctx, &nal_header, &mut reader2).unwrap();
+        assert_eq!(header, &slice2.header);
 
         parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
         assert_eq!(slice.get_macroblock_count(), 16);
@@ -1673,6 +1682,12 @@ mod tests {
         assert_eq!(sps.level_idc, 10, "level");
         assert_eq!(sps.pic_width_in_mbs_minus1, 3, "pic_width_in_mbs_minus1");
         assert_eq!(sps.pic_height_in_map_units_minus1, 3, "pic_width_in_mbs_minus1");
+
+        let mut writer = RbspWriter::new();
+        sps.write_sps(&mut writer).unwrap();
+        let written_data = writer.into_inner();
+        let sps2 = parse_sps_test(&written_data);
+        assert_eq!(sps, sps2);
     }
 
     #[test]
@@ -1696,7 +1711,7 @@ mod tests {
         assert_eq!(sps.pic_width_in_mbs_minus1, 3, "pic_width_in_mbs_minus1");
         assert_eq!(sps.pic_height_in_map_units_minus1, 3, "pic_width_in_mbs_minus1");
         assert_eq!(sps.max_num_ref_frames, 1);
-        let vui = sps.vui_parameters.expect("vui is missing");
+        let vui = sps.vui_parameters.as_ref().expect("vui is missing");
         assert!(vui.video_signal_type_present_flag);
         assert_eq!(vui.video_format, 5);
 
@@ -1707,6 +1722,12 @@ mod tests {
         assert_eq!(vui.max_dec_frame_buffering, 1);
         assert!(vui.motion_vectors_over_pic_boundaries_flag);
         assert!(vui.bitstream_restriction_flag);
+
+        let mut writer = RbspWriter::new();
+        sps.write_sps(&mut writer).unwrap();
+        let written_data = writer.into_inner();
+        let sps2 = parse_sps_test(&written_data);
+        assert_eq!(sps, sps2);
     }
 
     #[test]
@@ -1715,6 +1736,12 @@ mod tests {
         let pps = parse_pps_test(&data);
         assert_eq!(pps.pic_parameter_set_id, 0, "pic_parameter_set_id");
         assert_eq!(pps.seq_parameter_set_id, 0, "seq_parameter_set_id");
+
+        let mut writer = RbspWriter::new();
+        pps.write_pps(&mut writer).unwrap();
+        let written_data = writer.into_inner();
+        let pps2 = parse_pps_test(&written_data);
+        assert_eq!(pps, pps2);
     }
 
     #[test]
@@ -1727,6 +1754,12 @@ mod tests {
         assert_eq!(pps.pic_init_qs_minus26, 0);
         assert!(pps.deblocking_filter_control_present_flag);
         assert!(!pps.entropy_coding_mode_flag);
+
+        let mut writer = RbspWriter::new();
+        pps.write_pps(&mut writer).unwrap();
+        let written_data = writer.into_inner();
+        let pps2 = parse_pps_test(&written_data);
+        assert_eq!(pps, pps2);
     }
 
     #[test]

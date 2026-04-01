@@ -72,6 +72,50 @@ pub struct DecRefPicMarking {
     pub memory_management_operations: Vec<MemoryManagementControlOperation>,
 }
 
+impl DecRefPicMarking {
+    pub fn write(&self, writer: &mut super::rbsp_writer::RbspWriter, idr_pic_flag: bool) -> super::rbsp_writer::WriteResult {
+        if idr_pic_flag {
+            writer.f(self.no_output_of_prior_pics_flag.unwrap_or(false))?;
+            writer.f(self.long_term_reference_flag.unwrap_or(false))?;
+        } else {
+            let adaptive = self.adaptive_ref_pic_marking_mode_flag.unwrap_or(false);
+            writer.f(adaptive)?;
+            if adaptive {
+                for op in &self.memory_management_operations {
+                    match op {
+                        MemoryManagementControlOperation::MarkShortTermUnused { difference_of_pic_nums_minus1 } => {
+                            writer.ue(1)?;
+                            writer.ue(*difference_of_pic_nums_minus1)?;
+                        }
+                        MemoryManagementControlOperation::MarkLongTermUnused { long_term_pic_num } => {
+                            writer.ue(2)?;
+                            writer.ue(*long_term_pic_num)?;
+                        }
+                        MemoryManagementControlOperation::MarkShortTermAsLongTerm { difference_of_pic_nums_minus1, long_term_frame_idx } => {
+                            writer.ue(3)?;
+                            writer.ue(*difference_of_pic_nums_minus1)?;
+                            writer.ue(*long_term_frame_idx)?;
+                        }
+                        MemoryManagementControlOperation::SetMaxLongTermFrameIdx { max_long_term_frame_idx_plus1 } => {
+                            writer.ue(4)?;
+                            writer.ue(*max_long_term_frame_idx_plus1)?;
+                        }
+                        MemoryManagementControlOperation::MarkAllUnused => {
+                            writer.ue(5)?;
+                        }
+                        MemoryManagementControlOperation::MarkCurrentAsLongTerm { long_term_frame_idx } => {
+                            writer.ue(6)?;
+                            writer.ue(*long_term_frame_idx)?;
+                        }
+                    }
+                }
+                writer.ue(0)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 // Table 7-7 – modification_of_pic_nums_idc operations for modification of reference picture lists
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefPicListModification {
@@ -84,6 +128,58 @@ pub enum RefPicListModification {
 pub struct RefPicListModifications {
     pub list0: Vec<RefPicListModification>,
     pub list1: Vec<RefPicListModification>,
+}
+
+impl RefPicListModifications {
+    pub fn write(&self, writer: &mut super::rbsp_writer::RbspWriter, slice_type: SliceType) -> super::rbsp_writer::WriteResult {
+        if slice_type != SliceType::I && slice_type != SliceType::SI {
+            writer.f(!self.list0.is_empty())?;
+            for modification in &self.list0 {
+                match modification {
+                    RefPicListModification::RemapShortTermNegative(abs_diff_pic_num_minus1) => {
+                        writer.ue(0)?;
+                        writer.ue(*abs_diff_pic_num_minus1)?;
+                    }
+                    RefPicListModification::RemapShortTermPositive(abs_diff_pic_num_minus1) => {
+                        writer.ue(1)?;
+                        writer.ue(*abs_diff_pic_num_minus1)?;
+                    }
+                    RefPicListModification::RemapLongTerm(long_term_pic_num) => {
+                        writer.ue(2)?;
+                        writer.ue(*long_term_pic_num)?;
+                    }
+                }
+            }
+            if !self.list0.is_empty() {
+                writer.ue(3)?;
+            }
+        }
+
+        if slice_type == SliceType::B {
+            writer.f(!self.list1.is_empty())?;
+            for modification in &self.list1 {
+                match modification {
+                    RefPicListModification::RemapShortTermNegative(abs_diff_pic_num_minus1) => {
+                        writer.ue(0)?;
+                        writer.ue(*abs_diff_pic_num_minus1)?;
+                    }
+                    RefPicListModification::RemapShortTermPositive(abs_diff_pic_num_minus1) => {
+                        writer.ue(1)?;
+                        writer.ue(*abs_diff_pic_num_minus1)?;
+                    }
+                    RefPicListModification::RemapLongTerm(long_term_pic_num) => {
+                        writer.ue(2)?;
+                        writer.ue(*long_term_pic_num)?;
+                    }
+                }
+            }
+            if !self.list1.is_empty() {
+                writer.ue(3)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Holds the weighting factors for a single reference picture.
@@ -123,6 +219,65 @@ pub struct PredWeightTable {
     pub list1: Vec<WeightingFactors>,
 }
 
+impl PredWeightTable {
+    pub fn write(&self, writer: &mut super::rbsp_writer::RbspWriter, slice_header: &SliceHeader, sps: &SequenceParameterSet, pps: &PicParameterSet) -> super::rbsp_writer::WriteResult {
+        writer.ue(self.luma_log2_weight_denom)?;
+        if sps.ChromaArrayType() != super::ChromaFormat::Monochrome {
+            writer.ue(self.chroma_log2_weight_denom)?;
+        }
+
+        for i in 0..=slice_header.num_ref_idx_l0_active_minus1 as usize {
+            let factors = &self.list0[i];
+            let luma_default = 1 << self.luma_log2_weight_denom;
+            let luma_modified = factors.luma_weight != luma_default || factors.luma_offset != 0;
+            writer.f(luma_modified)?;
+            if luma_modified {
+                writer.se(factors.luma_weight)?;
+                writer.se(factors.luma_offset)?;
+            }
+
+            if sps.ChromaArrayType() != super::ChromaFormat::Monochrome {
+                let chroma_default = 1 << self.chroma_log2_weight_denom;
+                let chroma_modified = factors.chroma_weights[0] != chroma_default || factors.chroma_offsets[0] != 0 || factors.chroma_weights[1] != chroma_default || factors.chroma_offsets[1] != 0;
+                writer.f(chroma_modified)?;
+                if chroma_modified {
+                    for j in 0..2 {
+                        writer.se(factors.chroma_weights[j])?;
+                        writer.se(factors.chroma_offsets[j])?;
+                    }
+                }
+            }
+        }
+
+        if slice_header.slice_type == SliceType::B {
+            for i in 0..=slice_header.num_ref_idx_l1_active_minus1 as usize {
+                let factors = &self.list1[i];
+                let luma_default = 1 << self.luma_log2_weight_denom;
+                let luma_modified = factors.luma_weight != luma_default || factors.luma_offset != 0;
+                writer.f(luma_modified)?;
+                if luma_modified {
+                    writer.se(factors.luma_weight)?;
+                    writer.se(factors.luma_offset)?;
+                }
+
+                if sps.ChromaArrayType() != super::ChromaFormat::Monochrome {
+                    let chroma_default = 1 << self.chroma_log2_weight_denom;
+                    let chroma_modified = factors.chroma_weights[0] != chroma_default || factors.chroma_offsets[0] != 0 || factors.chroma_weights[1] != chroma_default || factors.chroma_offsets[1] != 0;
+                    writer.f(chroma_modified)?;
+                    if chroma_modified {
+                        for j in 0..2 {
+                            writer.se(factors.chroma_weights[j])?;
+                            writer.se(factors.chroma_offsets[j])?;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 // Section 7.4.3 Slice header semantics
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SliceHeader {
@@ -158,6 +313,91 @@ pub struct SliceHeader {
     pub deblocking_filter_idc: DeblockingFilterIdc,
     pub slice_alpha_c0_offset_div2: i32,
     pub slice_beta_offset_div2: i32,
+}
+
+impl SliceHeader {
+    pub fn write_slice_header(&self, sps: &SequenceParameterSet, pps: &PicParameterSet, idr_pic_flag: bool, writer: &mut super::rbsp_writer::RbspWriter) -> super::rbsp_writer::WriteResult {
+        writer.ue(self.first_mb_in_slice)?;
+        writer.ue(self.slice_type as u32)?;
+        writer.ue(self.pic_parameter_set_id as u32)?;
+        
+        if sps.separate_color_plane_flag {
+            let plane_id = match self.color_plane {
+                Some(super::ColorPlane::Y) => 0,
+                Some(super::ColorPlane::Cb) => 1,
+                Some(super::ColorPlane::Cr) => 2,
+                None => 0, // Fallback
+            };
+            writer.u(2, plane_id)?;
+        }
+        
+        writer.u(sps.bits_in_frame_num(), self.frame_num as u32)?;
+        
+        if !sps.frame_mbs_only_flag {
+            writer.f(self.field_pic_flag)?;
+            if self.field_pic_flag {
+                if let Some(b) = self.bottom_field_flag {
+                    writer.f(b)?;
+                }
+            }
+        }
+        
+        if idr_pic_flag {
+            writer.ue(self.idr_pic_id.unwrap_or(0))?;
+        }
+        
+        if sps.pic_order_cnt_type == 0 {
+            writer.u(sps.bits_in_max_pic_order_cnt(), self.pic_order_cnt_lsb.unwrap_or(0))?;
+            if pps.bottom_field_pic_order_in_frame_present_flag && !self.field_pic_flag {
+                writer.se(self.delta_pic_order_cnt_bottom.unwrap_or(0))?;
+            }
+        } else if sps.pic_order_cnt_type == 1 && !sps.delta_pic_order_always_zero_flag {
+            writer.se(self.delta_pic_order_cnt[0])?;
+            if pps.bottom_field_pic_order_in_frame_present_flag && !self.field_pic_flag {
+                writer.se(self.delta_pic_order_cnt[1])?;
+            }
+        }
+        
+        if pps.redundant_pic_cnt_present_flag {
+            writer.ue(self.redundant_pic_cnt.unwrap_or(0))?;
+        }
+        
+        if matches!(self.slice_type, SliceType::P | SliceType::SP | SliceType::B) {
+            let num_ref_idx_override = self.num_ref_idx_l0_active_minus1 != pps.num_ref_idx_l0_default_active_minus1 || (self.slice_type == SliceType::B && self.num_ref_idx_l1_active_minus1 != pps.num_ref_idx_l1_default_active_minus1);
+            writer.f(num_ref_idx_override)?;
+            if num_ref_idx_override {
+                writer.ue(self.num_ref_idx_l0_active_minus1)?;
+                if self.slice_type == SliceType::B {
+                    writer.ue(self.num_ref_idx_l1_active_minus1)?;
+                }
+            }
+        }
+        
+        self.ref_pic_list_modification.write(writer, self.slice_type)?;
+        
+        if (pps.weighted_pred_flag && matches!(self.slice_type, SliceType::P | SliceType::SP))
+            || (pps.weighted_bipred_idc == 1 && self.slice_type == SliceType::B) {
+            if let Some(table) = &self.pred_weight_table {
+                table.write(writer, self, sps, pps)?;
+            }
+        }
+        
+        if let Some(marking) = &self.dec_ref_pic_marking {
+            marking.write(writer, idr_pic_flag)?;
+        }
+        
+        writer.se(self.slice_qp_delta)?;
+        
+        if pps.deblocking_filter_control_present_flag {
+            writer.ue(self.deblocking_filter_idc as u32)?;
+            if self.deblocking_filter_idc != DeblockingFilterIdc::Off {
+                writer.se(self.slice_alpha_c0_offset_div2)?;
+                writer.se(self.slice_beta_offset_div2)?;
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -269,7 +509,7 @@ impl Slice {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{macroblock::PcmMb, sps::VuiParameters, ChromaFormat, Profile};
+    use crate::h264::{macroblock::PcmMb, sps::VuiParameters, ChromaFormat, Profile};
 
     pub use super::*;
 

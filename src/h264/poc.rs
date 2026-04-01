@@ -189,10 +189,10 @@ impl PocState {
 
 #[cfg(test)]
 mod tests {
-    use super::super::pps::PicParameterSet;
-    use super::super::slice::SliceHeader;
-    use super::super::sps::{SequenceParameterSet, VuiParameters};
-    use super::super::{ChromaFormat, Profile};
+    use crate::h264::pps::PicParameterSet;
+    use crate::h264::slice::SliceHeader;
+    use crate::h264::sps::{SequenceParameterSet, VuiParameters};
+    use crate::h264::{ChromaFormat, Profile};
     use super::*;
 
     fn prepare_slice() -> Slice {

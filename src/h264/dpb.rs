@@ -363,7 +363,7 @@ fn calculate_pic_num_x(
 
 #[cfg(test)]
 mod tests {
-    use super::super::slice::DecRefPicMarking;
+    use crate::h264::slice::DecRefPicMarking;
     use super::*;
     use v_frame::pixel::ChromaSampling;
 

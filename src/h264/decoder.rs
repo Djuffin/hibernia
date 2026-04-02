@@ -211,10 +211,10 @@ impl Decoder {
                     needed_for_output: true,
                 };
                 let pictures = self.dpb.store_picture(dpb_pic);
-                self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
 
                 parser::parse_slice_data(&mut input, &mut slice).map_err(parse_error_handler)?;
                 self.process_slice(&mut slice)?;
+                self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
                 // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
                 // as "unused for reference" and sets the current frame's frame_num and POC to 0.
                 let has_mmco5 = self.dpb.mark_references(&slice.header, disposition, &slice.sps);
@@ -310,6 +310,27 @@ impl Decoder {
                             let row_range = idx * tables::MB_WIDTH..(idx + 1) * tables::MB_WIDTH;
                             row[..tables::MB_WIDTH]
                                 .copy_from_slice(&block.pcm_sample_luma[row_range]);
+                        }
+
+                        let chroma_format = slice.sps.ChromaArrayType();
+                        if chroma_format == super::ChromaFormat::Monochrome {
+                            break;
+                        }
+                        let shift = chroma_format.get_chroma_shift();
+                        let chroma_loc = Point { x: mb_loc.x >> shift.width, y: mb_loc.y >> shift.height };
+                        let chroma_width = tables::MB_WIDTH >> shift.width;
+                        let chroma_height = tables::MB_HEIGHT >> shift.height;
+
+                        for (plane, samples) in [
+                            (ColorPlane::Cb, &block.pcm_sample_chroma_cb),
+                            (ColorPlane::Cr, &block.pcm_sample_chroma_cr),
+                        ] {
+                            let chroma_plane = &mut frame.planes[plane as usize];
+                            let mut chroma_slice = chroma_plane.mut_slice(point_to_plane_offset(chroma_loc));
+                            for (idx, row) in chroma_slice.rows_iter_mut().take(chroma_height).enumerate() {
+                                let row_range = idx * chroma_width..(idx + 1) * chroma_width;
+                                row[..chroma_width].copy_from_slice(&samples[row_range]);
+                            }
                         }
                     }
                     Macroblock::I(imb) => {

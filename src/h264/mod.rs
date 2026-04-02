@@ -1,5 +1,5 @@
-pub mod cavlc;
 pub mod cabac;
+pub mod cavlc;
 pub mod deblocking;
 pub mod decoder;
 pub mod dpb;
@@ -17,8 +17,9 @@ pub mod rbsp_writer;
 pub mod residual;
 pub mod slice;
 pub mod sps;
-pub mod writer;
 pub mod tables;
+pub mod writer;
+pub mod bitstream_gen;
 
 #[cfg(test)]
 pub mod e2e_tests;
@@ -31,7 +32,7 @@ pub mod json_tests;
 
 use num_traits::cast::FromPrimitive;
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive, schemars::JsonSchema)]
 pub enum Profile {
     #[default]
     Baseline = 66,
@@ -71,7 +72,7 @@ impl TryFrom<u32> for Profile {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive, schemars::JsonSchema)]
 pub enum ChromaFormat {
     Monochrome = 0,
     #[default]
@@ -96,7 +97,7 @@ impl ChromaFormat {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, Eq, PartialEq, schemars::JsonSchema)]
 pub enum ColorPlane {
     Y = 0,
     Cb = 1,
@@ -116,19 +117,19 @@ impl TryFrom<u32> for ChromaFormat {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct Point {
     pub x: u32,
     pub y: u32,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct Size {
     pub width: u32,
     pub height: u32,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct Rect {
     pub origin: Point,
     pub size: Size,

@@ -1,9 +1,11 @@
 use super::{tables, ChromaFormat, Profile};
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Hypothetical Reference Decoder (HRD) parameters.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct HdrParameters {}
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Video Usability Information (VUI) parameters.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct VuiParameters {
     pub aspect_ratio_info_present_flag: bool,
     pub aspect_ratio_idc: u8,
@@ -46,7 +48,8 @@ pub struct VuiParameters {
     pub max_dec_frame_buffering: u8,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Frame cropping parameters specifying the offsets of the decoded picture.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct FrameCrop {
     pub top: u32,
     pub left: u32,
@@ -55,7 +58,8 @@ pub struct FrameCrop {
 }
 
 // Section 7.4.2.1.1 Sequence parameter set data semantics
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Sequence Parameter Set (SPS), containing syntax elements that apply to zero or more entire coded video sequences.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct SequenceParameterSet {
     pub profile: Profile,
     pub constraint_set0_flag: bool,

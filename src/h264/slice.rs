@@ -8,7 +8,8 @@ use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
 use super::{tables, ColorPlane, Point};
 
-#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, Debug, PartialEq, Eq, Default)]
+/// Specifies the coding type of the slice (e.g., I, P, B).
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub enum SliceType {
     #[default]
     P = 0,
@@ -38,7 +39,8 @@ impl SliceType {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive)]
+/// Controls the application of the deblocking filter.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive, schemars::JsonSchema)]
 pub enum DeblockingFilterIdc {
     #[default]
     On = 0,
@@ -54,7 +56,8 @@ impl TryFrom<u32> for DeblockingFilterIdc {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+/// Memory management control operation (MMCO) for decoded reference picture marking.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 pub enum MemoryManagementControlOperation {
     MarkShortTermUnused { difference_of_pic_nums_minus1: u32 },
     MarkLongTermUnused { long_term_pic_num: u32 },
@@ -64,7 +67,8 @@ pub enum MemoryManagementControlOperation {
     MarkCurrentAsLongTerm { long_term_frame_idx: u32 },
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Decoded reference picture marking parameters.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct DecRefPicMarking {
     pub no_output_of_prior_pics_flag: Option<bool>,
     pub long_term_reference_flag: Option<bool>,
@@ -74,14 +78,16 @@ pub struct DecRefPicMarking {
 
 
 // Table 7-7 – modification_of_pic_nums_idc operations for modification of reference picture lists
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+/// Reference picture list modification operation.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 pub enum RefPicListModification {
     RemapShortTermNegative(u32), // abs_diff_pic_num_minus1
     RemapShortTermPositive(u32), // abs_diff_pic_num_minus1
     RemapLongTerm(u32),          // long_term_pic_num
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Reference picture list modifications for list 0 and list 1.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct RefPicListModifications {
     pub list0: Vec<RefPicListModification>,
     pub list1: Vec<RefPicListModification>,
@@ -94,7 +100,7 @@ pub struct RefPicListModifications {
 /// for inter-prediction.
 /// Corresponds to the set of luma_weight_lX, luma_offset_lX,
 /// chroma_weight_lX, and chroma_offset_lX syntax elements.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 pub struct WeightingFactors {
     /// The weight to be applied to the luma component of the reference picture.
     pub luma_weight: i32,
@@ -108,7 +114,7 @@ pub struct WeightingFactors {
 
 /// Represents the `pred_weight_table()` syntax structure.
 /// It contains all information required for weighted prediction for a P, SP, or B slice.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct PredWeightTable {
     /// The base-2 logarithm of the denominator for luma weighting.
     /// The final weight is `luma_weight / (1 << luma_log2_weight_denom)`.
@@ -127,7 +133,8 @@ pub struct PredWeightTable {
 
 
 // Section 7.4.3 Slice header semantics
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Slice header containing syntax elements that apply to the slice.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct SliceHeader {
     pub first_mb_in_slice: MbAddr,
     pub slice_type: SliceType,

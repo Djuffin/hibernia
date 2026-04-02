@@ -1,10 +1,12 @@
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+/// Rectangular slice group defined by top-left and bottom-right macroblock addresses.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct SliceRect {
     pub top_left: u32,
     pub bottom_right: u32,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+/// Specifies the changing direction of a slice group in a picture.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub enum SliceGroupChangeType {
     #[default]
     BoxOut,
@@ -12,7 +14,8 @@ pub enum SliceGroupChangeType {
     WipeOut,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+/// Slice group mapping type for macroblocks.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 pub enum SliceGroup {
     Interleaved {
         run_length_minus1: Vec<u32>,
@@ -38,7 +41,8 @@ pub enum SliceGroup {
 use super::ColorPlane;
 
 // Section 7.4.2.2 Picture parameter set RBSP semantics
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+/// Picture Parameter Set (PPS), containing syntax elements that apply to zero or more entire coded pictures.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub struct PicParameterSet {
     pub pic_parameter_set_id: u8,
     pub seq_parameter_set_id: u8,

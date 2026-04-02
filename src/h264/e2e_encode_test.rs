@@ -114,41 +114,56 @@ fn test_generate_and_decode_video() {
     let mut decoder = Decoder::new();
 
     let mut frames_decoded = 0;
+
+    let check_frame = |frame: crate::h264::decoder::VideoFrame, frames_decoded: usize, is_flush: bool| {
+        let msg = if is_flush {
+            format!("in flushed frame {}", frames_decoded)
+        } else {
+            format!("in frame {}", frames_decoded)
+        };
+
+        let y_plane = &frame.planes[0];
+        let u_plane = &frame.planes[1];
+        let v_plane = &frame.planes[2];
+
+        assert_eq!(y_plane.cfg.width, 256, "Width mismatch {}", msg);
+        assert_eq!(y_plane.cfg.height, 256, "Height mismatch {}", msg);
+        assert_eq!(u_plane.cfg.width, 128, "Cb width mismatch {}", msg);
+        assert_eq!(u_plane.cfg.height, 128, "Cb height mismatch {}", msg);
+        assert_eq!(v_plane.cfg.width, 128, "Cr width mismatch {}", msg);
+        assert_eq!(v_plane.cfg.height, 128, "Cr height mismatch {}", msg);
+
+        for y in 0..256 {
+            let row_start = (y_plane.cfg.yorigin + y) * y_plane.cfg.stride + y_plane.cfg.xorigin;
+            for x in 0..256 {
+                assert_eq!(y_plane.data[row_start + x], 100, "Luma mismatch at {}x{} {}", x, y, msg);
+            }
+        }
+
+        for y in 0..128 {
+            let u_row_start = (u_plane.cfg.yorigin + y) * u_plane.cfg.stride + u_plane.cfg.xorigin;
+            let v_row_start = (v_plane.cfg.yorigin + y) * v_plane.cfg.stride + v_plane.cfg.xorigin;
+            for x in 0..128 {
+                assert_eq!(u_plane.data[u_row_start + x], 101, "Cb mismatch at {}x{} {}", x, y, msg);
+                assert_eq!(v_plane.data[v_row_start + x], 102, "Cr mismatch at {}x{} {}", x, y, msg);
+            }
+        }
+    };
+
     for nal_result in nal_parser {
         let nal_data = nal_result.unwrap();
         decoder.decode(&nal_data).unwrap();
 
         while let Some(frame) = decoder.retrieve_frame() {
             frames_decoded += 1;
-
-            let y_plane = &frame.planes[0];
-            let u_plane = &frame.planes[1];
-            let v_plane = &frame.planes[2];
-
-            let y_idx = y_plane.cfg.yorigin * y_plane.cfg.stride + y_plane.cfg.xorigin;
-            let u_idx = u_plane.cfg.yorigin * u_plane.cfg.stride + u_plane.cfg.xorigin;
-            let v_idx = v_plane.cfg.yorigin * v_plane.cfg.stride + v_plane.cfg.xorigin;
-
-            assert_eq!(y_plane.data[y_idx], 100, "Luma mismatch in frame {}", frames_decoded);
-            assert_eq!(u_plane.data[u_idx], 101, "Cb mismatch in frame {}", frames_decoded);
-            assert_eq!(v_plane.data[v_idx], 102, "Cr mismatch in frame {}", frames_decoded);
+            check_frame(frame, frames_decoded, false);
         }
     }
 
     decoder.flush().unwrap();
     while let Some(frame) = decoder.retrieve_frame() {
         frames_decoded += 1;
-        let y_plane = &frame.planes[0];
-        let u_plane = &frame.planes[1];
-        let v_plane = &frame.planes[2];
-
-        let y_idx = y_plane.cfg.yorigin * y_plane.cfg.stride + y_plane.cfg.xorigin;
-        let u_idx = u_plane.cfg.yorigin * u_plane.cfg.stride + u_plane.cfg.xorigin;
-        let v_idx = v_plane.cfg.yorigin * v_plane.cfg.stride + v_plane.cfg.xorigin;
-
-        assert_eq!(y_plane.data[y_idx], 100, "Luma mismatch in flushed frame {}", frames_decoded);
-        assert_eq!(u_plane.data[u_idx], 101, "Cb mismatch in flushed frame {}", frames_decoded);
-        assert_eq!(v_plane.data[v_idx], 102, "Cr mismatch in flushed frame {}", frames_decoded);
+        check_frame(frame, frames_decoded, true);
     }
 
     assert_eq!(frames_decoded, 5);

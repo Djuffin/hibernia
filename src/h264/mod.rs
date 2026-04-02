@@ -24,6 +24,9 @@ pub mod tables;
 pub mod e2e_tests;
 
 #[cfg(test)]
+pub mod e2e_encode_test;
+
+#[cfg(test)]
 pub mod json_tests;
 
 use num_traits::cast::FromPrimitive;

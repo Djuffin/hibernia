@@ -157,3 +157,11 @@ pub fn test_CANL2_Sony_E() -> Result<(), String> {
     // CABAC parsing process. pic_order_cnt_type is equal to 0.
     test_decoding_against_gold("data/CANL2_Sony_E.jsv", "data/CANL2_Sony_E.y4m")
 }
+
+#[test]
+pub fn test_CABA2_SVA_B() -> Result<(), String> {
+    // Decoding of I or P slices with CABAC and the deblocking filter process enabled.
+    // Each picture contains only one slice. entropy_coding_mode_flag is equal to 1, specifying the
+    // CABAC parsing process. pic_order_cnt_type is equal to 0. num_ref_frames is equal to 5.
+    test_decoding_against_gold("data/CABA2_SVA_B.264", "data/CABA2_SVA_B_rec.y4m")
+}

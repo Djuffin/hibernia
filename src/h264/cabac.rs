@@ -906,11 +906,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     ) -> ParseResult<u8> {
         let ctx_idx_inc = Self::get_ctx_idx_inc_ref_idx(accessor, mb_part_idx, list_idx);
 
-        // Table 9-34 specifies U binarization for ref_idx_l0/l1.
-        // However, the value is bounded by num_ref_idx_active_minus1, effectively making it Truncated Unary.
-        let val = self.parse_truncated_unary_bin(
+        // Table 9-34 specifies U (Unary) binarization for ref_idx_l0/l1.
+        let val = self.parse_unary_bin(
             SyntaxElement::RefIdx(list_idx),
-            Some(num_ref_idx_active_minus1),
             CtxIncParams::Standard(ctx_idx_inc),
         )?;
 
@@ -1921,7 +1919,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             drop(accessor);
 
                             let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
-                            sub_mbs[i].partitions[p_idx].mvd_l0 = mvd_vec;
+                            sub_mbs[i].partitions[j].mvd_l0 = mvd_vec;
 
                             // Update curr_mb.motion
                             let (w, h) = match sub_mbs[i].sub_mb_type {

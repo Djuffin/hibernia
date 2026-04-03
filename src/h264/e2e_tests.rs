@@ -87,15 +87,6 @@ fn test_decoding_against_gold(
     compare_y4m_buffers(decoding_output.as_slice(), expected_y4m_buffer.as_slice())
 }
 
-fn test_decoding(encoded_file_name: &str) -> Result<(), String> {
-    fn stringify(e: io::Error) -> String {
-        format!("IO error: {e}")
-    }
-    let encoded_video_buffer = fs::read(encoded_file_name).map_err(stringify)?;
-    let _ = decode_to_y4m(&encoded_video_buffer)?;
-    Ok(())
-}
-
 #[test]
 pub fn test_NL1_Sony_D() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice.
@@ -156,8 +147,7 @@ pub fn test_CANL1_Sony_E() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice. disable_deblocking_filter_idc is equal
     // to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 0.
-    test_decoding("data/CANL1_Sony_E.jsv")
-    //test_decoding_against_gold("data/CANL1_Sony_E.jsv", "data/CANL1_Sony_E.y4m")
+    test_decoding_against_gold("data/CANL1_Sony_E.jsv", "data/CANL1_Sony_E.y4m")
 }
 
 #[test]
@@ -165,6 +155,5 @@ pub fn test_CANL2_Sony_E() -> Result<(), String> {
     // All slices are coded as I or P slices. Each picture contains only one slice. disable_deblocking_filter_idc is
     // equal to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 0.
-    test_decoding("data/CANL2_Sony_E.jsv")
-    //test_decoding_against_gold("data/CANL2_Sony_E.jsv", "data/CANL2_Sony_E.y4m")
+    test_decoding_against_gold("data/CANL2_Sony_E.jsv", "data/CANL2_Sony_E.y4m")
 }

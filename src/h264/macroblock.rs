@@ -236,6 +236,246 @@ impl PMbType {
     }
 }
 
+// Table 7-14 – Macroblock type values 0 to 22 for B slices
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
+pub enum BMbType {
+    #[default]
+    B_Direct_16x16 = 0,
+    B_L0_16x16 = 1,
+    B_L1_16x16 = 2,
+    B_Bi_16x16 = 3,
+    B_L0_L0_16x8 = 4,
+    B_L0_L0_8x16 = 5,
+    B_L1_L1_16x8 = 6,
+    B_L1_L1_8x16 = 7,
+    B_L0_L1_16x8 = 8,
+    B_L0_L1_8x16 = 9,
+    B_L1_L0_16x8 = 10,
+    B_L1_L0_8x16 = 11,
+    B_L0_Bi_16x8 = 12,
+    B_L0_Bi_8x16 = 13,
+    B_L1_Bi_16x8 = 14,
+    B_L1_Bi_8x16 = 15,
+    B_Bi_L0_16x8 = 16,
+    B_Bi_L0_8x16 = 17,
+    B_Bi_L1_16x8 = 18,
+    B_Bi_L1_8x16 = 19,
+    B_Bi_Bi_16x8 = 20,
+    B_Bi_Bi_8x16 = 21,
+    B_8x8 = 22,
+    B_Skip = 23, // Sentinel, not from bitstream mb_type
+}
+
+impl TryFrom<u32> for BMbType {
+    type Error = String;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or_else(|| format!("Unknown B-mb type: {value}"))
+    }
+}
+
+#[allow(non_snake_case)]
+impl BMbType {
+    pub const fn NumMbPart(&self) -> usize {
+        match self {
+            BMbType::B_Direct_16x16 | BMbType::B_Skip => 0, // Direct: sub-block level
+            BMbType::B_L0_16x16 | BMbType::B_L1_16x16 | BMbType::B_Bi_16x16 => 1,
+            BMbType::B_L0_L0_16x8
+            | BMbType::B_L0_L0_8x16
+            | BMbType::B_L1_L1_16x8
+            | BMbType::B_L1_L1_8x16
+            | BMbType::B_L0_L1_16x8
+            | BMbType::B_L0_L1_8x16
+            | BMbType::B_L1_L0_16x8
+            | BMbType::B_L1_L0_8x16
+            | BMbType::B_L0_Bi_16x8
+            | BMbType::B_L0_Bi_8x16
+            | BMbType::B_L1_Bi_16x8
+            | BMbType::B_L1_Bi_8x16
+            | BMbType::B_Bi_L0_16x8
+            | BMbType::B_Bi_L0_8x16
+            | BMbType::B_Bi_L1_16x8
+            | BMbType::B_Bi_L1_8x16
+            | BMbType::B_Bi_Bi_16x8
+            | BMbType::B_Bi_Bi_8x16 => 2,
+            BMbType::B_8x8 => 4,
+        }
+    }
+
+    /// Table 7-14: MbPartPredMode for partition `mbPartIdx`
+    pub const fn MbPartPredMode(&self, mb_part_idx: usize) -> MbPredictionMode {
+        // For two-partition types, the name encodes [part0]_[part1]_[size]
+        match self {
+            BMbType::B_Direct_16x16 | BMbType::B_Skip => MbPredictionMode::Direct,
+            BMbType::B_L0_16x16 => MbPredictionMode::Pred_L0,
+            BMbType::B_L1_16x16 => MbPredictionMode::Pred_L1,
+            BMbType::B_Bi_16x16 => MbPredictionMode::BiPred,
+            BMbType::B_L0_L0_16x8 | BMbType::B_L0_L0_8x16 => MbPredictionMode::Pred_L0,
+            BMbType::B_L1_L1_16x8 | BMbType::B_L1_L1_8x16 => MbPredictionMode::Pred_L1,
+            BMbType::B_L0_L1_16x8 | BMbType::B_L0_L1_8x16 => {
+                if mb_part_idx == 0 {
+                    MbPredictionMode::Pred_L0
+                } else {
+                    MbPredictionMode::Pred_L1
+                }
+            }
+            BMbType::B_L1_L0_16x8 | BMbType::B_L1_L0_8x16 => {
+                if mb_part_idx == 0 {
+                    MbPredictionMode::Pred_L1
+                } else {
+                    MbPredictionMode::Pred_L0
+                }
+            }
+            BMbType::B_L0_Bi_16x8 | BMbType::B_L0_Bi_8x16 => {
+                if mb_part_idx == 0 {
+                    MbPredictionMode::Pred_L0
+                } else {
+                    MbPredictionMode::BiPred
+                }
+            }
+            BMbType::B_L1_Bi_16x8 | BMbType::B_L1_Bi_8x16 => {
+                if mb_part_idx == 0 {
+                    MbPredictionMode::Pred_L1
+                } else {
+                    MbPredictionMode::BiPred
+                }
+            }
+            BMbType::B_Bi_L0_16x8 | BMbType::B_Bi_L0_8x16 => {
+                if mb_part_idx == 0 {
+                    MbPredictionMode::BiPred
+                } else {
+                    MbPredictionMode::Pred_L0
+                }
+            }
+            BMbType::B_Bi_L1_16x8 | BMbType::B_Bi_L1_8x16 => {
+                if mb_part_idx == 0 {
+                    MbPredictionMode::BiPred
+                } else {
+                    MbPredictionMode::Pred_L1
+                }
+            }
+            BMbType::B_Bi_Bi_16x8 | BMbType::B_Bi_Bi_8x16 => MbPredictionMode::BiPred,
+            BMbType::B_8x8 => MbPredictionMode::None, // Delegated to sub-mb types
+        }
+    }
+
+    /// Table 7-14: Partition size (width, height)
+    pub const fn MbPartSize(&self) -> (u8, u8) {
+        match self {
+            BMbType::B_Direct_16x16 | BMbType::B_Skip => (16, 16), // subdivided at sub-block level
+            BMbType::B_L0_16x16 | BMbType::B_L1_16x16 | BMbType::B_Bi_16x16 => (16, 16),
+            BMbType::B_L0_L0_16x8
+            | BMbType::B_L1_L1_16x8
+            | BMbType::B_L0_L1_16x8
+            | BMbType::B_L1_L0_16x8
+            | BMbType::B_L0_Bi_16x8
+            | BMbType::B_L1_Bi_16x8
+            | BMbType::B_Bi_L0_16x8
+            | BMbType::B_Bi_L1_16x8
+            | BMbType::B_Bi_Bi_16x8 => (16, 8),
+            BMbType::B_L0_L0_8x16
+            | BMbType::B_L1_L1_8x16
+            | BMbType::B_L0_L1_8x16
+            | BMbType::B_L1_L0_8x16
+            | BMbType::B_L0_Bi_8x16
+            | BMbType::B_L1_Bi_8x16
+            | BMbType::B_Bi_L0_8x16
+            | BMbType::B_Bi_L1_8x16
+            | BMbType::B_Bi_Bi_8x16 => (8, 16),
+            BMbType::B_8x8 => (8, 8),
+        }
+    }
+}
+
+// Table 7-18 – Sub-macroblock types in B macroblocks
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
+pub enum BSubMbType {
+    #[default]
+    B_Direct_8x8 = 0,
+    B_L0_8x8 = 1,
+    B_L1_8x8 = 2,
+    B_Bi_8x8 = 3,
+    B_L0_8x4 = 4,
+    B_L0_4x8 = 5,
+    B_L1_8x4 = 6,
+    B_L1_4x8 = 7,
+    B_Bi_8x4 = 8,
+    B_Bi_4x8 = 9,
+    B_L0_4x4 = 10,
+    B_L1_4x4 = 11,
+    B_Bi_4x4 = 12,
+}
+
+impl TryFrom<u32> for BSubMbType {
+    type Error = String;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value).ok_or_else(|| format!("Unknown B sub-mb type: {value}"))
+    }
+}
+
+#[allow(non_snake_case)]
+impl BSubMbType {
+    pub const fn NumSubMbPart(&self) -> usize {
+        match self {
+            BSubMbType::B_Direct_8x8 | BSubMbType::B_L0_8x8 | BSubMbType::B_L1_8x8 | BSubMbType::B_Bi_8x8 => 1,
+            BSubMbType::B_L0_8x4
+            | BSubMbType::B_L0_4x8
+            | BSubMbType::B_L1_8x4
+            | BSubMbType::B_L1_4x8
+            | BSubMbType::B_Bi_8x4
+            | BSubMbType::B_Bi_4x8 => 2,
+            BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4 => 4,
+        }
+    }
+
+    pub const fn SubMbPredMode(&self) -> MbPredictionMode {
+        match self {
+            BSubMbType::B_Direct_8x8 => MbPredictionMode::Direct,
+            BSubMbType::B_L0_8x8 | BSubMbType::B_L0_8x4 | BSubMbType::B_L0_4x8 | BSubMbType::B_L0_4x4 => {
+                MbPredictionMode::Pred_L0
+            }
+            BSubMbType::B_L1_8x8 | BSubMbType::B_L1_8x4 | BSubMbType::B_L1_4x8 | BSubMbType::B_L1_4x4 => {
+                MbPredictionMode::Pred_L1
+            }
+            BSubMbType::B_Bi_8x8 | BSubMbType::B_Bi_8x4 | BSubMbType::B_Bi_4x8 | BSubMbType::B_Bi_4x4 => {
+                MbPredictionMode::BiPred
+            }
+        }
+    }
+
+    pub const fn SubMbPartSize(&self) -> (u8, u8) {
+        match self {
+            BSubMbType::B_Direct_8x8 | BSubMbType::B_L0_8x8 | BSubMbType::B_L1_8x8 | BSubMbType::B_Bi_8x8 => {
+                (8, 8)
+            }
+            BSubMbType::B_L0_8x4 | BSubMbType::B_L1_8x4 | BSubMbType::B_Bi_8x4 => (8, 4),
+            BSubMbType::B_L0_4x8 | BSubMbType::B_L1_4x8 | BSubMbType::B_Bi_4x8 => (4, 8),
+            BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4 => (4, 4),
+        }
+    }
+}
+
+// Holds data for a B_8x8 sub-macroblock
+#[derive(Copy, Clone, Debug, Default)]
+pub struct BSubMacroblock {
+    pub sub_mb_type: BSubMbType,
+    pub partitions: [PartitionInfo; 4],
+}
+
+// Macroblock of type B
+#[derive(Clone, Debug, Default)]
+pub struct BMb {
+    pub mb_type: BMbType,
+    pub motion: MbMotion,
+    pub coded_block_pattern: CodedBlockPattern,
+    pub mb_qp_delta: i32,
+    pub qp: u8,
+    pub transform_size_8x8_flag: bool,
+    pub residual: Option<Box<Residual>>,
+    pub cbf_info: CbfInfo,
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum MbPredictionMode {
@@ -248,6 +488,8 @@ pub enum MbPredictionMode {
 
     Pred_L0,
     Pred_L1,
+    BiPred,
+    Direct,
 }
 
 impl MbPredictionMode {
@@ -414,6 +656,8 @@ pub struct MotionVector {
 // Holds prediction data for one partition
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct PartitionInfo {
+    /// Which prediction lists are active for this partition (Pred_L0, Pred_L1, BiPred, Direct).
+    pub pred_mode: MbPredictionMode,
     pub ref_idx_l0: u8,
     /// Motion Vector (MV) = MVP + MVD
     /// This is the final vector used for prediction.
@@ -421,6 +665,9 @@ pub struct PartitionInfo {
     /// Motion Vector Difference (MVD)
     /// This is the delta value parsed from the bitstream.
     pub mvd_l0: MotionVector,
+    pub ref_idx_l1: u8,
+    pub mv_l1: MotionVector,
+    pub mvd_l1: MotionVector,
 }
 
 // Holds the final motion information for a single decoded macroblock,
@@ -486,6 +733,7 @@ pub enum Macroblock {
     I(IMb),
     PCM(PcmMb),
     P(PMb),
+    B(BMb),
 }
 
 #[allow(non_snake_case)]
@@ -530,12 +778,26 @@ impl PMb {
 }
 
 #[allow(non_snake_case)]
+impl BMb {
+    #[inline]
+    pub const fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
+        self.mb_type.MbPartPredMode(partition)
+    }
+
+    #[inline]
+    pub const fn NumMbPart(&self) -> usize {
+        self.mb_type.NumMbPart()
+    }
+}
+
+#[allow(non_snake_case)]
 impl Macroblock {
     #[inline]
     pub fn MbPartPredMode(&self, partition: usize) -> MbPredictionMode {
         match self {
             Macroblock::I(mb) => mb.MbPartPredMode(partition),
             Macroblock::P(mb) => mb.MbPartPredMode(partition),
+            Macroblock::B(mb) => mb.MbPartPredMode(partition),
             Macroblock::PCM(_) => MbPredictionMode::None,
         }
     }
@@ -547,13 +809,16 @@ impl Macroblock {
     pub fn is_skipped(&self) -> bool {
         match self {
             Macroblock::P(mb) => mb.mb_type == PMbType::P_Skip,
+            Macroblock::B(mb) => mb.mb_type == BMbType::B_Skip,
             _ => false,
         }
     }
 
     pub fn is_direct(&self) -> bool {
-        // TODO: Implement B slice support
-        false
+        match self {
+            Macroblock::B(mb) => mb.mb_type == BMbType::B_Direct_16x16,
+            _ => false,
+        }
     }
 
     // Calculates nC for the block withing the macroblock
@@ -569,6 +834,10 @@ impl Macroblock {
                 Some(r) => r.get_nc(blk_idx, plane),
                 None => 0,
             },
+            Macroblock::B(mb) => match &mb.residual {
+                Some(r) => r.get_nc(blk_idx, plane),
+                None => 0,
+            },
         }
     }
 
@@ -576,6 +845,7 @@ impl Macroblock {
         match self {
             Macroblock::I(mb) => mb.coded_block_pattern,
             Macroblock::P(mb) => mb.coded_block_pattern,
+            Macroblock::B(mb) => mb.coded_block_pattern,
             Macroblock::PCM(_) => CodedBlockPattern::default(),
         }
     }
@@ -588,6 +858,9 @@ impl Macroblock {
             Macroblock::P(mb) => {
                 mb.residual = r;
             }
+            Macroblock::B(mb) => {
+                mb.residual = r;
+            }
             Macroblock::PCM(_) => {}
         }
     }
@@ -598,6 +871,7 @@ impl Macroblock {
     pub fn get_motion_info(&self) -> MbMotion {
         match self {
             Macroblock::P(mb) => mb.motion.clone(),
+            Macroblock::B(mb) => mb.motion.clone(),
             Macroblock::I(_) | Macroblock::PCM(_) => MbMotion::default(),
         }
     }
@@ -606,6 +880,7 @@ impl Macroblock {
         match self {
             Macroblock::I(m) => m.qp = qp,
             Macroblock::P(m) => m.qp = qp,
+            Macroblock::B(m) => m.qp = qp,
             Macroblock::PCM(m) => m.qp = qp,
         }
     }
@@ -614,6 +889,7 @@ impl Macroblock {
         match self {
             Macroblock::I(mb) => mb.cbf_info,
             Macroblock::P(mb) => mb.cbf_info,
+            Macroblock::B(mb) => mb.cbf_info,
             Macroblock::PCM(_) => CbfInfo::default(),
         }
     }

@@ -165,13 +165,20 @@ impl DecodedPictureBuffer {
 
     fn mark_idr_references(&mut self, header: &SliceHeader) {
         // Section 8.2.5.1
-        for pic in self.pictures.iter_mut() {
+        // The current picture is the last in the vec (just stored by store_picture).
+        // Mark all prior pictures as unused for reference.
+        let last_idx = self.pictures.len() - 1;
+        for pic in self.pictures[..last_idx].iter_mut() {
             pic.marking = DpbMarking::UnusedForReference;
         }
 
         if let Some(dec_ref_pic_marking) = &header.dec_ref_pic_marking {
             if dec_ref_pic_marking.no_output_of_prior_pics_flag.unwrap_or(false) {
-                self.pictures.clear();
+                // Remove all prior pictures without output, preserving the current IDR.
+                if let Some(current) = self.pictures.pop() {
+                    self.pictures.clear();
+                    self.pictures.push(current);
+                }
             }
 
             if let Some(last) = self.pictures.last_mut() {

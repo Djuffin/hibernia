@@ -165,3 +165,15 @@ pub fn test_CABA2_SVA_B() -> Result<(), String> {
     // CABAC parsing process. pic_order_cnt_type is equal to 0. num_ref_frames is equal to 5.
     test_decoding_against_gold("data/CABA2_SVA_B.264", "data/CABA2_SVA_B_rec.y4m")
 }
+
+#[test]
+pub fn test_CABA3_SVA_B() -> Result<(), String> {
+    // IPB slices with CABAC. Temporal direct prediction. num_ref_frames=5.
+    test_decoding_against_gold("data/CABA3_SVA_B.264", "data/CABA3_SVA_B_rec.y4m")
+}
+
+#[test]
+pub fn test_CVBS3_Sony_C() -> Result<(), String> {
+    // IPB slices with CAVLC. Temporal direct prediction. direct_8x8_inference=on. num_ref_frames=4.
+    test_decoding_against_gold("data/CVBS3_Sony_C.jsv", "data/CVBS3_Sony_C_rec.y4m")
+}

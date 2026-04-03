@@ -38,16 +38,16 @@ fn test_generate_and_decode_video() {
     let mut sps_writer = RbspWriter::new();
     write_sps(&sps, &mut sps_writer).unwrap();
     bitstream.extend(create_annex_b_nal_unit(
-        &NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::SeqParameterSet }, 
-        &sps_writer.into_inner()
+        &NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::SeqParameterSet },
+        &sps_writer.into_inner(),
     ));
 
     // 2. Write PPS
     let mut pps_writer = RbspWriter::new();
     write_pps(&pps, &mut pps_writer).unwrap();
     bitstream.extend(create_annex_b_nal_unit(
-        &NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::PicParameterSet }, 
-        &pps_writer.into_inner()
+        &NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::PicParameterSet },
+        &pps_writer.into_inner(),
     ));
 
     // 3. Write IDR Frame (I_PCM for all MBs)
@@ -65,20 +65,26 @@ fn test_generate_and_decode_video() {
         adaptive_ref_pic_marking_mode_flag: None,
         memory_management_operations: vec![],
     });
-    
+
     let mut idr_writer = RbspWriter::new();
     write_slice_header(&idr_header, &sps, &pps, true, &mut idr_writer).unwrap();
     for _ in 0..256 {
         idr_writer.ue(25).unwrap(); // I_PCM mb_type
         idr_writer.align().unwrap();
-        for _ in 0..256 { idr_writer.u(8, 100).unwrap(); } // Luma
-        for _ in 0..64 { idr_writer.u(8, 101).unwrap(); }  // Cb
-        for _ in 0..64 { idr_writer.u(8, 102).unwrap(); } // Cr
+        for _ in 0..256 {
+            idr_writer.u(8, 100).unwrap();
+        } // Luma
+        for _ in 0..64 {
+            idr_writer.u(8, 101).unwrap();
+        } // Cb
+        for _ in 0..64 {
+            idr_writer.u(8, 102).unwrap();
+        } // Cr
     }
     idr_writer.rbsp_trailing_bits().unwrap();
     bitstream.extend(create_annex_b_nal_unit(
-        &NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::IDRSlice }, 
-        &idr_writer.into_inner()
+        &NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::IDRSlice },
+        &idr_writer.into_inner(),
     ));
 
     // 4. Write 4 P-Frames (Skipping all MBs)
@@ -115,7 +121,9 @@ fn test_generate_and_decode_video() {
 
     let mut frames_decoded = 0;
 
-    let check_frame = |frame: crate::h264::decoder::VideoFrame, frames_decoded: usize, is_flush: bool| {
+    let check_frame = |frame: crate::h264::decoder::VideoFrame,
+                       frames_decoded: usize,
+                       is_flush: bool| {
         let msg = if is_flush {
             format!("in flushed frame {}", frames_decoded)
         } else {
@@ -136,7 +144,14 @@ fn test_generate_and_decode_video() {
         for y in 0..256 {
             let row_start = (y_plane.cfg.yorigin + y) * y_plane.cfg.stride + y_plane.cfg.xorigin;
             for x in 0..256 {
-                assert_eq!(y_plane.data[row_start + x], 100, "Luma mismatch at {}x{} {}", x, y, msg);
+                assert_eq!(
+                    y_plane.data[row_start + x],
+                    100,
+                    "Luma mismatch at {}x{} {}",
+                    x,
+                    y,
+                    msg
+                );
             }
         }
 
@@ -144,8 +159,22 @@ fn test_generate_and_decode_video() {
             let u_row_start = (u_plane.cfg.yorigin + y) * u_plane.cfg.stride + u_plane.cfg.xorigin;
             let v_row_start = (v_plane.cfg.yorigin + y) * v_plane.cfg.stride + v_plane.cfg.xorigin;
             for x in 0..128 {
-                assert_eq!(u_plane.data[u_row_start + x], 101, "Cb mismatch at {}x{} {}", x, y, msg);
-                assert_eq!(v_plane.data[v_row_start + x], 102, "Cr mismatch at {}x{} {}", x, y, msg);
+                assert_eq!(
+                    u_plane.data[u_row_start + x],
+                    101,
+                    "Cb mismatch at {}x{} {}",
+                    x,
+                    y,
+                    msg
+                );
+                assert_eq!(
+                    v_plane.data[v_row_start + x],
+                    102,
+                    "Cr mismatch at {}x{} {}",
+                    x,
+                    y,
+                    msg
+                );
             }
         }
     };

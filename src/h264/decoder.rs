@@ -2,11 +2,11 @@ use std::cmp::{max, min, Ordering};
 use std::collections::VecDeque;
 use std::io::Read;
 
-use super::slice::{RefPicListModification, SliceType, Slice};
+use super::slice::{RefPicListModification, Slice, SliceType};
 use super::tables::mb_type_to_16x16_pred_mode;
 use super::ColorPlane;
 
-use super::dpb::{DecodedPictureBuffer, DpbPicture, DpbMarking, ReferenceDisposition};
+use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
 use super::inter_pred::{interpolate_chroma, interpolate_luma, InterpolationBuffer};
 use super::intra_pred::{
     point_to_plane_offset, render_chroma_intra_prediction, render_luma_16x16_intra_prediction,
@@ -317,7 +317,8 @@ impl Decoder {
                             break;
                         }
                         let shift = chroma_format.get_chroma_shift();
-                        let chroma_loc = Point { x: mb_loc.x >> shift.width, y: mb_loc.y >> shift.height };
+                        let chroma_loc =
+                            Point { x: mb_loc.x >> shift.width, y: mb_loc.y >> shift.height };
                         let chroma_width = tables::MB_WIDTH >> shift.width;
                         let chroma_height = tables::MB_HEIGHT >> shift.height;
 
@@ -326,8 +327,11 @@ impl Decoder {
                             (ColorPlane::Cr, &block.pcm_sample_chroma_cr),
                         ] {
                             let chroma_plane = &mut frame.planes[plane as usize];
-                            let mut chroma_slice = chroma_plane.mut_slice(point_to_plane_offset(chroma_loc));
-                            for (idx, row) in chroma_slice.rows_iter_mut().take(chroma_height).enumerate() {
+                            let mut chroma_slice =
+                                chroma_plane.mut_slice(point_to_plane_offset(chroma_loc));
+                            for (idx, row) in
+                                chroma_slice.rows_iter_mut().take(chroma_height).enumerate()
+                            {
                                 let row_range = idx * chroma_width..(idx + 1) * chroma_width;
                                 row[..chroma_width].copy_from_slice(&samples[row_range]);
                             }

@@ -370,8 +370,8 @@ fn calculate_pic_num_x(
 
 #[cfg(test)]
 mod tests {
-    use crate::h264::slice::DecRefPicMarking;
     use super::*;
+    use crate::h264::slice::DecRefPicMarking;
     use v_frame::pixel::ChromaSampling;
 
     fn create_dummy_picture(frame_num: u16, pic_order_cnt: i32) -> Picture {

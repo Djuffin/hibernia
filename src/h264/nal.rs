@@ -1,7 +1,18 @@
 use num_traits::cast::FromPrimitive;
 
 /// Network Abstraction Layer (NAL) unit type.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default, FromPrimitive, schemars::JsonSchema)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    FromPrimitive,
+    schemars::JsonSchema,
+)]
 pub enum NalUnitType {
     #[default]
     Unspecified = 0,
@@ -40,7 +51,9 @@ impl TryFrom<u32> for NalUnitType {
 }
 
 /// Network Abstraction Layer (NAL) unit header.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema,
+)]
 pub struct NalHeader {
     pub nal_ref_idc: u8,
     pub nal_unit_type: NalUnitType,

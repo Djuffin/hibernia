@@ -19,9 +19,7 @@ impl Default for RbspWriter {
 
 impl RbspWriter {
     pub fn new() -> RbspWriter {
-        RbspWriter {
-            writer: BitWriter::new(Vec::new()),
-        }
+        RbspWriter { writer: BitWriter::new(Vec::new()) }
     }
 
     pub fn into_inner(self) -> Vec<u8> {
@@ -55,11 +53,8 @@ impl RbspWriter {
 
     pub fn se(&mut self, value: i32) -> WriteResult {
         let value_i64 = value as i64;
-        let mapped = if value_i64 <= 0 {
-            (-2 * value_i64) as u32
-        } else {
-            (2 * value_i64 - 1) as u32
-        };
+        let mapped =
+            if value_i64 <= 0 { (-2 * value_i64) as u32 } else { (2 * value_i64 - 1) as u32 };
         self.ue(mapped)
     }
 
@@ -232,7 +227,7 @@ mod tests {
         assert_eq!(reader.se().unwrap(), -54321);
         assert_eq!(reader.te(5).unwrap(), 3);
         assert_eq!(reader.te(1).unwrap(), 0);
-        
+
         assert_eq!(reader.f().unwrap(), true);
         reader.align();
         assert_eq!(reader.is_aligned(), true);

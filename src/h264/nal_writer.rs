@@ -75,26 +75,23 @@ mod tests {
     fn test_create_annex_b_nal_unit() {
         use crate::h264::nal::NalUnitType;
 
-        let header = NalHeader {
-            nal_ref_idc: 3,
-            nal_unit_type: NalUnitType::IDRSlice,
-        };
+        let header = NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::IDRSlice };
 
         // IDRSlice is nal_unit_type = 5
         // Header byte = (0 << 7) | (3 << 5) | 5 = 0b01100101 = 0x65
-        
+
         let rbsp = [0x00, 0x00, 0x01, 0xFF];
         // The rbsp has an emulation prevention sequence: 0x00, 0x00, 0x01
         // Emulation prevention will transform it to: 0x00, 0x00, 0x03, 0x01, 0xFF
-        
+
         let annex_b = create_annex_b_nal_unit(&header, &rbsp);
-        
+
         let expected = vec![
             0x00, 0x00, 0x00, 0x01, // Annex B start code
-            0x65,                   // NAL Header
-            0x00, 0x00, 0x03, 0x01, 0xFF // Escaped RBSP
+            0x65, // NAL Header
+            0x00, 0x00, 0x03, 0x01, 0xFF, // Escaped RBSP
         ];
-        
+
         assert_eq!(annex_b, expected);
     }
 }

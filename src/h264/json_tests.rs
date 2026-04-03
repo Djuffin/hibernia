@@ -1,7 +1,10 @@
-use crate::h264::sps::{SequenceParameterSet, VuiParameters, FrameCrop};
 use crate::h264::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use crate::h264::slice::{SliceHeader, SliceType, RefPicListModifications, RefPicListModification, PredWeightTable, WeightingFactors, DecRefPicMarking, MemoryManagementControlOperation, DeblockingFilterIdc};
-use crate::h264::{Profile, ChromaFormat, ColorPlane};
+use crate::h264::slice::{
+    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, PredWeightTable,
+    RefPicListModification, RefPicListModifications, SliceHeader, SliceType, WeightingFactors,
+};
+use crate::h264::sps::{FrameCrop, SequenceParameterSet, VuiParameters};
+use crate::h264::{ChromaFormat, ColorPlane, Profile};
 
 #[test]
 fn test_sps_json_deserialization() {
@@ -35,12 +38,7 @@ fn test_sps_json_deserialization() {
         frame_mbs_only_flag: false,
         mb_adaptive_frame_field_flag: true,
         direct_8x8_inference_flag: true,
-        frame_cropping: Some(FrameCrop {
-            top: 1,
-            left: 2,
-            right: 3,
-            bottom: 4,
-        }),
+        frame_cropping: Some(FrameCrop { top: 1, left: 2, right: 3, bottom: 4 }),
         vui_parameters: Some(VuiParameters {
             aspect_ratio_info_present_flag: true,
             aspect_ratio_idc: 255,
@@ -78,7 +76,8 @@ fn test_sps_json_deserialization() {
     };
 
     let json = serde_json::to_string(&sps).expect("Failed to serialize SPS");
-    let sps_deserialized: SequenceParameterSet = serde_json::from_str(&json).expect("Failed to deserialize SPS");
+    let sps_deserialized: SequenceParameterSet =
+        serde_json::from_str(&json).expect("Failed to deserialize SPS");
 
     assert_eq!(sps, sps_deserialized);
 }
@@ -111,7 +110,8 @@ fn test_pps_json_deserialization() {
     };
 
     let json = serde_json::to_string(&pps).expect("Failed to serialize PPS");
-    let pps_deserialized: PicParameterSet = serde_json::from_str(&json).expect("Failed to deserialize PPS");
+    let pps_deserialized: PicParameterSet =
+        serde_json::from_str(&json).expect("Failed to deserialize PPS");
 
     assert_eq!(pps, pps_deserialized);
 }
@@ -159,7 +159,9 @@ fn test_slice_header_json_deserialization() {
             long_term_reference_flag: Some(true),
             adaptive_ref_pic_marking_mode_flag: Some(true),
             memory_management_operations: vec![
-                MemoryManagementControlOperation::MarkShortTermUnused { difference_of_pic_nums_minus1: 3 },
+                MemoryManagementControlOperation::MarkShortTermUnused {
+                    difference_of_pic_nums_minus1: 3,
+                },
                 MemoryManagementControlOperation::MarkAllUnused,
             ],
         }),
@@ -174,7 +176,8 @@ fn test_slice_header_json_deserialization() {
     };
 
     let json = serde_json::to_string(&header).expect("Failed to serialize SliceHeader");
-    let header_deserialized: SliceHeader = serde_json::from_str(&json).expect("Failed to deserialize SliceHeader");
+    let header_deserialized: SliceHeader =
+        serde_json::from_str(&json).expect("Failed to deserialize SliceHeader");
 
     assert_eq!(header, header_deserialized);
 }
@@ -215,7 +218,8 @@ fn test_sps_from_raw_json() {
         "vui_parameters": null
     }"#;
 
-    let sps: SequenceParameterSet = serde_json::from_str(raw_json).expect("Failed to parse raw SPS JSON");
+    let sps: SequenceParameterSet =
+        serde_json::from_str(raw_json).expect("Failed to parse raw SPS JSON");
     assert_eq!(sps.profile, Profile::High);
     assert_eq!(sps.level_idc, 31);
     assert_eq!(sps.seq_parameter_set_id, 0);
@@ -246,7 +250,10 @@ fn test_pps_from_raw_json() {
         "second_chroma_qp_index_offset": 0
     }"#;
 
-    let pps: PicParameterSet = serde_json::from_str(raw_json.replace("\"pic_init_qs_minus26: 0,", "\"pic_init_qs_minus26\": 0,").as_str()).expect("Failed to parse raw PPS JSON");
+    let pps: PicParameterSet = serde_json::from_str(
+        raw_json.replace("\"pic_init_qs_minus26: 0,", "\"pic_init_qs_minus26\": 0,").as_str(),
+    )
+    .expect("Failed to parse raw PPS JSON");
     assert_eq!(pps.pic_parameter_set_id, 0);
     assert!(pps.entropy_coding_mode_flag);
     assert!(pps.deblocking_filter_control_present_flag);
@@ -294,18 +301,31 @@ fn test_slice_header_from_raw_json() {
         "slice_group_change_cycle": null
     }"#;
 
-    let header: SliceHeader = serde_json::from_str(raw_json).expect("Failed to parse raw SliceHeader JSON");
+    let header: SliceHeader =
+        serde_json::from_str(raw_json).expect("Failed to parse raw SliceHeader JSON");
     assert_eq!(header.first_mb_in_slice, 0);
     assert_eq!(header.slice_type, SliceType::I);
     assert_eq!(header.slice_qp_delta, 24);
     assert_eq!(header.deblocking_filter_idc, DeblockingFilterIdc::On);
-    
+
     assert_eq!(header.ref_pic_list_modification.list0.len(), 3);
-    assert_eq!(header.ref_pic_list_modification.list0[0], RefPicListModification::RemapShortTermNegative(5));
-    assert_eq!(header.ref_pic_list_modification.list0[1], RefPicListModification::RemapShortTermPositive(2));
-    assert_eq!(header.ref_pic_list_modification.list0[2], RefPicListModification::RemapLongTerm(10));
+    assert_eq!(
+        header.ref_pic_list_modification.list0[0],
+        RefPicListModification::RemapShortTermNegative(5)
+    );
+    assert_eq!(
+        header.ref_pic_list_modification.list0[1],
+        RefPicListModification::RemapShortTermPositive(2)
+    );
+    assert_eq!(
+        header.ref_pic_list_modification.list0[2],
+        RefPicListModification::RemapLongTerm(10)
+    );
 
     assert_eq!(header.ref_pic_list_modification.list1.len(), 2);
-    assert_eq!(header.ref_pic_list_modification.list1[0], RefPicListModification::RemapShortTermPositive(1));
+    assert_eq!(
+        header.ref_pic_list_modification.list1[0],
+        RefPicListModification::RemapShortTermPositive(1)
+    );
     assert_eq!(header.ref_pic_list_modification.list1[1], RefPicListModification::RemapLongTerm(3));
 }

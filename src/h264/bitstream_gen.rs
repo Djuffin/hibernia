@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::nal::{NalHeader, NalUnitType};
+use super::nal_writer::create_annex_b_nal_unit;
 use super::pps::PicParameterSet;
 use super::rbsp_writer::RbspWriter;
 use super::slice::SliceHeader;
 use super::sps::SequenceParameterSet;
 use super::writer::{write_pps, write_slice_header, write_sps};
-use super::nal_writer::create_annex_b_nal_unit;
 
 pub type BitstreamConfig = Vec<NalUnitDescriptor>;
 
@@ -51,16 +51,9 @@ pub enum SliceDataConfig {
 #[serde(tag = "type")]
 pub enum MacroblockConfig {
     #[serde(rename = "I_PCM")]
-    IPCM {
-        count: usize,
-        luma: u8,
-        cb: u8,
-        cr: u8,
-    },
+    IPCM { count: usize, luma: u8, cb: u8, cr: u8 },
     #[serde(rename = "P_Skip")]
-    PSkip {
-        count: usize,
-    },
+    PSkip { count: usize },
 }
 
 pub fn generate_bitstream(config: &BitstreamConfig) -> Result<Vec<u8>, String> {
@@ -69,10 +62,7 @@ pub fn generate_bitstream(config: &BitstreamConfig) -> Result<Vec<u8>, String> {
     let mut active_pps = HashMap::new();
 
     for desc in config {
-        let header = NalHeader {
-            nal_ref_idc: desc.nal_ref_idc,
-            nal_unit_type: desc.nal_unit_type,
-        };
+        let header = NalHeader { nal_ref_idc: desc.nal_ref_idc, nal_unit_type: desc.nal_unit_type };
 
         match &desc.payload {
             NalPayload::SPS(sps) => {
@@ -90,25 +80,40 @@ pub fn generate_bitstream(config: &BitstreamConfig) -> Result<Vec<u8>, String> {
             NalPayload::Slice(slice_cfg) => {
                 let pps_id = slice_cfg.header.pic_parameter_set_id;
                 let pps = slice_cfg.writer_pps.as_ref().or_else(|| active_pps.get(&pps_id));
-                let pps = pps.ok_or_else(|| format!("PPS {} not found and no writer_pps provided", pps_id))?;
-                
+                let pps = pps.ok_or_else(|| {
+                    format!("PPS {} not found and no writer_pps provided", pps_id)
+                })?;
+
                 let sps_id = pps.seq_parameter_set_id;
                 let sps = slice_cfg.writer_sps.as_ref().or_else(|| active_sps.get(&sps_id));
-                let sps = sps.ok_or_else(|| format!("SPS {} not found and no writer_sps provided", sps_id))?;
+                let sps = sps.ok_or_else(|| {
+                    format!("SPS {} not found and no writer_sps provided", sps_id)
+                })?;
 
                 let mut writer = RbspWriter::new();
                 let is_idr = desc.nal_unit_type == NalUnitType::IDRSlice;
                 write_slice_header(&slice_cfg.header, sps, pps, is_idr, &mut writer)?;
-                
+
                 for data_chunk in &slice_cfg.data {
                     match data_chunk {
-                        SliceDataConfig::Macroblock(MacroblockConfig::IPCM { count, luma, cb, cr }) => {
+                        SliceDataConfig::Macroblock(MacroblockConfig::IPCM {
+                            count,
+                            luma,
+                            cb,
+                            cr,
+                        }) => {
                             for _ in 0..*count {
                                 writer.ue(25)?; // I_PCM mb_type
                                 writer.align()?;
-                                for _ in 0..256 { writer.u(8, *luma as u32)?; }
-                                for _ in 0..64 { writer.u(8, *cb as u32)?; }
-                                for _ in 0..64 { writer.u(8, *cr as u32)?; }
+                                for _ in 0..256 {
+                                    writer.u(8, *luma as u32)?;
+                                }
+                                for _ in 0..64 {
+                                    writer.u(8, *cb as u32)?;
+                                }
+                                for _ in 0..64 {
+                                    writer.u(8, *cr as u32)?;
+                                }
                             }
                         }
                         SliceDataConfig::Macroblock(MacroblockConfig::PSkip { count }) => {
@@ -118,14 +123,15 @@ pub fn generate_bitstream(config: &BitstreamConfig) -> Result<Vec<u8>, String> {
                             if !writer.is_aligned() {
                                 writer.align()?;
                             }
-                            let bytes = decode_hex(hex_str).map_err(|e| format!("Invalid hex: {}", e))?;
+                            let bytes =
+                                decode_hex(hex_str).map_err(|e| format!("Invalid hex: {}", e))?;
                             for b in bytes {
                                 writer.u(8, b as u32)?;
                             }
                         }
                     }
                 }
-                
+
                 writer.rbsp_trailing_bits()?;
                 bitstream.extend(create_annex_b_nal_unit(&header, &writer.into_inner()));
             }
@@ -274,11 +280,11 @@ mod tests {
 
         let config: BitstreamConfig = serde_json::from_str(json).expect("Failed to parse JSON");
         let bitstream = generate_bitstream(&config).expect("Failed to generate bitstream");
-        
+
         // Should contain 3 NAL units, so 3 start codes.
         let start_codes = bitstream.windows(4).filter(|w| *w == [0, 0, 0, 1]).count();
         assert_eq!(start_codes, 3);
-        
+
         // Output shouldn't be empty
         assert!(!bitstream.is_empty());
 
@@ -286,7 +292,7 @@ mod tests {
         let mut decoder = crate::h264::decoder::Decoder::new();
         let cursor = std::io::Cursor::new(bitstream);
         let nal_parser = crate::h264::nal_parser::NalParser::new(cursor);
-        
+
         let mut frames_decoded = 0;
 
         let mut check_frame = |frame: crate::h264::decoder::VideoFrame| {
@@ -297,17 +303,20 @@ mod tests {
 
             assert_eq!(y_plane.cfg.width, 256);
             assert_eq!(y_plane.cfg.height, 256);
-            
+
             for y in 0..256 {
-                let row_start = (y_plane.cfg.yorigin + y) * y_plane.cfg.stride + y_plane.cfg.xorigin;
+                let row_start =
+                    (y_plane.cfg.yorigin + y) * y_plane.cfg.stride + y_plane.cfg.xorigin;
                 for x in 0..256 {
                     assert_eq!(y_plane.data[row_start + x], 100);
                 }
             }
 
             for y in 0..128 {
-                let u_row_start = (u_plane.cfg.yorigin + y) * u_plane.cfg.stride + u_plane.cfg.xorigin;
-                let v_row_start = (v_plane.cfg.yorigin + y) * v_plane.cfg.stride + v_plane.cfg.xorigin;
+                let u_row_start =
+                    (u_plane.cfg.yorigin + y) * u_plane.cfg.stride + u_plane.cfg.xorigin;
+                let v_row_start =
+                    (v_plane.cfg.yorigin + y) * v_plane.cfg.stride + v_plane.cfg.xorigin;
                 for x in 0..128 {
                     assert_eq!(u_plane.data[u_row_start + x], 101);
                     assert_eq!(v_plane.data[v_row_start + x], 102);
@@ -322,7 +331,7 @@ mod tests {
                 check_frame(frame);
             }
         }
-        
+
         decoder.flush().unwrap();
         while let Some(frame) = decoder.retrieve_frame() {
             check_frame(frame);
@@ -339,4 +348,3 @@ mod tests {
         assert!(decode_hex("GG").is_err());
     }
 }
-

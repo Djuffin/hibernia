@@ -45,7 +45,10 @@ fn main() {
     }
 
     if args.len() != 3 {
-        eprintln!("Usage: {} <input.json> <output.264>\nRun with --help for detailed documentation.", args[0]);
+        eprintln!(
+            "Usage: {} <input.json> <output.264>\nRun with --help for detailed documentation.",
+            args[0]
+        );
         process::exit(1);
     }
 

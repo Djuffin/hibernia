@@ -1,7 +1,3 @@
-use log::trace;
-use super::tables::{
-    get_init_table, RANGE_TAB_LPS, TRANS_IDX_LPS, TRANS_IDX_MPS,
-};
 use super::macroblock::{
     CbfInfo, CodedBlockPattern, MbAddr, MbMotion, MbNeighborName, MotionVector, PartitionInfo,
     PcmMb, SubMbType,
@@ -9,6 +5,8 @@ use super::macroblock::{
 use super::parser::{BitReader, ParseResult};
 use super::residual::Residual;
 use super::slice::Slice;
+use super::tables::{get_init_table, RANGE_TAB_LPS, TRANS_IDX_LPS, TRANS_IDX_MPS};
+use log::trace;
 use std::cmp::min;
 
 struct CurrentMbInfo {
@@ -27,11 +25,7 @@ struct NeighborAccessor<'a> {
 
 impl<'a> NeighborAccessor<'a> {
     fn new(slice: &'a Slice, mb_addr: MbAddr, curr_mb: &'a CurrentMbInfo) -> Self {
-        NeighborAccessor {
-            slice,
-            mb_addr,
-            curr_mb,
-        }
+        NeighborAccessor { slice, mb_addr, curr_mb }
     }
 
     fn get_mb_type_is_intra(&self, blk_idx: u8, neighbor_name: MbNeighborName) -> bool {
@@ -85,8 +79,7 @@ impl<'a> NeighborAccessor<'a> {
         match mb_neighbor {
             None => match self.curr_mb.mb_type {
                 CabacMbType::I(t) => {
-                    t != super::macroblock::IMbType::I_NxN
-                        && t != super::macroblock::IMbType::I_PCM
+                    t != super::macroblock::IMbType::I_NxN && t != super::macroblock::IMbType::I_PCM
                 }
                 _ => false,
             },
@@ -104,7 +97,12 @@ impl<'a> NeighborAccessor<'a> {
         }
     }
 
-    fn get_ref_idx(&self, blk_idx: u8, neighbor_name: MbNeighborName, list_idx: usize) -> Option<u8> {
+    fn get_ref_idx(
+        &self,
+        blk_idx: u8,
+        neighbor_name: MbNeighborName,
+        list_idx: usize,
+    ) -> Option<u8> {
         let (neighbor_blk_idx, mb_neighbor) =
             super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name);
 
@@ -122,24 +120,20 @@ impl<'a> NeighborAccessor<'a> {
                     unimplemented!("B-slice L1 reference support in get_ref_idx")
                 }
             }
-            Some(nb_name) => self
-                .slice
-                .get_mb_neighbor(self.mb_addr, nb_name)
-                .map(|mb| match mb {
-                    super::macroblock::Macroblock::P(pmb) => {
-                        let p = super::macroblock::get_4x4luma_block_location(neighbor_blk_idx);
-                        let x = (p.x / 4) as usize;
-                        let y = (p.y / 4) as usize;
-                        // Only L0 supported for now
-                        if list_idx == 0 {
-                            pmb.motion.partitions[y][x].ref_idx_l0
-                        } else {
-                            unimplemented!("B-slice L1 reference support in get_ref_idx")
-                        }
+            Some(nb_name) => self.slice.get_mb_neighbor(self.mb_addr, nb_name).map(|mb| match mb {
+                super::macroblock::Macroblock::P(pmb) => {
+                    let p = super::macroblock::get_4x4luma_block_location(neighbor_blk_idx);
+                    let x = (p.x / 4) as usize;
+                    let y = (p.y / 4) as usize;
+                    // Only L0 supported for now
+                    if list_idx == 0 {
+                        pmb.motion.partitions[y][x].ref_idx_l0
+                    } else {
+                        unimplemented!("B-slice L1 reference support in get_ref_idx")
                     }
-                    super::macroblock::Macroblock::I(_)
-                    | super::macroblock::Macroblock::PCM(_) => 0, // Intra has no ref_idx
-                }),
+                }
+                super::macroblock::Macroblock::I(_) | super::macroblock::Macroblock::PCM(_) => 0, // Intra has no ref_idx
+            }),
         }
     }
 
@@ -164,42 +158,48 @@ impl<'a> NeighborAccessor<'a> {
                     unimplemented!("B-slice L1 reference support in get_mvd")
                 }
             }
-            Some(nb_name) => self
-                .slice
-                .get_mb_neighbor(self.mb_addr, nb_name)
-                .map(|mb| match mb {
-                    super::macroblock::Macroblock::P(pmb) => {
-                        let p = super::macroblock::get_4x4luma_block_location(neighbor_blk_idx);
-                        let x = (p.x / 4) as usize;
-                        let y = (p.y / 4) as usize;
-                        if list_idx == 0 {
-                            pmb.motion.partitions[y][x].mvd_l0
-                        } else {
-                            unimplemented!("B-slice L1 reference support in get_mvd")
-                        }
+            Some(nb_name) => self.slice.get_mb_neighbor(self.mb_addr, nb_name).map(|mb| match mb {
+                super::macroblock::Macroblock::P(pmb) => {
+                    let p = super::macroblock::get_4x4luma_block_location(neighbor_blk_idx);
+                    let x = (p.x / 4) as usize;
+                    let y = (p.y / 4) as usize;
+                    if list_idx == 0 {
+                        pmb.motion.partitions[y][x].mvd_l0
+                    } else {
+                        unimplemented!("B-slice L1 reference support in get_mvd")
                     }
-                    _ => MotionVector::default(),
-                }),
+                }
+                _ => MotionVector::default(),
+            }),
         }
     }
 
     fn get_cbp(&self, blk_idx: u8, neighbor_name: MbNeighborName) -> Option<CodedBlockPattern> {
-         let (neighbor_blk_idx, mb_neighbor) =
+        let (neighbor_blk_idx, mb_neighbor) =
             super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name);
 
         match mb_neighbor {
             None => Some(self.curr_mb.coded_block_pattern),
-            Some(nb_name) => self.slice.get_mb_neighbor(self.mb_addr, nb_name).map(|mb| mb.get_coded_block_pattern()),
+            Some(nb_name) => self
+                .slice
+                .get_mb_neighbor(self.mb_addr, nb_name)
+                .map(|mb| mb.get_coded_block_pattern()),
         }
     }
 
     fn is_pcm(&self, blk_idx: u8, neighbor_name: MbNeighborName) -> bool {
-         let (neighbor_blk_idx, mb_neighbor) =
+        let (neighbor_blk_idx, mb_neighbor) =
             super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name);
 
         match mb_neighbor {
-            None => matches!(self.curr_mb.mb_type, CabacMbType::I(super::macroblock::IMbType::I_PCM)),
-            Some(nb_name) => self.slice.get_mb_neighbor(self.mb_addr, nb_name).map(|mb| matches!(mb, super::macroblock::Macroblock::PCM(_))).unwrap_or(false),
+            None => {
+                matches!(self.curr_mb.mb_type, CabacMbType::I(super::macroblock::IMbType::I_PCM))
+            }
+            Some(nb_name) => self
+                .slice
+                .get_mb_neighbor(self.mb_addr, nb_name)
+                .map(|mb| matches!(mb, super::macroblock::Macroblock::PCM(_)))
+                .unwrap_or(false),
         }
     }
 
@@ -217,40 +217,47 @@ impl<'a> NeighborAccessor<'a> {
         };
 
         match mb_neighbor {
-            None => {
+            None => match ctx_block_cat {
+                0 => Some(self.curr_mb.cbf.luma_dc),
+                1 | 2 | 5 => Some((self.curr_mb.cbf.luma_ac >> neighbor_blk_idx) & 1 != 0),
+                3 => {
+                    if comp_idx == 0 {
+                        Some(self.curr_mb.cbf.cb_dc)
+                    } else {
+                        Some(self.curr_mb.cbf.cr_dc)
+                    }
+                }
+                4 => {
+                    if comp_idx == 0 {
+                        Some((self.curr_mb.cbf.cb_ac >> neighbor_blk_idx) & 1 != 0)
+                    } else {
+                        Some((self.curr_mb.cbf.cr_ac >> neighbor_blk_idx) & 1 != 0)
+                    }
+                }
+                _ => Some(false),
+            },
+            Some(nb_name) => self.slice.get_mb_neighbor(self.mb_addr, nb_name).map(|mb| {
+                let cbf_info = mb.get_cbf_info();
                 match ctx_block_cat {
-                    0 => Some(self.curr_mb.cbf.luma_dc),
-                    1 | 2 | 5 => Some((self.curr_mb.cbf.luma_ac >> neighbor_blk_idx) & 1 != 0),
+                    0 => cbf_info.luma_dc,
+                    1 | 2 | 5 => (cbf_info.luma_ac >> neighbor_blk_idx) & 1 != 0,
                     3 => {
                         if comp_idx == 0 {
-                            Some(self.curr_mb.cbf.cb_dc)
+                            cbf_info.cb_dc
                         } else {
-                            Some(self.curr_mb.cbf.cr_dc)
+                            cbf_info.cr_dc
                         }
                     }
                     4 => {
                         if comp_idx == 0 {
-                            Some((self.curr_mb.cbf.cb_ac >> neighbor_blk_idx) & 1 != 0)
+                            (cbf_info.cb_ac >> neighbor_blk_idx) & 1 != 0
                         } else {
-                            Some((self.curr_mb.cbf.cr_ac >> neighbor_blk_idx) & 1 != 0)
+                            (cbf_info.cr_ac >> neighbor_blk_idx) & 1 != 0
                         }
                     }
-                    _ => Some(false),
+                    _ => false,
                 }
-            }
-            Some(nb_name) => self
-                .slice
-                .get_mb_neighbor(self.mb_addr, nb_name)
-                .map(|mb| {
-                    let cbf_info = mb.get_cbf_info();
-                    match ctx_block_cat {
-                        0 => cbf_info.luma_dc,
-                        1 | 2 | 5 => (cbf_info.luma_ac >> neighbor_blk_idx) & 1 != 0,
-                        3 => if comp_idx == 0 { cbf_info.cb_dc } else { cbf_info.cr_dc },
-                        4 => if comp_idx == 0 { (cbf_info.cb_ac >> neighbor_blk_idx) & 1 != 0 } else { (cbf_info.cr_ac >> neighbor_blk_idx) & 1 != 0 },
-                        _ => false,
-                    }
-                }),
+            }),
         }
     }
 
@@ -260,11 +267,15 @@ impl<'a> NeighborAccessor<'a> {
 
         match mb_neighbor {
             None => self.curr_mb.transform_size_8x8_flag,
-            Some(nb_name) => self.slice.get_mb_neighbor(self.mb_addr, nb_name).map(|mb| match mb {
-                super::macroblock::Macroblock::I(m) => m.transform_size_8x8_flag,
-                super::macroblock::Macroblock::P(m) => m.transform_size_8x8_flag,
-                super::macroblock::Macroblock::PCM(_) => false,
-            }).unwrap_or(false),
+            Some(nb_name) => self
+                .slice
+                .get_mb_neighbor(self.mb_addr, nb_name)
+                .map(|mb| match mb {
+                    super::macroblock::Macroblock::I(m) => m.transform_size_8x8_flag,
+                    super::macroblock::Macroblock::P(m) => m.transform_size_8x8_flag,
+                    super::macroblock::Macroblock::PCM(_) => false,
+                })
+                .unwrap_or(false),
         }
     }
 }
@@ -297,19 +308,12 @@ pub enum CtxIncParams {
     /// Context derivation for `mb_type`, where `ctxIdxInc` depends on the value of previously
     /// decoded bins (`prior`) within the same syntax element's binarization tree.
     /// See Table 9-39 (ctxIdxOffset 3, 14, 17) and clause 9.3.3.1.2.
-    MbType {
-        prior: u8,
-    },
+    MbType { prior: u8 },
 }
 
 impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn new(reader: &'a mut BitReader<'b>, slice: &Slice) -> ParseResult<Self> {
-        let mut ctx = CabacContext {
-            reader,
-            range: 510,
-            offset: 0,
-            ctx_table: [0; 1024],
-        };
+        let mut ctx = CabacContext { reader, range: 510, offset: 0, ctx_table: [0; 1024] };
 
         ctx.init_context_variables(slice);
         ctx.reader.align();
@@ -334,11 +338,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
             let pre_ctx_state = ((m * qp_clipped >> 4) + n).clamp(1, 126);
 
-            let (p_state_idx, val_mps) = if pre_ctx_state <= 63 {
-                (63 - pre_ctx_state, 0)
-            } else {
-                (pre_ctx_state - 64, 1)
-            };
+            let (p_state_idx, val_mps) =
+                if pre_ctx_state <= 63 { (63 - pre_ctx_state, 0) } else { (pre_ctx_state - 64, 1) };
 
             self.ctx_table[ctx_idx] = (p_state_idx as u8) << 1 | (val_mps as u8);
         }
@@ -358,11 +359,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.2.1 Unary (U) binarization process
-    pub fn parse_unary_bin(
-        &mut self,
-        se: SyntaxElement,
-        ctx: CtxIncParams,
-    ) -> ParseResult<u32> {
+    pub fn parse_unary_bin(&mut self, se: SyntaxElement, ctx: CtxIncParams) -> ParseResult<u32> {
         let props = get_syntax_element_properties(se);
         let max_bin_idx_ctx = props.max_bin_idx_ctx;
         let ctx_idx_offset = props.ctx_idx_offset as usize;
@@ -419,22 +416,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.2.3 Concatenated unary/ k-th order Exp-Golomb (UEGk) binarization process
-    pub fn parse_ueg_k(
-        &mut self,
-        se: SyntaxElement,
-        ctx: CtxIncParams,
-    ) -> ParseResult<i32> {
+    pub fn parse_ueg_k(&mut self, se: SyntaxElement, ctx: CtxIncParams) -> ParseResult<i32> {
         let props = get_syntax_element_properties(se);
-        let (u_coff, k_val, signed_val_flag) = if let BinarizationType::UEGk {
-            u_coff,
-            k,
-            signed_val_flag,
-        } = props.binarization
-        {
-            (u_coff, k, signed_val_flag)
-        } else {
-            panic!("parse_ueg_k called on non-UEGk syntax element: {:?}", se);
-        };
+        let (u_coff, k_val, signed_val_flag) =
+            if let BinarizationType::UEGk { u_coff, k, signed_val_flag } = props.binarization {
+                (u_coff, k, signed_val_flag)
+            } else {
+                panic!("parse_ueg_k called on non-UEGk syntax element: {:?}", se);
+            };
 
         // Prefix: TU with cMax = uCoff
         let prefix = self.parse_truncated_unary_bin(se, Some(u_coff), ctx)?;
@@ -443,7 +432,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             let val = prefix as i32;
             let final_val = if signed_val_flag && val != 0 {
                 let sign = self.decode_bypass()?;
-                if sign == 1 { -val } else { val }
+                if sign == 1 {
+                    -val
+                } else {
+                    val
+                }
             } else {
                 val
             };
@@ -473,7 +466,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         let final_val = if signed_val_flag && val != 0 {
             let sign = self.decode_bypass()?;
-            if sign == 1 { -val } else { val }
+            if sign == 1 {
+                -val
+            } else {
+                val
+            }
         } else {
             val
         };
@@ -658,7 +655,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 return 0;
             }
             if accessor.slice.MbaffFrameFlag() {
-                unimplemented!("MBAFF field macroblock logic for RefIdx context derivation (Eq 9-12)");
+                unimplemented!(
+                    "MBAFF field macroblock logic for RefIdx context derivation (Eq 9-12)"
+                );
             }
             // predModeEqualFlagN: P slices always Pred_L0 unless B slice logic (not impl)
             // refIdxZeroFlagN: ref_idx > 0
@@ -692,11 +691,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
             // predModeEqualFlagN: P slices always Pred_L0 unless B slice logic
             if accessor.slice.MbaffFrameFlag() {
-                unimplemented!("MBAFF field macroblock scaling for MVD context derivation (Eq 9-15, 9-16)");
+                unimplemented!(
+                    "MBAFF field macroblock scaling for MVD context derivation (Eq 9-15, 9-16)"
+                );
             }
-            let mvd = accessor
-                .get_mvd(blk_idx as u8, nb, list_idx)
-                .unwrap_or_default();
+            let mvd = accessor.get_mvd(blk_idx as u8, nb, list_idx).unwrap_or_default();
             let val = if comp_idx == 0 { mvd.x } else { mvd.y };
             val.abs() as usize
         };
@@ -807,8 +806,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // 9.3.3.1.1.10 Derivation process of ctxIdxInc for the syntax element transform_size_8x8_flag
     fn get_ctx_idx_inc_transform_size_8x8_flag(accessor: &NeighborAccessor) -> usize {
         let blk_idx = 0;
-        let cond_term_flag_a = accessor.get_transform_size_8x8_flag(blk_idx, MbNeighborName::A) as usize;
-        let cond_term_flag_b = accessor.get_transform_size_8x8_flag(blk_idx, MbNeighborName::B) as usize;
+        let cond_term_flag_a =
+            accessor.get_transform_size_8x8_flag(blk_idx, MbNeighborName::A) as usize;
+        let cond_term_flag_b =
+            accessor.get_transform_size_8x8_flag(blk_idx, MbNeighborName::B) as usize;
 
         cond_term_flag_a + cond_term_flag_b
     }
@@ -818,7 +819,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         // Table 9-34 says maxBinIdxCtx=2 for MbQpDelta.
         // 9.3.2.7 says it's Unary binarization.
-        let mapped_val = self.parse_unary_bin(SyntaxElement::MbQpDelta, CtxIncParams::Standard(ctx_idx_inc))?;
+        let mapped_val =
+            self.parse_unary_bin(SyntaxElement::MbQpDelta, CtxIncParams::Standard(ctx_idx_inc))?;
 
         // Map back to signed value (Table 9-3)
         let delta = decode_signed_mapping(mapped_val);
@@ -934,7 +936,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     ) -> ParseResult<i16> {
         let ctx_idx_inc_0 = Self::get_ctx_idx_inc_mvd(accessor, list_idx, comp_idx, blk_idx);
 
-        let val = self.parse_ueg_k(SyntaxElement::Mvd(list_idx, comp_idx), CtxIncParams::Standard(ctx_idx_inc_0))?;
+        let val = self.parse_ueg_k(
+            SyntaxElement::Mvd(list_idx, comp_idx),
+            CtxIncParams::Standard(ctx_idx_inc_0),
+        )?;
         let mvd = val as i16;
         trace!("parse_mvd_cabac list={} comp={} blk={} val={}", list_idx, comp_idx, blk_idx, mvd);
         Ok(mvd)
@@ -980,9 +985,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     0 | 6 | 10 => {
                         // Intra16x16 DC
                         if accessor.is_intra_16x16(blk_idx as u8, nb) {
-                            accessor
-                                .get_cbf(blk_idx as u8, nb, ctx_block_cat, 0)
-                                .unwrap_or(false) as usize
+                            accessor.get_cbf(blk_idx as u8, nb, ctx_block_cat, 0).unwrap_or(false)
+                                as usize
                         } else {
                             0
                         }
@@ -997,9 +1001,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         if is_8x8 {
                             accessor.get_cbf(blk_idx as u8, nb, 5, 0).unwrap_or(false) as usize
                         } else {
-                            accessor
-                                .get_cbf(blk_idx as u8, nb, ctx_block_cat, 0)
-                                .unwrap_or(false) as usize
+                            accessor.get_cbf(blk_idx as u8, nb, ctx_block_cat, 0).unwrap_or(false)
+                                as usize
                         }
                     }
                     3 => {
@@ -1007,18 +1010,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         if cbp.chroma() == 0 {
                             return 0;
                         }
-                        accessor
-                            .get_cbf(blk_idx as u8, nb, 3, comp_idx)
-                            .unwrap_or(false) as usize
+                        accessor.get_cbf(blk_idx as u8, nb, 3, comp_idx).unwrap_or(false) as usize
                     }
                     4 => {
                         // Chroma AC
                         if cbp.chroma() != 2 {
                             return 0;
                         }
-                        accessor
-                            .get_cbf(blk_idx as u8, nb, 4, comp_idx)
-                            .unwrap_or(false) as usize
+                        accessor.get_cbf(blk_idx as u8, nb, 4, comp_idx).unwrap_or(false) as usize
                     }
                     5 => {
                         // Luma 8x8
@@ -1073,7 +1072,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
     }
 
-    pub fn get_ctx_idx_inc_abs_level(ctx_block_cat: usize, bin_idx: u32, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> usize {
+    pub fn get_ctx_idx_inc_abs_level(
+        ctx_block_cat: usize,
+        bin_idx: u32,
+        num_decod_abs_level_gt1: usize,
+        num_decod_abs_level_eq1: usize,
+    ) -> usize {
         // Section 9.3.3.1.3
         if bin_idx == 0 {
             if num_decod_abs_level_gt1 != 0 {
@@ -1088,11 +1092,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // Helper to derive ctxIdxInc for syntax elements in Table 9-39 that depend on binIdx.
-    fn get_ctx_idx_inc(
-        se: SyntaxElement,
-        bin_idx: u32,
-        ctx: CtxIncParams,
-    ) -> usize {
+    fn get_ctx_idx_inc(se: SyntaxElement, bin_idx: u32, ctx: CtxIncParams) -> usize {
         match (se, ctx) {
             (SyntaxElement::MbQpDelta, CtxIncParams::Standard(initial)) => {
                 if bin_idx == 0 {
@@ -1131,15 +1131,31 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
             (SyntaxElement::MbTypeI, CtxIncParams::Standard(initial)) => {
                 // Table 9-39 Offset 3, bin 0 only
-                if bin_idx == 0 { initial } else { unreachable!("MbTypeI bin {} needs CtxIncParams::MbType", bin_idx) }
+                if bin_idx == 0 {
+                    initial
+                } else {
+                    unreachable!("MbTypeI bin {} needs CtxIncParams::MbType", bin_idx)
+                }
             }
             (SyntaxElement::MbTypeI, CtxIncParams::MbType { prior }) => {
                 // Table 9-39 Offset 3
                 match bin_idx {
                     2 => 3,
                     3 => 4,
-                    4 => if prior == 0 { 6 } else { 5 },
-                    5 => if prior == 0 { 7 } else { 6 },
+                    4 => {
+                        if prior == 0 {
+                            6
+                        } else {
+                            5
+                        }
+                    }
+                    5 => {
+                        if prior == 0 {
+                            7
+                        } else {
+                            6
+                        }
+                    }
                     6 => 7,
                     _ => unreachable!("Invalid binIdx {} for MbTypeI with prior", bin_idx),
                 }
@@ -1149,33 +1165,51 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 match bin_idx {
                     0 => 0,
                     1 => 1,
-                    _ => unreachable!("MbTypeP bin {} needs CtxIncParams::MbType", bin_idx)
+                    _ => unreachable!("MbTypeP bin {} needs CtxIncParams::MbType", bin_idx),
                 }
             }
             (SyntaxElement::MbTypeP, CtxIncParams::MbType { prior }) => {
                 // Table 9-39 Offset 14
                 match bin_idx {
-                    2 => if prior == 1 { 3 } else { 2 },
+                    2 => {
+                        if prior == 1 {
+                            3
+                        } else {
+                            2
+                        }
+                    }
                     _ => unreachable!("Invalid binIdx {} for MbTypeP with prior", bin_idx),
                 }
             }
             (SyntaxElement::MbTypeISuffix, CtxIncParams::Standard(initial)) => {
                 // Table 9-39 Offset 17 (P-slice Intra suffix)
                 // Bin 0 of the suffix corresponds to the I_NxN check.
-                if bin_idx == 0 { initial } else { unreachable!("MbTypeISuffix bin {} needs CtxIncParams::MbType", bin_idx) }
+                if bin_idx == 0 {
+                    initial
+                } else {
+                    unreachable!("MbTypeISuffix bin {} needs CtxIncParams::MbType", bin_idx)
+                }
             }
             (SyntaxElement::MbTypeISuffix, CtxIncParams::MbType { prior }) => {
                 // Table 9-39 Offset 17
                 match bin_idx {
                     2 => 1,
                     3 => 2,
-                    4 => if prior == 0 { 3 } else { 2 },
+                    4 => {
+                        if prior == 0 {
+                            3
+                        } else {
+                            2
+                        }
+                    }
                     5 => 3,
                     6 => 3,
                     _ => unreachable!("Invalid binIdx {} for MbTypeISuffix", bin_idx),
                 }
             }
-            (SyntaxElement::MbSkipFlagB, _) | (SyntaxElement::MbTypeB, _) | (SyntaxElement::SubMbTypeB, _) => {
+            (SyntaxElement::MbSkipFlagB, _)
+            | (SyntaxElement::MbTypeB, _)
+            | (SyntaxElement::SubMbTypeB, _) => {
                 unimplemented!("B-slice context derivation for {:?}", se);
             }
             (SyntaxElement::MbTypeSI, _) => {
@@ -1184,8 +1218,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             _ => unreachable!("get_ctx_idx_inc mismatch: se={:?}, ctx={:?}", se, ctx),
         }
     }
-
-
 
     fn parse_residual_cabac(
         &mut self,
@@ -1209,9 +1241,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // 1. Luma DC (if Intra 16x16)
         if residual.prediction_mode == super::macroblock::MbPredictionMode::Intra_16x16 {
             // ctxBlockCat = 0
-            self.parse_residual_block_cabac(
-                slice, mb_addr, curr_mb, residual, 0, 0, 0, 16,
-            )?;
+            self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 0, 0, 0, 16)?;
         }
 
         // 2. Luma AC (if Intra 16x16) or Luma 4x4 (others)
@@ -1242,7 +1272,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             && residual.coded_block_pattern.chroma() != 0
         {
             if slice.sps.ChromaArrayType() == super::ChromaFormat::YUV422 {
-                 unimplemented!("Chroma DC residual parsing for YUV422 (NumC8x8 > 1)");
+                unimplemented!("Chroma DC residual parsing for YUV422 (NumC8x8 > 1)");
             }
             // Cb DC: Cat 3, comp_idx 0
             self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 3, 0, 0, 4)?;
@@ -1258,15 +1288,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         {
             for i in 0..4 {
                 // Cb AC: Cat 4, comp_idx 0
-                self.parse_residual_block_cabac(
-                    slice, mb_addr, curr_mb, residual, 4, i, 0, 15,
-                )?;
+                self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 4, i, 0, 15)?;
             }
             for i in 0..4 {
                 // Cr AC: Cat 4, comp_idx 1
-                self.parse_residual_block_cabac(
-                    slice, mb_addr, curr_mb, residual, 4, i, 1, 15,
-                )?;
+                self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 4, i, 1, 15)?;
             }
         }
 
@@ -1289,7 +1315,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         comp_idx: usize,
         max_num_coeff: usize,
     ) -> ParseResult<bool> {
-        trace!("parse_residual_block_cabac cat={} blk={} comp={}", ctx_block_cat, blk_idx, comp_idx);
+        trace!(
+            "parse_residual_block_cabac cat={} blk={} comp={}",
+            ctx_block_cat,
+            blk_idx,
+            comp_idx
+        );
         // 1. coded_block_flag
         if slice.header.field_pic_flag {
             unimplemented!("Field-coded macroblock support (ctxIdxOffset 277 etc)");
@@ -1301,12 +1332,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             || slice.sps.ChromaArrayType() == super::ChromaFormat::YUV444
         {
             let accessor = NeighborAccessor::new(slice, mb_addr, curr_mb);
-            let ctx_idx_inc = Self::get_ctx_idx_inc_coded_block_flag(
-                &accessor,
-                ctx_block_cat,
-                blk_idx,
-                comp_idx,
-            );
+            let ctx_idx_inc =
+                Self::get_ctx_idx_inc_coded_block_flag(&accessor, ctx_block_cat, blk_idx, comp_idx);
             drop(accessor);
 
             self.decode_bin(ctx_idx_offset_cbf + ctx_idx_inc)? == 1
@@ -1351,10 +1378,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mut last_significant_coeff_flag = [false; 64];
         let mut num_coeff = 0;
 
-        let sig_props = get_syntax_element_properties(SyntaxElement::SignificantCoeffFlag(ctx_block_cat));
+        let sig_props =
+            get_syntax_element_properties(SyntaxElement::SignificantCoeffFlag(ctx_block_cat));
         let ctx_idx_offset_sig = sig_props.ctx_idx_offset as usize;
 
-        let last_props = get_syntax_element_properties(SyntaxElement::LastSignificantCoeffFlag(ctx_block_cat));
+        let last_props =
+            get_syntax_element_properties(SyntaxElement::LastSignificantCoeffFlag(ctx_block_cat));
         let ctx_idx_offset_last = last_props.ctx_idx_offset as usize;
 
         let mut last_scan_pos = -1;
@@ -1390,13 +1419,19 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mut num_decod_abs_level_gt1 = 0;
         let mut coeff_level = [0i32; 64];
 
-        let abs_props = get_syntax_element_properties(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat));
+        let abs_props =
+            get_syntax_element_properties(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat));
         let ctx_idx_offset_abs = abs_props.ctx_idx_offset as usize;
 
         // Reverse scan
         for i in (0..=last_scan_pos as usize).rev() {
             if significant_coeff_flag[i] {
-                let val_minus1 = self.parse_abs_level_minus1(ctx_block_cat, ctx_idx_offset_abs, num_decod_abs_level_gt1, num_decod_abs_level_eq1)?;
+                let val_minus1 = self.parse_abs_level_minus1(
+                    ctx_block_cat,
+                    ctx_idx_offset_abs,
+                    num_decod_abs_level_gt1,
+                    num_decod_abs_level_eq1,
+                )?;
                 let abs_level = (val_minus1 + 1) as i32;
 
                 // Update counters
@@ -1416,33 +1451,53 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         // Store coefficients in Residual
         match ctx_block_cat {
-            0 => { // Luma DC (16 coeffs)
-                for i in 0..16 { residual.dc_level16x16[i] = coeff_level[i]; }
-            },
-            1 => { // Luma AC (15 coeffs)
+            0 => {
+                // Luma DC (16 coeffs)
+                for i in 0..16 {
+                    residual.dc_level16x16[i] = coeff_level[i];
+                }
+            }
+            1 => {
+                // Luma AC (15 coeffs)
                 residual.ac_level16x16[blk_idx].copy_from_slice(&coeff_level[0..15]);
                 residual.ac_level16x16_nc[blk_idx] = num_coeff as u8;
-            },
-            2 => { // Luma 4x4 (16 coeffs)
+            }
+            2 => {
+                // Luma 4x4 (16 coeffs)
                 residual.luma_level4x4[blk_idx].copy_from_slice(&coeff_level[0..16]);
                 residual.luma_level4x4_nc[blk_idx] = num_coeff as u8;
-            },
-            3 => { // Chroma DC Cb/Cr
-                let levels = residual.get_dc_levels_for(if comp_idx == 0 { super::ColorPlane::Cb } else { super::ColorPlane::Cr });
+            }
+            3 => {
+                // Chroma DC Cb/Cr
+                let levels = residual.get_dc_levels_for(if comp_idx == 0 {
+                    super::ColorPlane::Cb
+                } else {
+                    super::ColorPlane::Cr
+                });
                 levels.copy_from_slice(&coeff_level[0..4]);
-            },
-            4 => { // Chroma AC Cb/Cr
-                let (levels, nc) = residual.get_ac_levels_for(blk_idx as u8, if comp_idx == 0 { super::ColorPlane::Cb } else { super::ColorPlane::Cr });
+            }
+            4 => {
+                // Chroma AC Cb/Cr
+                let (levels, nc) = residual.get_ac_levels_for(
+                    blk_idx as u8,
+                    if comp_idx == 0 { super::ColorPlane::Cb } else { super::ColorPlane::Cr },
+                );
                 levels.copy_from_slice(&coeff_level[0..15]);
                 *nc = num_coeff as u8;
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         Ok(true)
     }
 
-    fn parse_abs_level_minus1(&mut self, ctx_block_cat: usize, _ctx_idx_offset_abs: usize, num_decod_abs_level_gt1: usize, num_decod_abs_level_eq1: usize) -> ParseResult<u32> {
+    fn parse_abs_level_minus1(
+        &mut self,
+        ctx_block_cat: usize,
+        _ctx_idx_offset_abs: usize,
+        num_decod_abs_level_gt1: usize,
+        num_decod_abs_level_eq1: usize,
+    ) -> ParseResult<u32> {
         let val = self.parse_ueg_k(
             SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat),
             CtxIncParams::AbsLevel { gt1: num_decod_abs_level_gt1, eq1: num_decod_abs_level_eq1 },
@@ -1452,7 +1507,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         Ok(val_u32)
     }
 
-
     // 9.3.3.1.1.3 Derivation process of ctxIdxInc for the syntax element mb_type
     fn get_ctx_idx_inc_mb_type_i(slice: &Slice, mb_addr: MbAddr) -> usize {
         let get_flag = |mb: &super::macroblock::Macroblock| match mb {
@@ -1461,26 +1515,27 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             super::macroblock::Macroblock::P(_) => true,   // P is not I_NxN
         };
 
-        let cond_term_flag_a = slice
-            .get_mb_neighbor(mb_addr, MbNeighborName::A)
-            .map(get_flag)
-            .unwrap_or(false);
+        let cond_term_flag_a =
+            slice.get_mb_neighbor(mb_addr, MbNeighborName::A).map(get_flag).unwrap_or(false);
 
-        let cond_term_flag_b = slice
-            .get_mb_neighbor(mb_addr, MbNeighborName::B)
-            .map(get_flag)
-            .unwrap_or(false);
+        let cond_term_flag_b =
+            slice.get_mb_neighbor(mb_addr, MbNeighborName::B).map(get_flag).unwrap_or(false);
 
         (cond_term_flag_a as usize) + (cond_term_flag_b as usize)
     }
 
-    pub fn parse_mb_type_i(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<super::macroblock::IMbType> {
+    pub fn parse_mb_type_i(
+        &mut self,
+        slice: &Slice,
+        mb_addr: MbAddr,
+    ) -> ParseResult<super::macroblock::IMbType> {
         let props = get_syntax_element_properties(SyntaxElement::MbTypeI);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
 
         // Bin 0
         let ctx_idx_inc_0 = Self::get_ctx_idx_inc_mb_type_i(slice, mb_addr);
-        let inc0 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeI, 0, CtxIncParams::Standard(ctx_idx_inc_0));
+        let inc0 =
+            Self::get_ctx_idx_inc(SyntaxElement::MbTypeI, 0, CtxIncParams::Standard(ctx_idx_inc_0));
         if self.decode_bin(ctx_idx_offset + inc0)? == 0 {
             trace!("parse_mb_type_i type={:?}", super::macroblock::IMbType::I_NxN);
             return Ok(super::macroblock::IMbType::I_NxN);
@@ -1498,7 +1553,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         Ok(res)
     }
 
-    fn parse_i_16x16_params(&mut self, ctx_idx_offset: usize, se: SyntaxElement) -> ParseResult<super::macroblock::IMbType> {
+    fn parse_i_16x16_params(
+        &mut self,
+        ctx_idx_offset: usize,
+        se: SyntaxElement,
+    ) -> ParseResult<super::macroblock::IMbType> {
         let inc2 = Self::get_ctx_idx_inc(se, 2, CtxIncParams::MbType { prior: 0 });
         let cbpl = self.decode_bin(ctx_idx_offset + inc2)?;
 
@@ -1552,7 +1611,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let b1 = self.decode_bin(ctx_idx_offset + inc1)?;
 
         // Bin 2: Table 9-39, ctxIdxOffset 14, binIdx 2 uses ctxIdxInc 2 or 3
-        let inc2 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeP, 2, CtxIncParams::MbType { prior: b1 });
+        let inc2 =
+            Self::get_ctx_idx_inc(SyntaxElement::MbTypeP, 2, CtxIncParams::MbType { prior: b1 });
         let b2 = self.decode_bin(ctx_idx_offset + inc2)?;
 
         let res = if b1 == 1 {
@@ -1575,9 +1635,15 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // Helper for P-slice Intra suffix
-    fn parse_mb_type_i_suffix(&mut self, ctx_idx_offset: usize, _slice: &Slice, _mb_addr: MbAddr) -> ParseResult<super::macroblock::IMbType> {
+    fn parse_mb_type_i_suffix(
+        &mut self,
+        ctx_idx_offset: usize,
+        _slice: &Slice,
+        _mb_addr: MbAddr,
+    ) -> ParseResult<super::macroblock::IMbType> {
         // Bin 0 (of suffix): I_NxN check. Table 9-39 Row 17 Col 3 => ctxIdxInc = 0
-        let inc0 = Self::get_ctx_idx_inc(SyntaxElement::MbTypeISuffix, 0, CtxIncParams::Standard(0));
+        let inc0 =
+            Self::get_ctx_idx_inc(SyntaxElement::MbTypeISuffix, 0, CtxIncParams::Standard(0));
         if self.decode_bin(ctx_idx_offset + inc0)? == 0 {
             // Bin 0 = 0 -> I_NxN
             trace!("parse_mb_type_i_suffix type={:?}", super::macroblock::IMbType::I_NxN);
@@ -1596,7 +1662,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         Ok(res)
     }
 
-    pub fn parse_sub_mb_type_p(&mut self, _slice: &Slice, _mb_addr: MbAddr) -> ParseResult<super::macroblock::SubMbType> {
+    pub fn parse_sub_mb_type_p(
+        &mut self,
+        _slice: &Slice,
+        _mb_addr: MbAddr,
+    ) -> ParseResult<super::macroblock::SubMbType> {
         let props = get_syntax_element_properties(SyntaxElement::SubMbTypeP);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
 
@@ -1623,9 +1693,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // 9.3.3.1.1.8 Derivation process of ctxIdxInc for the syntax element intra_chroma_pred_mode
     fn get_ctx_idx_inc_intra_chroma_pred_mode(slice: &Slice, mb_addr: MbAddr) -> usize {
         let get_cond_term_flag = |mb: &super::macroblock::Macroblock| match mb {
-             super::macroblock::Macroblock::PCM(_) => false, // Spec: condTermFlagN = 0 for I_PCM
-             super::macroblock::Macroblock::I(m) => m.intra_chroma_pred_mode as u32 != 0,
-             super::macroblock::Macroblock::P(_) => false,
+            super::macroblock::Macroblock::PCM(_) => false, // Spec: condTermFlagN = 0 for I_PCM
+            super::macroblock::Macroblock::I(m) => m.intra_chroma_pred_mode as u32 != 0,
+            super::macroblock::Macroblock::P(_) => false,
         };
 
         let cond_term_flag_a = slice
@@ -1641,11 +1711,19 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         (cond_term_flag_a as usize) + (cond_term_flag_b as usize)
     }
 
-    pub fn parse_intra_chroma_pred_mode(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<super::macroblock::Intra_Chroma_Pred_Mode> {
+    pub fn parse_intra_chroma_pred_mode(
+        &mut self,
+        slice: &Slice,
+        mb_addr: MbAddr,
+    ) -> ParseResult<super::macroblock::Intra_Chroma_Pred_Mode> {
         let ctx_idx_inc = Self::get_ctx_idx_inc_intra_chroma_pred_mode(slice, mb_addr);
 
         // Table 9-34: maxBinIdxCtx = 1.
-        let val = self.parse_truncated_unary_bin(SyntaxElement::IntraChromaPredMode, None, CtxIncParams::Standard(ctx_idx_inc))?;
+        let val = self.parse_truncated_unary_bin(
+            SyntaxElement::IntraChromaPredMode,
+            None,
+            CtxIncParams::Standard(ctx_idx_inc),
+        )?;
         let mode = super::macroblock::Intra_Chroma_Pred_Mode::try_from(val).map_err(|e| e)?;
         trace!("parse_intra_chroma_pred_mode mode={:?}", mode);
         Ok(mode)
@@ -1659,7 +1737,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         trace!("parse_macroblock addr={}", mb_addr);
 
         if slice.MbaffFrameFlag() {
-             unimplemented!("MBAFF mb_field_decoding_flag parsing");
+            unimplemented!("MBAFF mb_field_decoding_flag parsing");
         }
 
         if slice.header.slice_type == super::slice::SliceType::P {
@@ -1748,10 +1826,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     return Ok(super::macroblock::Macroblock::PCM(pcm_mb));
                 }
 
-                let mut mb = super::macroblock::IMb {
-                    mb_type: i_type,
-                    ..Default::default()
-                };
+                let mut mb = super::macroblock::IMb { mb_type: i_type, ..Default::default() };
 
                 // Intra prediction
                 if i_type == super::macroblock::IMbType::I_NxN {
@@ -1760,8 +1835,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         let ctx_idx_inc = Self::get_ctx_idx_inc_transform_size_8x8_flag(&accessor);
                         drop(accessor);
 
-                        let props = get_syntax_element_properties(SyntaxElement::TransformSize8x8Flag);
-                        let flag = self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)? == 1;
+                        let props =
+                            get_syntax_element_properties(SyntaxElement::TransformSize8x8Flag);
+                        let flag =
+                            self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)? == 1;
                         mb.transform_size_8x8_flag = flag;
                         curr_mb.transform_size_8x8_flag = flag;
                     }
@@ -1769,11 +1846,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     if mb.transform_size_8x8_flag {
                         unimplemented!("Intra 8x8 prediction parsing (prev_intra8x8_pred_mode_flag, rem_intra8x8_pred_mode)");
                     } else {
-                        let prev_intra_props = get_syntax_element_properties(SyntaxElement::PrevIntra4x4PredModeFlag);
-                        let rem_intra_props = get_syntax_element_properties(SyntaxElement::RemIntra4x4PredMode);
+                        let prev_intra_props =
+                            get_syntax_element_properties(SyntaxElement::PrevIntra4x4PredModeFlag);
+                        let rem_intra_props =
+                            get_syntax_element_properties(SyntaxElement::RemIntra4x4PredMode);
 
                         for i in 0..16 {
-                            let prev_intra_pred_mode_flag = self.decode_bin(prev_intra_props.ctx_idx_offset as usize)? == 1;
+                            let prev_intra_pred_mode_flag =
+                                self.decode_bin(prev_intra_props.ctx_idx_offset as usize)? == 1;
                             let prev_mode =
                                 super::parser::calc_prev_intra4x4_pred_mode(slice, &mb, mb_addr, i);
 
@@ -1875,8 +1955,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 3 => 12,
                                 _ => 0,
                             };
-                            let p =
-                                super::macroblock::get_4x4luma_block_location(start_blk_idx);
+                            let p = super::macroblock::get_4x4luma_block_location(start_blk_idx);
                             let start_y = (p.y / 4) as usize;
                             let start_x = (p.x / 4) as usize;
                             for y in 0..2 {
@@ -1928,8 +2007,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 SubMbType::P_L0_4x8 => (1, 2),
                                 SubMbType::P_L0_4x4 => (1, 1),
                             };
-                            let p =
-                                super::macroblock::get_4x4luma_block_location(blk_idx as u8);
+                            let p = super::macroblock::get_4x4luma_block_location(blk_idx as u8);
                             let start_blk_y = (p.y / 4) as usize;
                             let start_blk_x = (p.x / 4) as usize;
                             for y in 0..h {
@@ -2019,7 +2097,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 let mut mb = super::macroblock::PMb {
                     mb_type: p_type,
                     motion: super::parser::calculate_motion(
-                        slice, mb_addr, p_type, &partitions, &sub_mbs,
+                        slice,
+                        mb_addr,
+                        p_type,
+                        &partitions,
+                        &sub_mbs,
                     ),
                     coded_block_pattern: cbp,
                     mb_qp_delta: 0,
@@ -2074,10 +2156,10 @@ pub enum CabacMbType {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::h264::pps::PicParameterSet;
     use crate::h264::slice::{Slice, SliceHeader};
     use crate::h264::sps::SequenceParameterSet;
-    use super::*;
 
     fn make_dummy_slice() -> Slice {
         let sps = SequenceParameterSet::default();
@@ -2109,17 +2191,17 @@ pub enum SyntaxElement {
     MbTypeB,
     SubMbTypeB,
     Mvd(usize, usize), // list_idx, comp_idx
-    RefIdx(usize), // list_idx
+    RefIdx(usize),     // list_idx
     MbQpDelta,
     IntraChromaPredMode,
     PrevIntra4x4PredModeFlag,
     RemIntra4x4PredMode,
     MbFieldDecodingFlag,
     CodedBlockPattern,
-    CodedBlockFlag(usize), // ctxBlockCat
-    SignificantCoeffFlag(usize), // ctxBlockCat
+    CodedBlockFlag(usize),           // ctxBlockCat
+    SignificantCoeffFlag(usize),     // ctxBlockCat
     LastSignificantCoeffFlag(usize), // ctxBlockCat
-    CoeffAbsLevelMinus1(usize), // ctxBlockCat
+    CoeffAbsLevelMinus1(usize),      // ctxBlockCat
     EndOfSliceFlag,
     TransformSize8x8Flag,
 }
@@ -2131,7 +2213,7 @@ pub enum BinarizationType {
     TU { c_max: u32 },
     UEGk { k: u32, signed_val_flag: bool, u_coff: u32 },
     PrefixSuffix, // For MbType and CBP
-    Custom, // For others
+    Custom,       // For others
 }
 
 pub struct CabacTableEntry {
@@ -2217,7 +2299,7 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
-        },
+        }
         SyntaxElement::RefIdx(_) => CabacTableEntry {
             binarization: BinarizationType::U,
             max_bin_idx_ctx: 2,
@@ -2239,13 +2321,19 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
             max_bin_idx_ctx_suffix: None,
             ctx_idx_offset_suffix: None,
         },
-        SyntaxElement::PrevIntra4x4PredModeFlag | SyntaxElement::MbFieldDecodingFlag => CabacTableEntry {
-            binarization: BinarizationType::FL { c_max: 1 },
-            max_bin_idx_ctx: 0,
-            ctx_idx_offset: if matches!(se, SyntaxElement::MbFieldDecodingFlag) { 70 } else { 68 },
-            max_bin_idx_ctx_suffix: None,
-            ctx_idx_offset_suffix: None,
-        },
+        SyntaxElement::PrevIntra4x4PredModeFlag | SyntaxElement::MbFieldDecodingFlag => {
+            CabacTableEntry {
+                binarization: BinarizationType::FL { c_max: 1 },
+                max_bin_idx_ctx: 0,
+                ctx_idx_offset: if matches!(se, SyntaxElement::MbFieldDecodingFlag) {
+                    70
+                } else {
+                    68
+                },
+                max_bin_idx_ctx_suffix: None,
+                ctx_idx_offset_suffix: None,
+            }
+        }
         SyntaxElement::RemIntra4x4PredMode => CabacTableEntry {
             binarization: BinarizationType::FL { c_max: 7 },
             max_bin_idx_ctx: 0,
@@ -2261,139 +2349,159 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
             ctx_idx_offset_suffix: Some(77),
         },
         SyntaxElement::CodedBlockFlag(cat) => {
-             // Table 9-34 and Table 9-40
-             let offset = match cat {
-                 0..=4 => 85 + match cat {
-                     0 => 0,
-                     1 => 4,
-                     2 => 8,
-                     3 => 12,
-                     4 => 16,
-                     _ => unreachable!(),
-                 },
-                 5 => 1012, // ctxBlockCat == 5
-                 6..=8 => 460 + (cat - 6) * 4, // 5 < ctxBlockCat < 9
-                 9 => 1016, // 1012 + 4
-                 10..=12 => 472 + (cat - 10) * 4, // 9 < ctxBlockCat < 13
-                 13 => 1020, // 1012 + 8
-                 _ => 85,
-             };
-             CabacTableEntry {
+            // Table 9-34 and Table 9-40
+            let offset = match cat {
+                0..=4 => {
+                    85 + match cat {
+                        0 => 0,
+                        1 => 4,
+                        2 => 8,
+                        3 => 12,
+                        4 => 16,
+                        _ => unreachable!(),
+                    }
+                }
+                5 => 1012,                       // ctxBlockCat == 5
+                6..=8 => 460 + (cat - 6) * 4,    // 5 < ctxBlockCat < 9
+                9 => 1016,                       // 1012 + 4
+                10..=12 => 472 + (cat - 10) * 4, // 9 < ctxBlockCat < 13
+                13 => 1020,                      // 1012 + 8
+                _ => 85,
+            };
+            CabacTableEntry {
                 binarization: BinarizationType::FL { c_max: 1 },
                 max_bin_idx_ctx: 0,
                 ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
-        },
+        }
         SyntaxElement::SignificantCoeffFlag(cat) => {
-             // Table 9-34 and Table 9-40
-             let offset = match cat {
-                 0..=4 => 105 + match cat {
-                     0 => 0,
-                     1 => 15,
-                     2 => 29,
-                     3 => 44,
-                     4 => 47,
-                     _ => unreachable!(),
-                 },
-                 5 => 402,
-                 6..=8 => 484 + match cat {
-                     6 => 0,
-                     7 => 15,
-                     8 => 29,
-                     _ => unreachable!(),
-                 },
-                 9 => 660,
-                 10..=12 => 528 + match cat {
-                     10 => 0,
-                     11 => 15,
-                     12 => 29,
-                     _ => unreachable!(),
-                 },
-                 13 => 718,
-                 _ => 105,
-             };
-             CabacTableEntry {
+            // Table 9-34 and Table 9-40
+            let offset = match cat {
+                0..=4 => {
+                    105 + match cat {
+                        0 => 0,
+                        1 => 15,
+                        2 => 29,
+                        3 => 44,
+                        4 => 47,
+                        _ => unreachable!(),
+                    }
+                }
+                5 => 402,
+                6..=8 => {
+                    484 + match cat {
+                        6 => 0,
+                        7 => 15,
+                        8 => 29,
+                        _ => unreachable!(),
+                    }
+                }
+                9 => 660,
+                10..=12 => {
+                    528 + match cat {
+                        10 => 0,
+                        11 => 15,
+                        12 => 29,
+                        _ => unreachable!(),
+                    }
+                }
+                13 => 718,
+                _ => 105,
+            };
+            CabacTableEntry {
                 binarization: BinarizationType::FL { c_max: 1 },
                 max_bin_idx_ctx: 0,
                 ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
-        },
+        }
         SyntaxElement::LastSignificantCoeffFlag(cat) => {
-             // Table 9-34 and Table 9-40
-             let offset = match cat {
-                 0..=4 => 166 + match cat {
-                     0 => 0,
-                     1 => 15,
-                     2 => 29,
-                     3 => 44,
-                     4 => 47,
-                     _ => unreachable!(),
-                 },
-                 5 => 417,
-                 6..=8 => 572 + match cat {
-                     6 => 0,
-                     7 => 15,
-                     8 => 29,
-                     _ => unreachable!(),
-                 },
-                 9 => 690,
-                 10..=12 => 616 + match cat {
-                     10 => 0,
-                     11 => 15,
-                     12 => 29,
-                     _ => unreachable!(),
-                 },
-                 13 => 748,
-                 _ => 166,
-             };
-             CabacTableEntry {
+            // Table 9-34 and Table 9-40
+            let offset = match cat {
+                0..=4 => {
+                    166 + match cat {
+                        0 => 0,
+                        1 => 15,
+                        2 => 29,
+                        3 => 44,
+                        4 => 47,
+                        _ => unreachable!(),
+                    }
+                }
+                5 => 417,
+                6..=8 => {
+                    572 + match cat {
+                        6 => 0,
+                        7 => 15,
+                        8 => 29,
+                        _ => unreachable!(),
+                    }
+                }
+                9 => 690,
+                10..=12 => {
+                    616 + match cat {
+                        10 => 0,
+                        11 => 15,
+                        12 => 29,
+                        _ => unreachable!(),
+                    }
+                }
+                13 => 748,
+                _ => 166,
+            };
+            CabacTableEntry {
                 binarization: BinarizationType::FL { c_max: 1 },
                 max_bin_idx_ctx: 0,
                 ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
-        },
+        }
         SyntaxElement::CoeffAbsLevelMinus1(cat) => {
-             // Table 9-34 and Table 9-40
-             let offset = match cat {
-                 0..=4 => 227 + match cat {
-                     0 => 0,
-                     1 => 10,
-                     2 => 20,
-                     3 => 30,
-                     4 => 39,
-                     _ => unreachable!(),
-                 },
-                 5 => 426,
-                 6..=8 => 952 + match cat {
-                     6 => 0,
-                     7 => 10,
-                     8 => 20,
-                     _ => unreachable!(),
-                 },
-                 9 => 708,
-                 10..=12 => 982 + match cat {
-                     10 => 0,
-                     11 => 10,
-                     12 => 20,
-                     _ => unreachable!(),
-                 },
-                 13 => 766,
-                 _ => 227,
-             };
-             CabacTableEntry {
+            // Table 9-34 and Table 9-40
+            let offset = match cat {
+                0..=4 => {
+                    227 + match cat {
+                        0 => 0,
+                        1 => 10,
+                        2 => 20,
+                        3 => 30,
+                        4 => 39,
+                        _ => unreachable!(),
+                    }
+                }
+                5 => 426,
+                6..=8 => {
+                    952 + match cat {
+                        6 => 0,
+                        7 => 10,
+                        8 => 20,
+                        _ => unreachable!(),
+                    }
+                }
+                9 => 708,
+                10..=12 => {
+                    982 + match cat {
+                        10 => 0,
+                        11 => 10,
+                        12 => 20,
+                        _ => unreachable!(),
+                    }
+                }
+                13 => 766,
+                _ => 227,
+            };
+            CabacTableEntry {
                 binarization: BinarizationType::UEGk { k: 0, signed_val_flag: false, u_coff: 14 },
                 max_bin_idx_ctx: 1,
                 ctx_idx_offset: offset as u32,
                 max_bin_idx_ctx_suffix: None,
                 ctx_idx_offset_suffix: None,
             }
-        },
+        }
         SyntaxElement::EndOfSliceFlag => CabacTableEntry {
             binarization: BinarizationType::FL { c_max: 1 },
             max_bin_idx_ctx: 0,

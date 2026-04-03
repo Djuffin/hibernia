@@ -1,7 +1,7 @@
-use wasm_bindgen::prelude::*;
 use crate::h264::decoder::{Decoder, VideoFrame};
 use crate::h264::nal_parser::NalParser;
 use std::io::Cursor;
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub struct WasmFrame {
@@ -67,10 +67,7 @@ impl WasmDecoder {
     pub fn new(data: &[u8]) -> Self {
         console_error_panic_hook::set_once();
         let cursor = Cursor::new(data.to_vec());
-        Self {
-            decoder: Decoder::new(),
-            parser: NalParser::new(cursor),
-        }
+        Self { decoder: Decoder::new(), parser: NalParser::new(cursor) }
     }
 
     pub fn decode_next_frame(&mut self) -> Result<Option<WasmFrame>, JsValue> {

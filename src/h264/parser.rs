@@ -775,7 +775,7 @@ pub fn parse_slice_header(
     if pps.redundant_pic_cnt_present_flag {
         read_value!(input, header.redundant_pic_cnt, ue);
     }
-    
+
     if header.slice_type == SliceType::B {
         let direct_spatial_mv_pred_flag: bool;
         read_value!(input, direct_spatial_mv_pred_flag, f);
@@ -807,13 +807,16 @@ pub fn parse_slice_header(
     if nal.nal_ref_idc != 0 {
         header.dec_ref_pic_marking = Some(parse_dec_ref_pic_marking(input, idr_pic_flag)?);
     }
-    
-    if pps.entropy_coding_mode_flag && header.slice_type != SliceType::I && header.slice_type != SliceType::SI {
+
+    if pps.entropy_coding_mode_flag
+        && header.slice_type != SliceType::I
+        && header.slice_type != SliceType::SI
+    {
         read_value!(input, header.cabac_init_idc, ue, 8);
     }
 
     read_value!(input, header.slice_qp_delta, se);
-    
+
     if header.slice_type == SliceType::SP || header.slice_type == SliceType::SI {
         if header.slice_type == SliceType::SP {
             let sp_for_switch_flag: bool;
@@ -824,7 +827,7 @@ pub fn parse_slice_header(
         read_value!(input, slice_qs_delta, se);
         header.slice_qs_delta = Some(slice_qs_delta);
     }
-    
+
     if pps.deblocking_filter_control_present_flag {
         read_value!(input, header.deblocking_filter_idc, ue, 8);
         if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
@@ -832,12 +835,17 @@ pub fn parse_slice_header(
             read_value!(input, header.slice_beta_offset_div2, se);
         }
     }
-    
+
     if pps.slice_group.as_ref().map_or(false, |sg| matches!(sg, SliceGroup::Changing { .. })) {
-        if let Some(SliceGroup::Changing { slice_group_change_rate_minus1, .. }) = pps.slice_group.as_ref() {
-            let pic_size_in_map_units = (sps.pic_width_in_mbs_minus1 as u32 + 1) * (sps.pic_height_in_map_units_minus1 as u32 + 1);
+        if let Some(SliceGroup::Changing { slice_group_change_rate_minus1, .. }) =
+            pps.slice_group.as_ref()
+        {
+            let pic_size_in_map_units = (sps.pic_width_in_mbs_minus1 as u32 + 1)
+                * (sps.pic_height_in_map_units_minus1 as u32 + 1);
             let slice_group_change_rate = slice_group_change_rate_minus1 + 1;
-            let bits = ((pic_size_in_map_units as f64 / slice_group_change_rate as f64) + 1.0).log2().ceil() as u8;
+            let bits = ((pic_size_in_map_units as f64 / slice_group_change_rate as f64) + 1.0)
+                .log2()
+                .ceil() as u8;
             let slice_group_change_cycle: u32;
             read_value!(input, slice_group_change_cycle, u, bits);
             header.slice_group_change_cycle = Some(slice_group_change_cycle);
@@ -1027,7 +1035,11 @@ pub fn get_motion_at_coord(
 
     let neighbor_mb = slice.get_mb(mb_addr)?;
     if neighbor_mb.is_intra() {
-        return Some(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default(), mvd_l0: MotionVector::default() });
+        return Some(PartitionInfo {
+            ref_idx_l0: u8::MAX,
+            mv_l0: MotionVector::default(),
+            mvd_l0: MotionVector::default(),
+        });
     }
     let motion_info = neighbor_mb.get_motion_info();
 
@@ -1120,7 +1132,11 @@ pub fn predict_mv_l0(
     // Helper to extract values for comparison/calculation.
     // Unavailable neighbors are treated as zero MV and ref_idx = -1 (MAX).
     let get_vals = |info: Option<PartitionInfo>| {
-        info.unwrap_or(PartitionInfo { ref_idx_l0: u8::MAX, mv_l0: MotionVector::default(), mvd_l0: MotionVector::default() })
+        info.unwrap_or(PartitionInfo {
+            ref_idx_l0: u8::MAX,
+            mv_l0: MotionVector::default(),
+            mvd_l0: MotionVector::default(),
+        })
     };
 
     let val_a = get_vals(mv_a);
@@ -1289,19 +1305,19 @@ pub fn calculate_motion(
                     (PMbType::P_L0_L0_8x16, 1) => (8, 16, 8, 0),
                     _ => unreachable!(),
                 };
-                            fill_motion_grid(
-                                part_x,
-                                part_y,
-                                part_w,
-                                part_h,
-                                mvd_info.ref_idx_l0,
-                                mvd_info.mvd_l0,
-                            );
-                        }
-                    }
-                }
-                motion
-                }
+                fill_motion_grid(
+                    part_x,
+                    part_y,
+                    part_w,
+                    part_h,
+                    mvd_info.ref_idx_l0,
+                    mvd_info.mvd_l0,
+                );
+            }
+        }
+    }
+    motion
+}
 pub fn parse_p_macroblock(
     input: &mut BitReader,
     slice: &Slice,
@@ -1562,11 +1578,8 @@ pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> Parse
                     &default_sub_mbs,
                 );
 
-                let block = Macroblock::P(PMb {
-                    mb_type: PMbType::P_Skip,
-                    motion,
-                    ..Default::default()
-                });
+                let block =
+                    Macroblock::P(PMb { mb_type: PMbType::P_Skip, motion, ..Default::default() });
                 slice.append_mb(block);
             }
             if mb_skip_run > 0 && !more_rbsp_data(input) {

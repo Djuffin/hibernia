@@ -1,7 +1,10 @@
-use crate::h264::sps::{SequenceParameterSet, VuiParameters};
 use crate::h264::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType};
-use crate::h264::slice::{SliceHeader, SliceType, RefPicListModifications, RefPicListModification, PredWeightTable, DecRefPicMarking, MemoryManagementControlOperation, DeblockingFilterIdc};
 use crate::h264::rbsp_writer::{RbspWriter, WriteResult};
+use crate::h264::slice::{
+    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, PredWeightTable,
+    RefPicListModification, RefPicListModifications, SliceHeader, SliceType,
+};
+use crate::h264::sps::{SequenceParameterSet, VuiParameters};
 use crate::h264::{ChromaFormat, ColorPlane};
 
 pub fn write_sps(sps: &SequenceParameterSet, writer: &mut RbspWriter) -> WriteResult {
@@ -176,7 +179,12 @@ pub fn write_pps(pps: &PicParameterSet, writer: &mut RbspWriter) -> WriteResult 
                     writer.ue(rect.bottom_right)?;
                 }
             }
-            SliceGroup::Changing { change_type, num_slice_groups_minus1, slice_group_change_direction_flag, slice_group_change_rate_minus1 } => {
+            SliceGroup::Changing {
+                change_type,
+                num_slice_groups_minus1,
+                slice_group_change_direction_flag,
+                slice_group_change_rate_minus1,
+            } => {
                 writer.ue(*num_slice_groups_minus1 as u32)?;
                 match change_type {
                     SliceGroupChangeType::BoxOut => writer.ue(3)?,
@@ -211,7 +219,9 @@ pub fn write_pps(pps: &PicParameterSet, writer: &mut RbspWriter) -> WriteResult 
     writer.f(pps.constrained_intra_pred_flag)?;
     writer.f(pps.redundant_pic_cnt_present_flag)?;
 
-    if pps.transform_8x8_mode_flag || pps.second_chroma_qp_index_offset != pps.chroma_qp_index_offset {
+    if pps.transform_8x8_mode_flag
+        || pps.second_chroma_qp_index_offset != pps.chroma_qp_index_offset
+    {
         writer.f(pps.transform_8x8_mode_flag)?;
         writer.f(false)?; // pic_scaling_matrix_present_flag
         writer.se(pps.second_chroma_qp_index_offset)?;
@@ -221,7 +231,11 @@ pub fn write_pps(pps: &PicParameterSet, writer: &mut RbspWriter) -> WriteResult 
     Ok(())
 }
 
-pub fn write_ref_pic_list_modifications(mods: &RefPicListModifications, writer: &mut RbspWriter, slice_type: SliceType) -> WriteResult {
+pub fn write_ref_pic_list_modifications(
+    mods: &RefPicListModifications,
+    writer: &mut RbspWriter,
+    slice_type: SliceType,
+) -> WriteResult {
     if slice_type != SliceType::I && slice_type != SliceType::SI {
         writer.f(!mods.list0.is_empty())?;
         for modification in &mods.list0 {
@@ -271,7 +285,12 @@ pub fn write_ref_pic_list_modifications(mods: &RefPicListModifications, writer: 
     Ok(())
 }
 
-pub fn write_pred_weight_table(table: &PredWeightTable, writer: &mut RbspWriter, slice_header: &SliceHeader, sps: &SequenceParameterSet) -> WriteResult {
+pub fn write_pred_weight_table(
+    table: &PredWeightTable,
+    writer: &mut RbspWriter,
+    slice_header: &SliceHeader,
+    sps: &SequenceParameterSet,
+) -> WriteResult {
     writer.ue(table.luma_log2_weight_denom)?;
     if sps.ChromaArrayType() != ChromaFormat::Monochrome {
         writer.ue(table.chroma_log2_weight_denom)?;
@@ -289,7 +308,10 @@ pub fn write_pred_weight_table(table: &PredWeightTable, writer: &mut RbspWriter,
 
         if sps.ChromaArrayType() != ChromaFormat::Monochrome {
             let chroma_default = 1 << table.chroma_log2_weight_denom;
-            let chroma_modified = factors.chroma_weights[0] != chroma_default || factors.chroma_offsets[0] != 0 || factors.chroma_weights[1] != chroma_default || factors.chroma_offsets[1] != 0;
+            let chroma_modified = factors.chroma_weights[0] != chroma_default
+                || factors.chroma_offsets[0] != 0
+                || factors.chroma_weights[1] != chroma_default
+                || factors.chroma_offsets[1] != 0;
             writer.f(chroma_modified)?;
             if chroma_modified {
                 for j in 0..2 {
@@ -313,7 +335,10 @@ pub fn write_pred_weight_table(table: &PredWeightTable, writer: &mut RbspWriter,
 
             if sps.ChromaArrayType() != ChromaFormat::Monochrome {
                 let chroma_default = 1 << table.chroma_log2_weight_denom;
-                let chroma_modified = factors.chroma_weights[0] != chroma_default || factors.chroma_offsets[0] != 0 || factors.chroma_weights[1] != chroma_default || factors.chroma_offsets[1] != 0;
+                let chroma_modified = factors.chroma_weights[0] != chroma_default
+                    || factors.chroma_offsets[0] != 0
+                    || factors.chroma_weights[1] != chroma_default
+                    || factors.chroma_offsets[1] != 0;
                 writer.f(chroma_modified)?;
                 if chroma_modified {
                     for j in 0..2 {
@@ -328,7 +353,11 @@ pub fn write_pred_weight_table(table: &PredWeightTable, writer: &mut RbspWriter,
     Ok(())
 }
 
-pub fn write_dec_ref_pic_marking(marking: &DecRefPicMarking, writer: &mut RbspWriter, idr_pic_flag: bool) -> WriteResult {
+pub fn write_dec_ref_pic_marking(
+    marking: &DecRefPicMarking,
+    writer: &mut RbspWriter,
+    idr_pic_flag: bool,
+) -> WriteResult {
     if idr_pic_flag {
         writer.f(marking.no_output_of_prior_pics_flag.unwrap_or(false))?;
         writer.f(marking.long_term_reference_flag.unwrap_or(false))?;
@@ -338,7 +367,9 @@ pub fn write_dec_ref_pic_marking(marking: &DecRefPicMarking, writer: &mut RbspWr
         if adaptive {
             for op in &marking.memory_management_operations {
                 match op {
-                    MemoryManagementControlOperation::MarkShortTermUnused { difference_of_pic_nums_minus1 } => {
+                    MemoryManagementControlOperation::MarkShortTermUnused {
+                        difference_of_pic_nums_minus1,
+                    } => {
                         writer.ue(1)?;
                         writer.ue(*difference_of_pic_nums_minus1)?;
                     }
@@ -346,19 +377,26 @@ pub fn write_dec_ref_pic_marking(marking: &DecRefPicMarking, writer: &mut RbspWr
                         writer.ue(2)?;
                         writer.ue(*long_term_pic_num)?;
                     }
-                    MemoryManagementControlOperation::MarkShortTermAsLongTerm { difference_of_pic_nums_minus1, long_term_frame_idx } => {
+                    MemoryManagementControlOperation::MarkShortTermAsLongTerm {
+                        difference_of_pic_nums_minus1,
+                        long_term_frame_idx,
+                    } => {
                         writer.ue(3)?;
                         writer.ue(*difference_of_pic_nums_minus1)?;
                         writer.ue(*long_term_frame_idx)?;
                     }
-                    MemoryManagementControlOperation::SetMaxLongTermFrameIdx { max_long_term_frame_idx_plus1 } => {
+                    MemoryManagementControlOperation::SetMaxLongTermFrameIdx {
+                        max_long_term_frame_idx_plus1,
+                    } => {
                         writer.ue(4)?;
                         writer.ue(*max_long_term_frame_idx_plus1)?;
                     }
                     MemoryManagementControlOperation::MarkAllUnused => {
                         writer.ue(5)?;
                     }
-                    MemoryManagementControlOperation::MarkCurrentAsLongTerm { long_term_frame_idx } => {
+                    MemoryManagementControlOperation::MarkCurrentAsLongTerm {
+                        long_term_frame_idx,
+                    } => {
                         writer.ue(6)?;
                         writer.ue(*long_term_frame_idx)?;
                     }
@@ -370,11 +408,17 @@ pub fn write_dec_ref_pic_marking(marking: &DecRefPicMarking, writer: &mut RbspWr
     Ok(())
 }
 
-pub fn write_slice_header(header: &SliceHeader, sps: &SequenceParameterSet, pps: &PicParameterSet, idr_pic_flag: bool, writer: &mut RbspWriter) -> WriteResult {
+pub fn write_slice_header(
+    header: &SliceHeader,
+    sps: &SequenceParameterSet,
+    pps: &PicParameterSet,
+    idr_pic_flag: bool,
+    writer: &mut RbspWriter,
+) -> WriteResult {
     writer.ue(header.first_mb_in_slice)?;
     writer.ue(header.slice_type as u32)?;
     writer.ue(header.pic_parameter_set_id as u32)?;
-    
+
     if sps.separate_color_plane_flag {
         let plane_id = match header.color_plane {
             Some(ColorPlane::Y) => 0,
@@ -384,9 +428,9 @@ pub fn write_slice_header(header: &SliceHeader, sps: &SequenceParameterSet, pps:
         };
         writer.u(2, plane_id)?;
     }
-    
+
     writer.u(sps.bits_in_frame_num(), header.frame_num as u32)?;
-    
+
     if !sps.frame_mbs_only_flag {
         writer.f(header.field_pic_flag)?;
         if header.field_pic_flag {
@@ -395,11 +439,11 @@ pub fn write_slice_header(header: &SliceHeader, sps: &SequenceParameterSet, pps:
             }
         }
     }
-    
+
     if idr_pic_flag {
         writer.ue(header.idr_pic_id.unwrap_or(0))?;
     }
-    
+
     if sps.pic_order_cnt_type == 0 {
         writer.u(sps.bits_in_max_pic_order_cnt(), header.pic_order_cnt_lsb.unwrap_or(0))?;
         if pps.bottom_field_pic_order_in_frame_present_flag && !header.field_pic_flag {
@@ -411,13 +455,16 @@ pub fn write_slice_header(header: &SliceHeader, sps: &SequenceParameterSet, pps:
             writer.se(header.delta_pic_order_cnt[1])?;
         }
     }
-    
+
     if pps.redundant_pic_cnt_present_flag {
         writer.ue(header.redundant_pic_cnt.unwrap_or(0))?;
     }
-    
+
     if matches!(header.slice_type, SliceType::P | SliceType::SP | SliceType::B) {
-        let num_ref_idx_override = header.num_ref_idx_l0_active_minus1 != pps.num_ref_idx_l0_default_active_minus1 || (header.slice_type == SliceType::B && header.num_ref_idx_l1_active_minus1 != pps.num_ref_idx_l1_default_active_minus1);
+        let num_ref_idx_override = header.num_ref_idx_l0_active_minus1
+            != pps.num_ref_idx_l0_default_active_minus1
+            || (header.slice_type == SliceType::B
+                && header.num_ref_idx_l1_active_minus1 != pps.num_ref_idx_l1_default_active_minus1);
         writer.f(num_ref_idx_override)?;
         if num_ref_idx_override {
             writer.ue(header.num_ref_idx_l0_active_minus1)?;
@@ -426,22 +473,23 @@ pub fn write_slice_header(header: &SliceHeader, sps: &SequenceParameterSet, pps:
             }
         }
     }
-    
+
     write_ref_pic_list_modifications(&header.ref_pic_list_modification, writer, header.slice_type)?;
-    
+
     if (pps.weighted_pred_flag && matches!(header.slice_type, SliceType::P | SliceType::SP))
-        || (pps.weighted_bipred_idc == 1 && header.slice_type == SliceType::B) {
+        || (pps.weighted_bipred_idc == 1 && header.slice_type == SliceType::B)
+    {
         if let Some(table) = &header.pred_weight_table {
             write_pred_weight_table(table, writer, header, sps)?;
         }
     }
-    
+
     if let Some(marking) = &header.dec_ref_pic_marking {
         write_dec_ref_pic_marking(marking, writer, idr_pic_flag)?;
     }
-    
+
     writer.se(header.slice_qp_delta)?;
-    
+
     if pps.deblocking_filter_control_present_flag {
         writer.ue(header.deblocking_filter_idc as u32)?;
         if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
@@ -449,30 +497,35 @@ pub fn write_slice_header(header: &SliceHeader, sps: &SequenceParameterSet, pps:
             writer.se(header.slice_beta_offset_div2)?;
         }
     }
-    
+
     if pps.slice_group.as_ref().map_or(false, |sg| matches!(sg, SliceGroup::Changing { .. })) {
-        if let Some(SliceGroup::Changing { slice_group_change_rate_minus1, .. }) = pps.slice_group.as_ref() {
-            let pic_size_in_map_units = (sps.pic_width_in_mbs_minus1 as u32 + 1) * (sps.pic_height_in_map_units_minus1 as u32 + 1);
+        if let Some(SliceGroup::Changing { slice_group_change_rate_minus1, .. }) =
+            pps.slice_group.as_ref()
+        {
+            let pic_size_in_map_units = (sps.pic_width_in_mbs_minus1 as u32 + 1)
+                * (sps.pic_height_in_map_units_minus1 as u32 + 1);
             let slice_group_change_rate = slice_group_change_rate_minus1 + 1;
-            let bits = ((pic_size_in_map_units as f64 / slice_group_change_rate as f64) + 1.0).log2().ceil() as u8;
+            let bits = ((pic_size_in_map_units as f64 / slice_group_change_rate as f64) + 1.0)
+                .log2()
+                .ceil() as u8;
             writer.u(bits, header.slice_group_change_cycle.unwrap_or(0))?;
         }
     }
-    
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::h264::rbsp::RbspReader;
-    use crate::h264::parser::{parse_sps, parse_pps, parse_slice_header};
-    use crate::h264::sps::{SequenceParameterSet, VuiParameters};
-    use crate::h264::pps::PicParameterSet;
-    use crate::h264::slice::SliceHeader;
-    use crate::h264::{Profile, ChromaFormat, nal::NalHeader, nal::NalUnitType};
     use crate::h264::decoder::DecoderContext;
+    use crate::h264::parser::{parse_pps, parse_slice_header, parse_sps};
+    use crate::h264::pps::PicParameterSet;
+    use crate::h264::rbsp::RbspReader;
+    use crate::h264::slice::SliceHeader;
     use crate::h264::slice::SliceType;
+    use crate::h264::sps::{SequenceParameterSet, VuiParameters};
+    use crate::h264::{nal::NalHeader, nal::NalUnitType, ChromaFormat, Profile};
 
     #[test]
     fn test_write_read_sps() {
@@ -492,10 +545,10 @@ mod tests {
 
         let mut writer = RbspWriter::new();
         write_sps(&sps, &mut writer).unwrap();
-        
+
         let data = writer.into_inner();
         let mut reader = RbspReader::new(&data);
-        
+
         let parsed_sps = parse_sps(&mut reader).unwrap();
         assert_eq!(sps, parsed_sps);
     }
@@ -517,10 +570,10 @@ mod tests {
 
         let mut writer = RbspWriter::new();
         write_pps(&pps, &mut writer).unwrap();
-        
+
         let data = writer.into_inner();
         let mut reader = RbspReader::new(&data);
-        
+
         let parsed_pps = parse_pps(&mut reader).unwrap();
         assert_eq!(pps, parsed_pps);
     }
@@ -532,7 +585,7 @@ mod tests {
         sps.pic_order_cnt_type = 0;
         sps.log2_max_pic_order_cnt_lsb_minus4 = 5;
         sps.frame_mbs_only_flag = true;
-        
+
         let mut pps = PicParameterSet::default();
         pps.deblocking_filter_control_present_flag = true;
 
@@ -556,16 +609,13 @@ mod tests {
         write_slice_header(&header, &sps, &pps, true, &mut writer).unwrap();
         writer.align().unwrap();
         let data = writer.into_inner();
-        
+
         let mut reader = RbspReader::new(&data);
         let mut ctx = DecoderContext::default();
         ctx.put_sps(sps.clone());
         ctx.put_pps(pps.clone());
-        
-        let nal_header = NalHeader {
-            nal_ref_idc: 3,
-            nal_unit_type: NalUnitType::IDRSlice,
-        };
+
+        let nal_header = NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::IDRSlice };
 
         let slice = parse_slice_header(&ctx, &nal_header, &mut reader).unwrap();
         assert_eq!(header, slice.header);
@@ -592,10 +642,10 @@ mod tests {
         vui.aspect_ratio_idc = 255;
         vui.sar_width = 16;
         vui.sar_height = 9;
-        
+
         vui.overscan_info_present_flag = true;
         vui.overscan_appropriate_flag = true;
-        
+
         vui.video_signal_type_present_flag = true;
         vui.video_format = 5;
         vui.video_full_range_flag = true;
@@ -603,18 +653,18 @@ mod tests {
         vui.color_primaries = 1;
         vui.transfer_characteristics = 2;
         vui.matrix_coefficients = 3;
-        
+
         vui.chroma_loc_info_present_flag = true;
         vui.chroma_sample_loc_type_top_field = 1;
         vui.chroma_sample_loc_type_bottom_field = 2;
-        
+
         vui.timing_info_present_flag = true;
         vui.num_units_in_tick = 1000;
         vui.time_scale = 60000;
         vui.fixed_frame_rate_flag = true;
-        
+
         vui.pic_struct_present_flag = true;
-        
+
         vui.bitstream_restriction_flag = true;
         vui.motion_vectors_over_pic_boundaries_flag = true;
         vui.max_bytes_per_pic_denom = 0;
@@ -623,15 +673,15 @@ mod tests {
         vui.log2_max_mv_length_vertical = 10;
         vui.max_num_reorder_frames = 2;
         vui.max_dec_frame_buffering = 3;
-        
+
         sps.vui_parameters = Some(vui);
-        
+
         let mut writer = RbspWriter::new();
         write_sps(&sps, &mut writer).unwrap();
-        
+
         let data = writer.into_inner();
         let mut reader = RbspReader::new(&data);
-        
+
         let parsed_sps = parse_sps(&mut reader).unwrap();
         assert_eq!(sps, parsed_sps);
     }

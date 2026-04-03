@@ -14,7 +14,7 @@ use super::intra_pred::{
 };
 use super::macroblock::{
     self, get_4x4chroma_block_location, get_4x4chroma_block_neighbor, get_4x4luma_block_location,
-    get_4x4luma_block_neighbor, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
+    get_4x4luma_block_neighbor, BMb, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
     Intra_Chroma_Pred_Mode, Macroblock, MbAddr, MbNeighborName, MbPredictionMode, MotionVector,
     PMb, PartitionInfo,
 };
@@ -285,6 +285,9 @@ impl Decoder {
         }
 
         self.construct_ref_pic_list0(slice)?;
+        if slice.header.slice_type == SliceType::B {
+            self.construct_ref_pic_list1(slice)?;
+        }
 
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
         let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
@@ -367,8 +370,12 @@ impl Decoder {
                                     &residuals,
                                 );
                             }
-                            MbPredictionMode::Pred_L0 => todo!(),
-                            MbPredictionMode::Pred_L1 => todo!(),
+                            MbPredictionMode::Pred_L0
+                            | MbPredictionMode::Pred_L1
+                            | MbPredictionMode::BiPred
+                            | MbPredictionMode::Direct => {
+                                unreachable!("Inter prediction mode on I macroblock")
+                            }
                         }
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
@@ -425,6 +432,40 @@ impl Decoder {
                             );
                         }
                     }
+                    Macroblock::B(block) => {
+                        qp = (qp + block.mb_qp_delta + 52 + 2 * qp_bd_offset_y)
+                            % (52 + qp_bd_offset_y)
+                            - qp_bd_offset_y;
+                        let residuals = if let Some(residual) = block.residual.as_ref() {
+                            residual.restore(ColorPlane::Y, qp as u8)
+                        } else {
+                            SmallVec::new()
+                        };
+
+                        render_luma_inter_prediction_b(
+                            slice,
+                            block,
+                            mb_loc,
+                            frame,
+                            &residuals,
+                            references,
+                            &mut self.interpolation_buffer,
+                        );
+
+                        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
+                            let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
+                            let chroma_qp =
+                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().unwrap();
+                            let residuals = if let Some(residual) = block.residual.as_ref() {
+                                residual.restore(plane_name, chroma_qp)
+                            } else {
+                                SmallVec::new()
+                            };
+                            render_chroma_inter_prediction_b(
+                                slice, block, mb_loc, plane_name, frame, &residuals, references,
+                            );
+                        }
+                    }
                 }
             }
 
@@ -441,14 +482,16 @@ impl Decoder {
 
     // Section 8.2.4.1 Decoding process for picture numbers
     fn construct_ref_pic_list0(&self, slice: &mut Slice) -> Result<(), DecodingError> {
-        // We only support P slices for now (and I/B later).
-        // If I slice, list is empty? Spec says "invoked when decoding P, SP or B slice".
         if slice.header.slice_type == SliceType::I || slice.header.slice_type == SliceType::SI {
             slice.ref_pic_list0.clear();
             return Ok(());
         }
 
-        let mut ref_list0 = self.initialize_ref_pic_list0(slice);
+        let mut ref_list0 = if slice.header.slice_type == SliceType::B {
+            self.initialize_ref_pic_list0_b(slice)
+        } else {
+            self.initialize_ref_pic_list0(slice)
+        };
         self.modify_ref_pic_list0(slice, &mut ref_list0);
 
         // Truncate to num_ref_idx_l0_active_minus1 + 1
@@ -605,6 +648,159 @@ impl Decoder {
             }
         })
     }
+
+    // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
+    // List 0 for B slices: short-term with POC <= current (desc), then POC > current (asc), then long-term (asc)
+    fn initialize_ref_pic_list0_b(&self, slice: &Slice) -> Vec<usize> {
+        let candidates_count = self.dpb.pictures.len().saturating_sub(1);
+        let current_poc = self.dpb.pictures.last().map(|p| p.picture.pic_order_cnt).unwrap_or(0);
+
+        let mut short_term_le = Vec::new(); // POC <= current
+        let mut short_term_gt = Vec::new(); // POC > current
+        let mut long_term_refs = Vec::new();
+
+        for (i, pic) in self.dpb.pictures.iter().enumerate().take(candidates_count) {
+            match pic.marking {
+                DpbMarking::UsedForShortTermReference => {
+                    if pic.picture.pic_order_cnt <= current_poc {
+                        short_term_le.push((i, pic.picture.pic_order_cnt));
+                    } else {
+                        short_term_gt.push((i, pic.picture.pic_order_cnt));
+                    }
+                }
+                DpbMarking::UsedForLongTermReference(lt_idx) => {
+                    long_term_refs.push((i, lt_idx));
+                }
+                _ => {}
+            }
+        }
+
+        short_term_le.sort_by_key(|k| std::cmp::Reverse(k.1)); // Descending POC
+        short_term_gt.sort_by_key(|k| k.1); // Ascending POC
+        long_term_refs.sort_by_key(|k| k.1); // Ascending LongTermPicNum
+
+        short_term_le
+            .iter()
+            .map(|x| x.0)
+            .chain(short_term_gt.iter().map(|x| x.0))
+            .chain(long_term_refs.iter().map(|x| x.0))
+            .collect()
+    }
+
+    // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
+    // List 1 for B slices: short-term with POC > current (asc), then POC <= current (desc), then long-term (asc)
+    fn initialize_ref_pic_list1(&self, slice: &Slice) -> Vec<usize> {
+        let candidates_count = self.dpb.pictures.len().saturating_sub(1);
+        let current_poc = self.dpb.pictures.last().map(|p| p.picture.pic_order_cnt).unwrap_or(0);
+
+        let mut short_term_gt = Vec::new(); // POC > current
+        let mut short_term_le = Vec::new(); // POC <= current
+        let mut long_term_refs = Vec::new();
+
+        for (i, pic) in self.dpb.pictures.iter().enumerate().take(candidates_count) {
+            match pic.marking {
+                DpbMarking::UsedForShortTermReference => {
+                    if pic.picture.pic_order_cnt > current_poc {
+                        short_term_gt.push((i, pic.picture.pic_order_cnt));
+                    } else {
+                        short_term_le.push((i, pic.picture.pic_order_cnt));
+                    }
+                }
+                DpbMarking::UsedForLongTermReference(lt_idx) => {
+                    long_term_refs.push((i, lt_idx));
+                }
+                _ => {}
+            }
+        }
+
+        short_term_gt.sort_by_key(|k| k.1); // Ascending POC
+        short_term_le.sort_by_key(|k| std::cmp::Reverse(k.1)); // Descending POC
+        long_term_refs.sort_by_key(|k| k.1); // Ascending LongTermPicNum
+
+        short_term_gt
+            .iter()
+            .map(|x| x.0)
+            .chain(short_term_le.iter().map(|x| x.0))
+            .chain(long_term_refs.iter().map(|x| x.0))
+            .collect()
+    }
+
+    fn construct_ref_pic_list1(&self, slice: &mut Slice) -> Result<(), DecodingError> {
+        let ref_list0 = &slice.ref_pic_list0;
+        let mut ref_list1 = self.initialize_ref_pic_list1(slice);
+
+        // Section 8.2.4.2.3: When list1 is identical to list0 and has more than one entry, swap first two
+        if ref_list1.len() > 1 && ref_list1 == *ref_list0 {
+            ref_list1.swap(0, 1);
+        }
+
+        self.modify_ref_pic_list1(slice, &mut ref_list1);
+
+        let len = (slice.header.num_ref_idx_l1_active_minus1 + 1) as usize;
+        if ref_list1.len() > len {
+            ref_list1.truncate(len);
+        }
+
+        slice.ref_pic_list1 = ref_list1;
+        Ok(())
+    }
+
+    // Section 8.2.4.3 Reordering process for reference picture lists (list 1)
+    fn modify_ref_pic_list1(&self, slice: &Slice, ref_list1: &mut Vec<usize>) {
+        if slice.header.ref_pic_list_modification.list1.is_empty() {
+            return;
+        }
+
+        let max_frame_num = 1 << (slice.sps.log2_max_frame_num_minus4 + 4);
+        let curr_frame_num = slice.header.frame_num as i32;
+        let mut pic_num_lx_pred = curr_frame_num;
+        let mut ref_idx_l1 = 0;
+
+        for modification in &slice.header.ref_pic_list_modification.list1 {
+            match modification {
+                RefPicListModification::RemapShortTermNegative(abs_diff_minus1) => {
+                    let abs_diff = (abs_diff_minus1 + 1) as i32;
+                    let pic_num_lx_no_wrap = pic_num_lx_pred - abs_diff;
+                    let pic_num_lx = if pic_num_lx_no_wrap < 0 {
+                        pic_num_lx_no_wrap + max_frame_num
+                    } else {
+                        pic_num_lx_no_wrap
+                    };
+                    pic_num_lx_pred = pic_num_lx;
+
+                    if let Some(idx) =
+                        self.find_short_term_in_dpb(pic_num_lx, curr_frame_num, max_frame_num)
+                    {
+                        self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
+                        ref_idx_l1 += 1;
+                    }
+                }
+                RefPicListModification::RemapShortTermPositive(abs_diff_minus1) => {
+                    let abs_diff = (abs_diff_minus1 + 1) as i32;
+                    let pic_num_lx_no_wrap = pic_num_lx_pred + abs_diff;
+                    let pic_num_lx = if pic_num_lx_no_wrap >= max_frame_num {
+                        pic_num_lx_no_wrap - max_frame_num
+                    } else {
+                        pic_num_lx_no_wrap
+                    };
+                    pic_num_lx_pred = pic_num_lx;
+
+                    if let Some(idx) =
+                        self.find_short_term_in_dpb(pic_num_lx, curr_frame_num, max_frame_num)
+                    {
+                        self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
+                        ref_idx_l1 += 1;
+                    }
+                }
+                RefPicListModification::RemapLongTerm(long_term_pic_num) => {
+                    if let Some(idx) = self.find_long_term_in_dpb(*long_term_pic_num) {
+                        self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
+                        ref_idx_l1 += 1;
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn render_luma_inter_prediction(
@@ -736,6 +932,223 @@ pub fn render_chroma_inter_prediction(
     for (blk_idx, residual_blk) in residuals.iter().enumerate() {
         let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
         // blk_loc is relative to MB top-left in chroma samples
+
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_loc.x) as isize,
+            y: (mb_y_chroma + blk_loc.y) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            for x in 0..4 {
+                let res = residual_blk.samples[y][x];
+                let pred = row[x] as i32;
+                row[x] = (pred + res).clamp(0, 255) as u8;
+            }
+        }
+    }
+}
+
+pub fn render_luma_inter_prediction_b(
+    slice: &Slice,
+    mb: &BMb,
+    mb_loc: Point,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    references: &[DpbPicture],
+    buffer: &mut InterpolationBuffer,
+) {
+    let y_plane = &mut frame.planes[0];
+
+    for raster_idx in 0..16 {
+        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let pred_mode = partition.pred_mode;
+
+        let blk_x = grid_x * 4;
+        let blk_y = grid_y * 4;
+
+        let mut dst = [0u8; 16];
+
+        let has_l0 = pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
+        let has_l1 = pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
+
+        let mut pred_l0 = [0u8; 16];
+        let mut pred_l1 = [0u8; 16];
+
+        if has_l0 {
+            if let Some(&dpb_idx) = slice.ref_pic_list0.get(partition.ref_idx_l0 as usize) {
+                if let Some(ref_pic) = references.get(dpb_idx) {
+                    let ref_plane = &ref_pic.picture.frame.planes[0];
+                    interpolate_luma(
+                        ref_plane,
+                        mb_loc.x,
+                        mb_loc.y,
+                        blk_x as u8,
+                        blk_y as u8,
+                        4,
+                        4,
+                        partition.mv_l0,
+                        &mut pred_l0,
+                        4,
+                        buffer,
+                    );
+                }
+            }
+        }
+
+        if has_l1 {
+            if let Some(&dpb_idx) = slice.ref_pic_list1.get(partition.ref_idx_l1 as usize) {
+                if let Some(ref_pic) = references.get(dpb_idx) {
+                    let ref_plane = &ref_pic.picture.frame.planes[0];
+                    interpolate_luma(
+                        ref_plane,
+                        mb_loc.x,
+                        mb_loc.y,
+                        blk_x as u8,
+                        blk_y as u8,
+                        4,
+                        4,
+                        partition.mv_l1,
+                        &mut pred_l1,
+                        4,
+                        buffer,
+                    );
+                }
+            }
+        }
+
+        // Combine predictions
+        if has_l0 && has_l1 {
+            // BiPred: average
+            for i in 0..16 {
+                dst[i] = ((pred_l0[i] as u16 + pred_l1[i] as u16 + 1) >> 1) as u8;
+            }
+        } else if has_l0 {
+            dst = pred_l0;
+        } else if has_l1 {
+            dst = pred_l1;
+        }
+
+        // Add residual
+        let blk_idx =
+            macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
+        if let Some(residual_blk) = residuals.get(blk_idx as usize) {
+            for y in 0..4 {
+                for x in 0..4 {
+                    let res = residual_blk.samples[y][x];
+                    let pred = dst[y * 4 + x] as i32;
+                    dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
+                }
+            }
+        }
+
+        // Copy to frame
+        let mut plane_slice = y_plane.mut_slice(PlaneOffset {
+            x: (mb_loc.x + blk_x as u32) as isize,
+            y: (mb_loc.y + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            let row_data = &dst[y * 4..(y + 1) * 4];
+            row[..4].copy_from_slice(row_data);
+        }
+    }
+}
+
+pub fn render_chroma_inter_prediction_b(
+    slice: &Slice,
+    mb: &BMb,
+    mb_loc: Point,
+    plane: ColorPlane,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    references: &[DpbPicture],
+) {
+    let chroma_plane = &mut frame.planes[plane as usize];
+    let mb_x_chroma = mb_loc.x >> 1;
+    let mb_y_chroma = mb_loc.y >> 1;
+
+    // 1. Prediction (2x2 blocks corresponding to each 4x4 luma block)
+    for blk_idx in 0..16 {
+        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let pred_mode = partition.pred_mode;
+
+        let has_l0 = pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
+        let has_l1 = pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
+
+        let blk_x = (grid_x * 4) >> 1;
+        let blk_y = (grid_y * 4) >> 1;
+
+        let mut pred_l0 = [0u8; 4];
+        let mut pred_l1 = [0u8; 4];
+
+        if has_l0 {
+            if let Some(&dpb_idx) = slice.ref_pic_list0.get(partition.ref_idx_l0 as usize) {
+                if let Some(ref_pic) = references.get(dpb_idx) {
+                    let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+                    interpolate_chroma(
+                        ref_plane,
+                        mb_x_chroma,
+                        mb_y_chroma,
+                        blk_x as u8,
+                        blk_y as u8,
+                        2,
+                        2,
+                        partition.mv_l0,
+                        &mut pred_l0,
+                        2,
+                    );
+                }
+            }
+        }
+
+        if has_l1 {
+            if let Some(&dpb_idx) = slice.ref_pic_list1.get(partition.ref_idx_l1 as usize) {
+                if let Some(ref_pic) = references.get(dpb_idx) {
+                    let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+                    interpolate_chroma(
+                        ref_plane,
+                        mb_x_chroma,
+                        mb_y_chroma,
+                        blk_x as u8,
+                        blk_y as u8,
+                        2,
+                        2,
+                        partition.mv_l1,
+                        &mut pred_l1,
+                        2,
+                    );
+                }
+            }
+        }
+
+        let mut dst = [0u8; 4];
+        if has_l0 && has_l1 {
+            for i in 0..4 {
+                dst[i] = ((pred_l0[i] as u16 + pred_l1[i] as u16 + 1) >> 1) as u8;
+            }
+        } else if has_l0 {
+            dst = pred_l0;
+        } else if has_l1 {
+            dst = pred_l1;
+        }
+
+        // Write to frame
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_x as u32) as isize,
+            y: (mb_y_chroma + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
+            row[0] = dst[y * 2];
+            row[1] = dst[y * 2 + 1];
+        }
+    }
+
+    // 2. Residuals
+    for (blk_idx, residual_blk) in residuals.iter().enumerate() {
+        let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
 
         let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
             x: (mb_x_chroma + blk_loc.x) as isize,

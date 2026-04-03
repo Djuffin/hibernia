@@ -638,6 +638,7 @@ fn get_qp(mb: &Macroblock) -> u8 {
     match mb {
         Macroblock::I(m) => m.qp,
         Macroblock::P(m) => m.qp,
+        Macroblock::B(m) => m.qp,
         Macroblock::PCM(m) => m.qp,
     }
 }
@@ -669,6 +670,13 @@ fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
                 false
             }
         }
+        Macroblock::B(m) => {
+            if let Some(res) = &m.residual {
+                res.luma_level4x4[blk_idx as usize].iter().any(|&x| x != 0)
+            } else {
+                false
+            }
+        }
         _ => false,
     }
 }
@@ -684,13 +692,13 @@ fn check_motion_discontinuity(
     // Get PartitionInfo for the 4x4 blocks.
 
     let get_part = |mb: &Macroblock, idx: usize| -> Option<super::macroblock::PartitionInfo> {
-        match mb {
-            Macroblock::P(pmb) => {
-                let (y, x) = super::residual::unscan_4x4(idx);
-                Some(pmb.motion.partitions[y][x])
-            }
-            _ => None, // Intra/PCM have no motion
-        }
+        let motion = match mb {
+            Macroblock::P(pmb) => &pmb.motion,
+            Macroblock::B(bmb) => &bmb.motion,
+            _ => return None, // Intra/PCM have no motion
+        };
+        let (y, x) = super::residual::unscan_4x4(idx);
+        Some(motion.partitions[y][x])
     };
 
     let p_part = get_part(mb_p, blk_p_idx);
@@ -698,26 +706,44 @@ fn check_motion_discontinuity(
 
     match (p_part, q_part) {
         (Some(pp), Some(qq)) => {
-            // Check ref index
-            let ref_p = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize);
-            let ref_q = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize);
+            // §8.7.2.1: For B slices, check both L0 and L1 references and MVs
+            let ref_p_l0 = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize).copied();
+            let ref_q_l0 = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize).copied();
+            let ref_p_l1 = slice.ref_pic_list1.get(pp.ref_idx_l1 as usize).copied();
+            let ref_q_l1 = slice.ref_pic_list1.get(qq.ref_idx_l1 as usize).copied();
 
-            if ref_p != ref_q {
-                return true;
-            }
-            // Check MV difference >= 4 (quarter pel units)
-            let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
-            let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
+            let uses_bipred = !slice.ref_pic_list1.is_empty();
 
-            if mv_diff_x >= 4 || mv_diff_y >= 4 {
-                return true;
+            if !uses_bipred {
+                // P-slice or B-slice with only L0: simple check
+                if ref_p_l0 != ref_q_l0 {
+                    return true;
+                }
+                let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
+                let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
+                return mv_diff_x >= 4 || mv_diff_y >= 4;
             }
-            false
+
+            // B-slice: check if refs and MVs match in either direct or swapped order
+            let mv_close = |a: super::macroblock::MotionVector, b: super::macroblock::MotionVector| -> bool {
+                (a.x as i32 - b.x as i32).abs() < 4 && (a.y as i32 - b.y as i32).abs() < 4
+            };
+
+            // Direct order: L0p==L0q && L1p==L1q && MVs close
+            let direct_match = ref_p_l0 == ref_q_l0
+                && ref_p_l1 == ref_q_l1
+                && mv_close(pp.mv_l0, qq.mv_l0)
+                && mv_close(pp.mv_l1, qq.mv_l1);
+
+            // Swapped order: L0p==L1q && L1p==L0q && MVs close (swapped)
+            let swap_match = ref_p_l0 == ref_q_l1
+                && ref_p_l1 == ref_q_l0
+                && mv_close(pp.mv_l0, qq.mv_l1)
+                && mv_close(pp.mv_l1, qq.mv_l0);
+
+            !(direct_match || swap_match)
         }
-        // One Inter, one Intra/PCM.
-        // (Intra is usually handled in Condition 1, but this covers structural mismatches).
         (Some(_), None) | (None, Some(_)) => true,
-        // Both invalid/missing.
         (None, None) => false,
     }
 }

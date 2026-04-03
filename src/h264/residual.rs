@@ -91,6 +91,8 @@ impl Residual {
                 MbPredictionMode::Intra_4x4
                 | MbPredictionMode::Pred_L0
                 | MbPredictionMode::Pred_L1
+                | MbPredictionMode::BiPred
+                | MbPredictionMode::Direct
                 | MbPredictionMode::None => self.luma_level4x4_nc[blk_idx],
                 MbPredictionMode::Intra_8x8 => todo!(),
             },

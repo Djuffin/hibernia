@@ -379,6 +379,7 @@ mod tests {
             frame: VideoFrame::new_with_padding(16, 16, ChromaSampling::Cs420, 0),
             frame_num,
             pic_order_cnt,
+            motion_field: None,
         }
     }
 

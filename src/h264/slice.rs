@@ -3,10 +3,25 @@ use std::{default, fmt, result};
 
 use num_traits::FromPrimitive;
 
-use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborName};
+use super::macroblock::{get_neighbor_mbs, MbMotion, Macroblock, MbAddr, MbNeighborName};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
 use super::{tables, ColorPlane, Point};
+
+/// Information about the colocated picture (refPicList1[0]) needed for temporal direct prediction.
+#[derive(Clone, Debug)]
+pub struct ColPicInfo {
+    /// Motion vectors and ref indices for each MB in the colocated picture.
+    pub mb_motion: Vec<MbMotion>,
+    /// Whether each MB in the colocated picture was intra-coded.
+    pub mb_is_intra: Vec<bool>,
+    /// POC of each reference in the colocated picture's refPicList0.
+    pub ref_pic_l0_pocs: Vec<i32>,
+    /// POC of each reference in the colocated picture's refPicList1.
+    pub ref_pic_l1_pocs: Vec<i32>,
+    /// POC of the colocated picture itself.
+    pub pic_poc: i32,
+}
 
 /// Specifies the coding type of the slice (e.g., I, P, B).
 #[derive(
@@ -212,6 +227,12 @@ pub struct Slice {
     macroblocks: Vec<Macroblock>,
     pub ref_pic_list0: Vec<usize>,
     pub ref_pic_list1: Vec<usize>,
+    /// POCs of references in ref_pic_list0 (parallel to ref_pic_list0).
+    pub ref_pic_list0_pocs: Vec<i32>,
+    /// POC of the current picture being decoded.
+    pub current_pic_poc: i32,
+    /// Colocated picture info for temporal direct prediction in B slices.
+    pub col_pic: Option<ColPicInfo>,
 }
 
 impl fmt::Debug for Slice {
@@ -232,6 +253,9 @@ impl Slice {
             macroblocks,
             ref_pic_list0: Vec::new(),
             ref_pic_list1: Vec::new(),
+            ref_pic_list0_pocs: Vec::new(),
+            current_pic_poc: 0,
+            col_pic: None,
         }
     }
 

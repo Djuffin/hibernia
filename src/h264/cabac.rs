@@ -598,6 +598,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             super::macroblock::Macroblock::P(m) => {
                 (m.coded_block_pattern.luma(), m.coded_block_pattern.chroma(), m.mb_qp_delta)
             }
+            super::macroblock::Macroblock::B(m) => {
+                (m.coded_block_pattern.luma(), m.coded_block_pattern.chroma(), m.mb_qp_delta)
+            }
             _ => unreachable!(),
         };
 
@@ -903,9 +906,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             SyntaxElement::MbSkipFlagP
         };
         let props = get_syntax_element_properties(se);
-        let bin = self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)?;
+        let ctx_idx = (props.ctx_idx_offset as usize) + ctx_idx_inc;
+        let bin = self.decode_bin(ctx_idx)?;
         let skip = bin == 1;
-        trace!("parse_mb_skip_flag skip={}", skip);
         Ok(skip)
     }
 
@@ -2600,7 +2603,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     let num_part = b_type.NumMbPart();
                     let num_ref_idx_l0 = slice.header.num_ref_idx_l0_active_minus1;
                     let num_ref_idx_l1 = slice.header.num_ref_idx_l1_active_minus1;
-
                     // ref_idx_l0
                     for i in 0..num_part {
                         let mode = b_type.MbPartPredMode(i);

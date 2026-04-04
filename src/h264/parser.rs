@@ -23,9 +23,9 @@ use macroblock::{
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
 use slice::{
-    DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, PredWeightTable,
-    RefPicListModification, RefPicListModifications, Slice, SliceHeader, SliceType,
-    WeightingFactors,
+    ColPicInfo, DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation,
+    PredWeightTable, RefPicListModification, RefPicListModifications, Slice, SliceHeader,
+    SliceType, WeightingFactors,
 };
 use sps::{FrameCrop, SequenceParameterSet, VuiParameters};
 
@@ -1360,9 +1360,23 @@ pub fn calculate_motion_b(
         }
     }
 
+    let use_spatial = slice.header.direct_spatial_mv_pred_flag.unwrap_or(true);
+
     match mb_type {
         BMbType::B_Direct_16x16 | BMbType::B_Skip => {
-            return derive_spatial_direct(slice, this_mb_addr, &motion);
+            if use_spatial {
+                return derive_spatial_direct(slice, this_mb_addr, &motion);
+            } else if let Some(ref col_pic) = slice.col_pic {
+                return derive_temporal_direct(
+                    slice,
+                    this_mb_addr,
+                    col_pic,
+                    slice.current_pic_poc,
+                );
+            } else {
+                // No colocated picture available, fall back to spatial
+                return derive_spatial_direct(slice, this_mb_addr, &motion);
+            }
         }
         BMbType::B_8x8 => {
             for (i, sub_mb) in sub_macroblocks.iter().enumerate() {
@@ -1370,13 +1384,33 @@ pub fn calculate_motion_b(
                 let sub_mb_y = (i as u8 / 2) * 8;
 
                 if sub_mb.sub_mb_type == BSubMbType::B_Direct_8x8 {
-                    let direct_motion = derive_spatial_direct_sub(
-                        slice,
-                        this_mb_addr,
-                        &motion,
-                        sub_mb_x,
-                        sub_mb_y,
-                    );
+                    let direct_motion = if use_spatial {
+                        derive_spatial_direct_sub(
+                            slice,
+                            this_mb_addr,
+                            &motion,
+                            sub_mb_x,
+                            sub_mb_y,
+                        )
+                    } else if let Some(ref col_pic) = slice.col_pic {
+                        derive_temporal_direct_sub(
+                            slice,
+                            this_mb_addr,
+                            &motion,
+                            col_pic,
+                            slice.current_pic_poc,
+                            sub_mb_x,
+                            sub_mb_y,
+                        )
+                    } else {
+                        derive_spatial_direct_sub(
+                            slice,
+                            this_mb_addr,
+                            &motion,
+                            sub_mb_x,
+                            sub_mb_y,
+                        )
+                    };
                     let grid_x = (sub_mb_x / 4) as usize;
                     let grid_y = (sub_mb_y / 4) as usize;
                     for dy in 0..2 {
@@ -1653,6 +1687,173 @@ fn derive_spatial_direct_sub(
         }
     }
     motion
+}
+
+// Section 8.4.1.2.3 Temporal direct prediction
+// Derives motion vectors and reference indices from the colocated picture's motion field.
+fn derive_temporal_direct(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    col_pic: &ColPicInfo,
+    current_poc: i32,
+) -> MbMotion {
+    let mut motion = MbMotion::default();
+    let direct_8x8_inference = slice.sps.direct_8x8_inference_flag;
+
+    // For each 4x4 block (or 8x8 if direct_8x8_inference_flag)
+    let step = if direct_8x8_inference { 2 } else { 1 };
+
+    for grid_y in (0..4).step_by(step) {
+        for grid_x in (0..4).step_by(step) {
+            let info = derive_temporal_direct_partition(
+                slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
+            );
+
+            if direct_8x8_inference {
+                // Fill 8x8 block (2x2 grid cells)
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        if grid_y + dy < 4 && grid_x + dx < 4 {
+                            motion.partitions[grid_y + dy][grid_x + dx] = info;
+                        }
+                    }
+                }
+            } else {
+                motion.partitions[grid_y][grid_x] = info;
+            }
+        }
+    }
+    motion
+}
+
+// Derive temporal direct prediction for a single 8x8 sub-block within B_8x8
+fn derive_temporal_direct_sub(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    current_motion: &MbMotion,
+    col_pic: &ColPicInfo,
+    current_poc: i32,
+    sub_mb_x: u8,
+    sub_mb_y: u8,
+) -> MbMotion {
+    let mut motion = current_motion.clone();
+    let direct_8x8_inference = slice.sps.direct_8x8_inference_flag;
+    let base_grid_x = (sub_mb_x / 4) as usize;
+    let base_grid_y = (sub_mb_y / 4) as usize;
+
+    let step = if direct_8x8_inference { 2 } else { 1 };
+
+    for gy in (0..2).step_by(step) {
+        for gx in (0..2).step_by(step) {
+            let grid_x = base_grid_x + gx;
+            let grid_y = base_grid_y + gy;
+            let info = derive_temporal_direct_partition(
+                slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
+            );
+
+            if direct_8x8_inference {
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        motion.partitions[base_grid_y + dy][base_grid_x + dx] = info;
+                    }
+                }
+            } else {
+                motion.partitions[grid_y][grid_x] = info;
+            }
+        }
+    }
+    motion
+}
+
+// Core temporal direct prediction for a single 4x4 block position
+fn derive_temporal_direct_partition(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    col_pic: &ColPicInfo,
+    current_poc: i32,
+    grid_x: usize,
+    grid_y: usize,
+) -> PartitionInfo {
+    let col_mb_addr = mb_addr as usize;
+
+    // Check if colocated MB exists and is not intra
+    if col_mb_addr >= col_pic.mb_is_intra.len() || col_pic.mb_is_intra[col_mb_addr] {
+        // Colocated MB is intra: use zero motion with BiPred
+        return PartitionInfo {
+            pred_mode: MbPredictionMode::BiPred,
+            ref_idx_l0: 0,
+            mv_l0: MotionVector::default(),
+            mvd_l0: MotionVector::default(),
+            ref_idx_l1: 0,
+            mv_l1: MotionVector::default(),
+            mvd_l1: MotionVector::default(),
+        };
+    }
+
+    let col_motion = &col_pic.mb_motion[col_mb_addr];
+    let col_part = &col_motion.partitions[grid_y][grid_x];
+
+    // Determine mvCol and refIdxCol from the colocated partition
+    // Per spec: prefer L0, fallback to L1
+    let (mv_col, ref_idx_col, col_ref_pocs) =
+        if col_part.pred_mode == MbPredictionMode::Pred_L1 {
+            (col_part.mv_l1, col_part.ref_idx_l1, &col_pic.ref_pic_l1_pocs)
+        } else {
+            // Pred_L0, BiPred, or other: use L0
+            (col_part.mv_l0, col_part.ref_idx_l0, &col_pic.ref_pic_l0_pocs)
+        };
+
+    // Get the POC of the picture referenced by the colocated partition
+    let col_ref_poc = col_ref_pocs.get(ref_idx_col as usize).copied().unwrap_or(col_pic.pic_poc);
+    let col_poc = col_pic.pic_poc;
+
+    // MapColToList0: find which entry in current pic's refPicList0 has the same POC
+    let ref_idx_l0 = map_col_to_list0(slice, col_ref_poc);
+
+    // Temporal scaling
+    let td = clip_i32((col_poc - col_ref_poc) as i32, -128, 127);
+    let tb = clip_i32((current_poc - col_ref_poc) as i32, -128, 127);
+
+    let (mv_l0, mv_l1) = if td == 0 {
+        // No temporal distance in colocated: just copy
+        (mv_col, MotionVector::default())
+    } else {
+        let tx = (16384 + (td.abs() >> 1)) / td;
+        let dist_scale_factor = clip_i32((tb * tx + 32) >> 6, -1024, 1023);
+        let mv_l0 = MotionVector {
+            x: clip_i32(((dist_scale_factor as i32) * (mv_col.x as i32) + 128) >> 8, -32768, 32767)
+                as i16,
+            y: clip_i32(((dist_scale_factor as i32) * (mv_col.y as i32) + 128) >> 8, -32768, 32767)
+                as i16,
+        };
+        let mv_l1 = MotionVector { x: mv_l0.x - mv_col.x, y: mv_l0.y - mv_col.y };
+        (mv_l0, mv_l1)
+    };
+
+    PartitionInfo {
+        pred_mode: MbPredictionMode::BiPred,
+        ref_idx_l0: ref_idx_l0 as u8,
+        mv_l0,
+        mvd_l0: MotionVector::default(),
+        ref_idx_l1: 0,
+        mv_l1,
+        mvd_l1: MotionVector::default(),
+    }
+}
+
+/// Map colocated reference to current picture's refPicList0 entry with matching POC.
+fn map_col_to_list0(slice: &Slice, col_ref_poc: i32) -> usize {
+    for (idx, &poc) in slice.ref_pic_list0_pocs.iter().enumerate() {
+        if poc == col_ref_poc {
+            return idx;
+        }
+    }
+    // Fallback: if no match found, use 0
+    0
+}
+
+fn clip_i32(val: i32, min_val: i32, max_val: i32) -> i32 {
+    val.max(min_val).min(max_val)
 }
 
 pub fn calculate_motion(

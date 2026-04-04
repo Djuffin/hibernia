@@ -34,6 +34,22 @@ pub struct Picture {
     pub frame: VideoFrame,
     pub frame_num: u16,
     pub pic_order_cnt: i32,
+    /// Per-MB motion field, stored after decoding for use in temporal direct prediction.
+    /// Indexed by mb_addr. Only populated for reference pictures.
+    pub motion_field: Option<MotionFieldStorage>,
+}
+
+/// Stores motion information from a decoded picture, needed for temporal direct prediction in B slices.
+#[derive(Clone, Debug)]
+pub struct MotionFieldStorage {
+    /// Motion vectors and ref indices for each MB, indexed by mb_addr.
+    pub mb_motion: Vec<macroblock::MbMotion>,
+    /// Whether each MB was intra-coded.
+    pub mb_is_intra: Vec<bool>,
+    /// POC of each reference in the picture's refPicList0.
+    pub ref_pic_l0_pocs: Vec<i32>,
+    /// POC of each reference in the picture's refPicList1.
+    pub ref_pic_l1_pocs: Vec<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -198,7 +214,7 @@ impl Decoder {
 
                 let pic_order_cnt = self.poc_state.calculate_poc(&slice, disposition);
 
-                let pic = Picture { frame, frame_num: slice.header.frame_num, pic_order_cnt };
+                let pic = Picture { frame, frame_num: slice.header.frame_num, pic_order_cnt, motion_field: None };
                 let dpb_pic = DpbPicture {
                     picture: pic,
                     marking: if nal.nal_ref_idc != 0 {
@@ -212,8 +228,20 @@ impl Decoder {
                 };
                 let pictures = self.dpb.store_picture(dpb_pic);
 
+                // Construct reference picture lists before parsing, because temporal
+                // direct prediction (used during B-slice parsing) needs the colocated picture.
+                self.construct_ref_pic_list0(&mut slice)?;
+                if slice.header.slice_type == SliceType::B {
+                    self.construct_ref_pic_list1(&mut slice)?;
+                    self.setup_colocated_pic_info(&mut slice);
+                }
+
                 parser::parse_slice_data(&mut input, &mut slice).map_err(parse_error_handler)?;
                 self.process_slice(&mut slice)?;
+
+                // Save motion field for future temporal direct prediction.
+                self.save_motion_field(&slice, disposition);
+
                 self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
                 // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
                 // as "unused for reference" and sets the current frame's frame_num and POC to 0.
@@ -284,10 +312,7 @@ impl Decoder {
             return Err(DecodingError::Wtf);
         }
 
-        self.construct_ref_pic_list0(slice)?;
-        if slice.header.slice_type == SliceType::B {
-            self.construct_ref_pic_list1(slice)?;
-        }
+        // Ref pic lists are now constructed before parse_slice_data in decode().
 
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
         let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
@@ -799,6 +824,78 @@ impl Decoder {
                     }
                 }
             }
+        }
+    }
+
+    /// Set up colocated picture info on the slice for temporal direct prediction.
+    fn setup_colocated_pic_info(&self, slice: &mut Slice) {
+        // Set current picture POC
+        if let Some(current) = self.dpb.pictures.last() {
+            slice.current_pic_poc = current.picture.pic_order_cnt;
+        }
+
+        // Set ref_pic_list0 POCs
+        slice.ref_pic_list0_pocs = slice
+            .ref_pic_list0
+            .iter()
+            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
+            .collect();
+
+        if slice.ref_pic_list1.is_empty() {
+            return;
+        }
+        let col_dpb_idx = slice.ref_pic_list1[0];
+        if let Some(col_pic) = self.dpb.pictures.get(col_dpb_idx) {
+            if let Some(ref mf) = col_pic.picture.motion_field {
+                slice.col_pic = Some(slice::ColPicInfo {
+                    mb_motion: mf.mb_motion.clone(),
+                    mb_is_intra: mf.mb_is_intra.clone(),
+                    ref_pic_l0_pocs: mf.ref_pic_l0_pocs.clone(),
+                    ref_pic_l1_pocs: mf.ref_pic_l1_pocs.clone(),
+                    pic_poc: col_pic.picture.pic_order_cnt,
+                });
+            }
+        }
+    }
+
+    /// Save the current picture's motion field for future temporal direct prediction.
+    fn save_motion_field(&mut self, slice: &Slice, disposition: ReferenceDisposition) {
+        if disposition == ReferenceDisposition::NonReference {
+            return;
+        }
+        let mb_count = slice.get_macroblock_count();
+        let mut mb_motion = Vec::with_capacity(mb_count);
+        let mut mb_is_intra = Vec::with_capacity(mb_count);
+        let first_mb_addr = slice.header.first_mb_in_slice;
+        for i in 0..mb_count {
+            let mb_addr = first_mb_addr + i as u32;
+            if let Some(mb) = slice.get_mb(mb_addr) {
+                mb_motion.push(mb.get_motion_info());
+                mb_is_intra.push(matches!(mb, Macroblock::I(_) | Macroblock::PCM(_)));
+            } else {
+                mb_motion.push(macroblock::MbMotion::default());
+                mb_is_intra.push(true);
+            }
+        }
+        // Collect ref pic list POCs
+        let ref_pic_l0_pocs: Vec<i32> = slice
+            .ref_pic_list0
+            .iter()
+            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
+            .collect();
+        let ref_pic_l1_pocs: Vec<i32> = slice
+            .ref_pic_list1
+            .iter()
+            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
+            .collect();
+
+        if let Some(current) = self.dpb.pictures.last_mut() {
+            current.picture.motion_field = Some(MotionFieldStorage {
+                mb_motion,
+                mb_is_intra,
+                ref_pic_l0_pocs,
+                ref_pic_l1_pocs,
+            });
         }
     }
 }

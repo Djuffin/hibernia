@@ -1032,8 +1032,9 @@ pub fn get_motion_at_coord(
             let block_grid_x = ((x % 16) / 4) as usize;
             let block_grid_y = ((y % 16) / 4) as usize;
             let info = motion.partitions[block_grid_y][block_grid_x];
-            // 255 is used as a sentinel for "not yet decoded" in calculate_motion
-            if info.ref_idx_l0 == 255 {
+            // Both ref_idx set to 255 means "not yet decoded" (sentinel from calculate_motion).
+            // A single 255 means "unused direction" (e.g., Pred_L1 has ref_idx_l0=255).
+            if info.ref_idx_l0 == 255 && info.ref_idx_l1 == 255 {
                 None
             } else {
                 Some(info)
@@ -1352,10 +1353,11 @@ fn fill_motion_grid_b(
 
     let info = PartitionInfo {
         pred_mode,
-        ref_idx_l0: if pred_mode == MbPredictionMode::Pred_L1 { 0 } else { ref_idx_l0 },
+        // Per spec Table 7-13: unused direction gets refIdx = -1 (represented as u8::MAX)
+        ref_idx_l0: if pred_mode == MbPredictionMode::Pred_L1 { u8::MAX } else { ref_idx_l0 },
         mv_l0: final_mv_l0,
         mvd_l0,
-        ref_idx_l1: if pred_mode == MbPredictionMode::Pred_L0 { 0 } else { ref_idx_l1 },
+        ref_idx_l1: if pred_mode == MbPredictionMode::Pred_L0 { u8::MAX } else { ref_idx_l1 },
         mv_l1: final_mv_l1,
         mvd_l1,
     };
@@ -1601,10 +1603,11 @@ fn derive_spatial_direct(
     } else {
         PartitionInfo {
             pred_mode,
-            ref_idx_l0: if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { 0 },
+            // Per spec: unused direction gets refIdx = -1 (represented as u8::MAX)
+            ref_idx_l0: if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { u8::MAX },
             mv_l0,
             mvd_l0: MotionVector::default(),
-            ref_idx_l1: if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { 0 },
+            ref_idx_l1: if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { u8::MAX },
             mv_l1,
             mvd_l1: MotionVector::default(),
         }
@@ -1698,10 +1701,11 @@ fn derive_spatial_direct_sub(
 
     let info = PartitionInfo {
         pred_mode,
-        ref_idx_l0: if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { 0 },
+        // Per spec: unused direction gets refIdx = -1 (represented as u8::MAX)
+        ref_idx_l0: if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { u8::MAX },
         mv_l0,
         mvd_l0: MotionVector::default(),
-        ref_idx_l1: if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { 0 },
+        ref_idx_l1: if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { u8::MAX },
         mv_l1,
         mvd_l1: MotionVector::default(),
     };
@@ -1914,9 +1918,11 @@ pub fn calculate_motion(
 
     // Mark all partitions as "Not yet decoded" (Unavailable) using sentinel ref_idx 255.
     // This allows predict_mv_l0 to correctly identify unavailable neighbors within the same MB.
+    // Both L0 and L1 must be 255 to match the sentinel check in get_motion_at_coord.
     for row in motion.partitions.iter_mut() {
         for part in row.iter_mut() {
             part.ref_idx_l0 = 255;
+            part.ref_idx_l1 = 255;
         }
     }
 

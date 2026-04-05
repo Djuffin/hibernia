@@ -1047,6 +1047,7 @@ pub fn get_motion_at_coord(
     if neighbor_mb.is_intra() {
         return Some(PartitionInfo {
             ref_idx_l0: u8::MAX,
+            ref_idx_l1: u8::MAX,
             mv_l0: MotionVector::default(),
             mvd_l0: MotionVector::default(),
             ..Default::default()
@@ -1079,7 +1080,20 @@ pub fn predict_mv_l0(
     // Helper to fetch neighbor info.
     // Returns None if the neighbor is unavailable (e.g. out of bounds).
     // Returns Some with ref_idx=MAX for Intra blocks (treated as ref_idx=-1).
-    let get_neighbor = |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
+    // Per spec 8.4.1.3.1: if a neighbor doesn't use L0 prediction, refIdxL0 = -1.
+    // Note: pred_mode=None means P-slice code that didn't set pred_mode; those use L0 implicitly.
+    let get_neighbor = |x, y| {
+        get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion).map(|mut info| {
+            if info.pred_mode != MbPredictionMode::None
+                && info.pred_mode != MbPredictionMode::Pred_L0
+                && info.pred_mode != MbPredictionMode::BiPred
+            {
+                info.ref_idx_l0 = u8::MAX;
+                info.mv_l0 = MotionVector::default();
+            }
+            info
+        })
+    };
 
     // Neighbors A (left), B (top), C (top-right), D (top-left)
     let a = get_neighbor(x - 1, y);
@@ -1201,7 +1215,20 @@ pub fn predict_mv_l1(
     let x = mb_loc.x as i32 + part_x as i32;
     let y = mb_loc.y as i32 + part_y as i32;
 
-    let get_neighbor = |x, y| get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion);
+    // Per spec 8.4.1.3.1: if a neighbor doesn't use L1 prediction, refIdxL1 = -1.
+    // Note: pred_mode=None means P-slice code; not relevant for L1 but handled for safety.
+    let get_neighbor = |x, y| {
+        get_motion_at_coord(slice, x, y, mb_addr, current_mb_motion).map(|mut info| {
+            if info.pred_mode != MbPredictionMode::None
+                && info.pred_mode != MbPredictionMode::Pred_L1
+                && info.pred_mode != MbPredictionMode::BiPred
+            {
+                info.ref_idx_l1 = u8::MAX;
+                info.mv_l1 = MotionVector::default();
+            }
+            info
+        })
+    };
 
     let a = get_neighbor(x - 1, y);
     let b = get_neighbor(x, y - 1);

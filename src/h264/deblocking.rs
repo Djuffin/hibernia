@@ -688,7 +688,6 @@ fn check_motion_discontinuity(
     mb_q: &Macroblock,
     blk_q_idx: usize,
 ) -> bool {
-    // Only P slices with L0 are fully supported currently.
     // Get PartitionInfo for the 4x4 blocks.
 
     let get_part = |mb: &Macroblock, idx: usize| -> Option<super::macroblock::PartitionInfo> {

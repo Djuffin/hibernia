@@ -246,6 +246,8 @@ impl Decoder {
                 // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
                 // as "unused for reference" and sets the current frame's frame_num and POC to 0.
                 let has_mmco5 = self.dpb.mark_references(&slice.header, disposition, &slice.sps);
+                // Clean up pictures that are both unused for reference and already output.
+                self.dpb.remove_dead_pictures();
                 self.poc_state.update_mmco5_state(
                     has_mmco5,
                     disposition != ReferenceDisposition::NonReference,
@@ -257,13 +259,16 @@ impl Decoder {
                 info!("SPS: {:#?}", sps);
                 assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
 
-                // Update DPB size based on SPS and VUI parameters
+                // Update DPB size: use level-derived MaxDpbFrames per A.3.1,
+                // or VUI max_dec_frame_buffering if bitstream_restriction_flag is set.
+                let max_dpb_frames = super::dpb::max_dpb_frames(&sps);
                 let mut max_dpb_size = max(sps.max_num_ref_frames as usize, 1);
                 if let Some(vui) = &sps.vui_parameters {
                     if vui.bitstream_restriction_flag {
                         max_dpb_size = max(max_dpb_size, vui.max_dec_frame_buffering as usize);
                     }
                 }
+                max_dpb_size = max(max_dpb_size, max_dpb_frames);
                 self.dpb.set_max_size(max_dpb_size);
 
                 self.context.put_sps(sps);

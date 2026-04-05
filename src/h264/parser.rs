@@ -1689,6 +1689,19 @@ fn derive_spatial_direct_sub(
     motion
 }
 
+/// Returns the colocated grid (x, y) for direct_8x8_inference_flag=1.
+/// Per spec Section 8.4.1.2.3: luma4x4BlkIdx = 5 * mbPartIdx, then inverse-scanned
+/// to pixel coordinates and converted to 4x4 grid indices.
+/// Results: mbPartIdx 0→(0,0), 1→(3,0), 2→(0,3), 3→(3,3).
+fn col_block_for_direct_8x8(mb_part_idx: usize) -> (usize, usize) {
+    let luma4x4 = 5 * mb_part_idx;
+    let group = luma4x4 / 4;
+    let sub = luma4x4 % 4;
+    let px = (group % 2) * 8 + (sub % 2) * 4;
+    let py = (group / 2) * 8 + (sub / 2) * 4;
+    (px / 4, py / 4)
+}
+
 // Section 8.4.1.2.3 Temporal direct prediction
 // Derives motion vectors and reference indices from the colocated picture's motion field.
 fn derive_temporal_direct(
@@ -1700,25 +1713,29 @@ fn derive_temporal_direct(
     let mut motion = MbMotion::default();
     let direct_8x8_inference = slice.sps.direct_8x8_inference_flag;
 
-    // For each 4x4 block (or 8x8 if direct_8x8_inference_flag)
-    let step = if direct_8x8_inference { 2 } else { 1 };
-
-    for grid_y in (0..4).step_by(step) {
-        for grid_x in (0..4).step_by(step) {
+    if direct_8x8_inference {
+        // Per spec Section 8.4.1.2.3: when direct_8x8_inference_flag is 1,
+        // luma4x4BlkIdx = 5 * mbPartIdx, giving representative blocks at
+        // (0,0), (12,0), (0,12), (12,12) i.e. grid positions (0,0), (3,0), (0,3), (3,3).
+        for mb_part_idx in 0..4usize {
+            let fill_grid_x = (mb_part_idx % 2) * 2;
+            let fill_grid_y = (mb_part_idx / 2) * 2;
+            let (col_grid_x, col_grid_y) = col_block_for_direct_8x8(mb_part_idx);
             let info = derive_temporal_direct_partition(
-                slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
+                slice, mb_addr, col_pic, current_poc, col_grid_x, col_grid_y,
             );
-
-            if direct_8x8_inference {
-                // Fill 8x8 block (2x2 grid cells)
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        if grid_y + dy < 4 && grid_x + dx < 4 {
-                            motion.partitions[grid_y + dy][grid_x + dx] = info;
-                        }
-                    }
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    motion.partitions[fill_grid_y + dy][fill_grid_x + dx] = info;
                 }
-            } else {
+            }
+        }
+    } else {
+        for grid_y in 0..4 {
+            for grid_x in 0..4 {
+                let info = derive_temporal_direct_partition(
+                    slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
+                );
                 motion.partitions[grid_y][grid_x] = info;
             }
         }
@@ -1741,23 +1758,26 @@ fn derive_temporal_direct_sub(
     let base_grid_x = (sub_mb_x / 4) as usize;
     let base_grid_y = (sub_mb_y / 4) as usize;
 
-    let step = if direct_8x8_inference { 2 } else { 1 };
-
-    for gy in (0..2).step_by(step) {
-        for gx in (0..2).step_by(step) {
-            let grid_x = base_grid_x + gx;
-            let grid_y = base_grid_y + gy;
-            let info = derive_temporal_direct_partition(
-                slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
-            );
-
-            if direct_8x8_inference {
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        motion.partitions[base_grid_y + dy][base_grid_x + dx] = info;
-                    }
-                }
-            } else {
+    if direct_8x8_inference {
+        // Per spec: luma4x4BlkIdx = 5 * mbPartIdx
+        let mb_part_idx = (sub_mb_x / 8) as usize + (sub_mb_y / 8) as usize * 2;
+        let (col_grid_x, col_grid_y) = col_block_for_direct_8x8(mb_part_idx);
+        let info = derive_temporal_direct_partition(
+            slice, mb_addr, col_pic, current_poc, col_grid_x, col_grid_y,
+        );
+        for dy in 0..2 {
+            for dx in 0..2 {
+                motion.partitions[base_grid_y + dy][base_grid_x + dx] = info;
+            }
+        }
+    } else {
+        for gy in 0..2 {
+            for gx in 0..2 {
+                let grid_x = base_grid_x + gx;
+                let grid_y = base_grid_y + gy;
+                let info = derive_temporal_direct_partition(
+                    slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
+                );
                 motion.partitions[grid_y][grid_x] = info;
             }
         }

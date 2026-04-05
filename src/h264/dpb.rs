@@ -47,6 +47,45 @@ pub struct DpbPicture {
     pub needed_for_output: bool,
 }
 
+/// Compute MaxDpbFrames per spec A.3.1 / Table A-1.
+/// Returns the maximum number of frames the DPB can hold based on level limits.
+pub fn max_dpb_frames(sps: &SequenceParameterSet) -> usize {
+    // Table A-1: MaxDPB in bytes for each level_idc
+    let max_dpb_bytes: u64 = match sps.level_idc {
+        10 => 152_064,
+        11 => {
+            if sps.constraint_set3_flag {
+                // Level 1b
+                152_064
+            } else {
+                345_600
+            }
+        }
+        12 => 912_384,
+        13 => 912_384,
+        20 => 912_384,
+        21 => 1_824_768,
+        22 => 3_110_400,
+        30 => 3_110_400,
+        31 => 6_912_000,
+        32 => 7_864_320,
+        40 => 12_582_912,
+        41 => 12_582_912,
+        42 => 13_369_344,
+        50 => 42_393_600,
+        51 => 70_778_880,
+        52 => 70_778_880,
+        // Level 1b encoded as 9
+        9 => 152_064,
+        _ => 70_778_880, // fallback to max
+    };
+
+    // MaxDpbFrames = Min( MaxDPB / ( PicWidthInMbs * FrameHeightInMbs * 384 ), 16 )
+    // For frame coding, FrameHeightInMbs = PicHeightInMapUnits
+    let frame_size = sps.pic_width_in_mbs() as u64 * sps.pic_height_in_mbs() as u64 * 384;
+    std::cmp::min((max_dpb_bytes / frame_size) as usize, 16)
+}
+
 // Annex C: Decoded Picture Buffer (DPB)
 #[derive(Debug)]
 pub struct DecodedPictureBuffer {
@@ -73,18 +112,59 @@ impl DecodedPictureBuffer {
         self.pictures.len() >= self.max_size
     }
 
+    /// Remove pictures that are both unused for reference and not needed for output.
+    /// These are "dead" pictures that were already output via bumping and later
+    /// marked as unused by the sliding window or adaptive reference marking.
+    pub fn remove_dead_pictures(&mut self) {
+        self.pictures.retain(|p| !p.marking.is_unused() || p.needed_for_output);
+    }
+
     /// Stores a picture in the DPB.
-    /// Manages the "bumping" process if the DPB is full.
+    /// Manages the "bumping" process (Section C.4.5.3) if the DPB is full.
     pub fn store_picture(&mut self, dpb_picture: DpbPicture) -> Vec<Picture> {
         let mut output_pictures = Vec::new();
-        if self.is_full() {
-            output_pictures = self.get_pictures_for_output();
+        while self.is_full() {
+            match self.bump_one() {
+                Some(pic) => output_pictures.push(pic),
+                None => break,
+            }
         }
         self.pictures.push(dpb_picture);
         output_pictures
     }
 
-    /// Section C.4.5.3: Implements the "bumping" process to output frames when the DPB is full.
+    /// Section C.4.5.3: One step of the "bumping" process.
+    /// Outputs the picture with the smallest PicOrderCnt among all pictures
+    /// marked as "needed for output". If the picture is unused for reference,
+    /// it is removed from the DPB (freeing space). Otherwise, only its frame
+    /// is cloned and it is marked as "not needed for output".
+    fn bump_one(&mut self) -> Option<Picture> {
+        let idx = self
+            .pictures
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.needed_for_output)
+            .min_by_key(|(_, p)| p.picture.pic_order_cnt)
+            .map(|(i, _)| i)?;
+
+        if self.pictures[idx].marking.is_unused() {
+            // Non-reference: remove from DPB (frees space)
+            Some(self.pictures.remove(idx).picture)
+        } else {
+            // Reference: clone frame, mark not-needed-for-output (doesn't free space)
+            let pic = Picture {
+                frame: self.pictures[idx].picture.frame.clone(),
+                frame_num: self.pictures[idx].picture.frame_num,
+                pic_order_cnt: self.pictures[idx].picture.pic_order_cnt,
+                motion_field: None,
+            };
+            self.pictures[idx].needed_for_output = false;
+            Some(pic)
+        }
+    }
+
+    /// Outputs all non-reference pictures that are needed for output, sorted by POC.
+    /// Used by flush_on_idr after marking all pictures as unused.
     pub fn get_pictures_for_output(&mut self) -> Vec<Picture> {
         let mut output = Vec::new();
         let mut i = 0;

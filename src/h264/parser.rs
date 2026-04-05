@@ -1061,7 +1061,7 @@ pub fn get_motion_at_coord(
     Some(motion_info.partitions[block_grid_y][block_grid_x])
 }
 
-// Section 8.4.1.2 Derivation process for motion vector prediction
+// Section 8.4.1.3 Derivation process for luma motion vector prediction
 #[allow(clippy::too_many_arguments)]
 pub fn predict_mv_l0(
     slice: &Slice,
@@ -1199,7 +1199,7 @@ pub fn predict_mv_l0(
     }
 }
 
-// Section 8.4.1.2 Derivation process for motion vector prediction (L1)
+// Section 8.4.1.3 Derivation process for luma motion vector prediction (L1)
 #[allow(clippy::too_many_arguments)]
 pub fn predict_mv_l1(
     slice: &Slice,
@@ -1992,7 +1992,7 @@ pub fn calculate_motion(
 
                 for j in 0..sub_mb.sub_mb_type.NumSubMbPart() {
                     let mvd_info = sub_mb.partitions[j];
-                    // Table 7-18 – Sub-macroblock types in P macroblocks
+                    // Table 7-17 – Sub-macroblock types in P macroblocks
                     let (part_w, part_h, dx, dy) = match (sub_mb.sub_mb_type, j) {
                         (SubMbType::P_L0_8x8, _) => (8, 8, 0, 0),
                         (SubMbType::P_L0_8x4, 0) => (8, 4, 0, 0),

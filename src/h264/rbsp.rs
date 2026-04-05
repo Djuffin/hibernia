@@ -63,7 +63,7 @@ impl<'a> RbspReader<'a> {
         Ok(result)
     }
 
-    // Truncated Exp-Golomb entropy coding. Section 9.1.2
+    // Truncated Exp-Golomb entropy coding. Section 9.1
     pub fn te(&mut self, range_max: u32) -> ParseResult<u32> {
         if range_max > 1 {
             self.ue(32)

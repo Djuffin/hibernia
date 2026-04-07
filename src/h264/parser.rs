@@ -2513,6 +2513,9 @@ pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> Parse
                     slice.append_mb(block);
                 }
             }
+            if slice.get_macroblock_count() >= pic_size_in_mbs {
+                break;
+            }
             if mb_skip_run > 0 && !more_rbsp_data(input) {
                 break;
             }
@@ -2522,11 +2525,10 @@ pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> Parse
         trace!("=============== Parsing macroblock: {next_mb_addr} ===============");
         let block = parse_macroblock(input, slice)?;
         slice.append_mb(block);
-        if slice.get_macroblock_count() < pic_size_in_mbs {
-            if !more_rbsp_data(input) {
-                break;
-            }
-        } else {
+        if slice.get_macroblock_count() >= pic_size_in_mbs {
+            break;
+        }
+        if !more_rbsp_data(input) {
             break;
         }
     }

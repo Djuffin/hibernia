@@ -63,6 +63,46 @@ impl<'a> NeighborAccessor<'a> {
         }
     }
 
+    /// Check if neighbor block is in "direct" prediction mode.
+    /// This includes B_Skip, B_Direct_16x16, and B_Direct_8x8 sub-partitions.
+    /// Used by ref_idx context derivation (clause 9.3.3.1.1.6) which treats
+    /// direct-predicted neighbors as condTermFlagN = 0.
+    fn is_direct_mode(&self, blk_idx: u8, neighbor_name: MbNeighborName) -> bool {
+        let (neighbor_blk_idx, mb_neighbor) =
+            super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name);
+
+        match mb_neighbor {
+            None => {
+                match self.curr_mb.mb_type {
+                    CabacMbType::B(super::macroblock::BMbType::B_Skip)
+                    | CabacMbType::B(super::macroblock::BMbType::B_Direct_16x16) => true,
+                    _ => false,
+                }
+            }
+            Some(nb_name) => self
+                .slice
+                .get_mb_neighbor(self.mb_addr, nb_name)
+                .map(|mb| match mb {
+                    super::macroblock::Macroblock::B(bmb) => {
+                        match bmb.mb_type {
+                            super::macroblock::BMbType::B_Skip
+                            | super::macroblock::BMbType::B_Direct_16x16 => true,
+                            super::macroblock::BMbType::B_8x8 => {
+                                // Check if the specific 8x8 block is B_Direct_8x8
+                                // by examining the sub_mb_types stored in the MB
+                                let p = super::macroblock::get_4x4luma_block_location(neighbor_blk_idx);
+                                let b8_idx = ((p.x / 8) + (p.y / 8) * 2) as usize;
+                                bmb.sub_mb_types[b8_idx] == super::macroblock::BSubMbType::B_Direct_8x8
+                            }
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                })
+                .unwrap_or(false),
+        }
+    }
+
     fn is_available(&self, blk_idx: u8, neighbor_name: MbNeighborName) -> bool {
         let (neighbor_blk_idx, mb_neighbor) =
             super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name);
@@ -174,6 +214,43 @@ impl<'a> NeighborAccessor<'a> {
                     motion.partitions[y][x].mvd_l1
                 }
             }),
+        }
+    }
+
+    fn get_pred_mode(
+        &self,
+        blk_idx: u8,
+        neighbor_name: MbNeighborName,
+    ) -> super::macroblock::MbPredictionMode {
+        let (neighbor_blk_idx, mb_neighbor) =
+            super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name);
+
+        match mb_neighbor {
+            None => {
+                // Current MB
+                let p = super::macroblock::get_4x4luma_block_location(neighbor_blk_idx);
+                let x = (p.x / 4) as usize;
+                let y = (p.y / 4) as usize;
+                self.curr_mb.motion.partitions[y][x].pred_mode
+            }
+            Some(nb_name) => self
+                .slice
+                .get_mb_neighbor(self.mb_addr, nb_name)
+                .map(|mb| {
+                    let motion = match mb {
+                        super::macroblock::Macroblock::P(pmb) => &pmb.motion,
+                        super::macroblock::Macroblock::B(bmb) => &bmb.motion,
+                        super::macroblock::Macroblock::I(_)
+                        | super::macroblock::Macroblock::PCM(_) => {
+                            return super::macroblock::MbPredictionMode::None
+                        }
+                    };
+                    let p = super::macroblock::get_4x4luma_block_location(neighbor_blk_idx);
+                    let x = (p.x / 4) as usize;
+                    let y = (p.y / 4) as usize;
+                    motion.partitions[y][x].pred_mode
+                })
+                .unwrap_or(super::macroblock::MbPredictionMode::None),
         }
     }
 
@@ -662,10 +739,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             if !accessor.is_available(blk_idx, nb) {
                 return 0;
             }
-            if accessor.get_mb_type_is_skipped(blk_idx, nb) {
+            if accessor.get_mb_type_is_intra(blk_idx, nb) {
                 return 0;
             }
-            if accessor.get_mb_type_is_intra(blk_idx, nb) {
+            // Per clause 9.3.3.1.1.6: B_Skip B_Direct_16x16, and B_Direct_8x8 neighbors
+            // have condTermFlagN = 0.
+            // Their derived ref_idx from direct prediction is NOT used.
+            if accessor.is_direct_mode(blk_idx, nb) {
                 return 0;
             }
             if accessor.slice.MbaffFrameFlag() {
@@ -673,8 +753,24 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     "MBAFF field macroblock logic for RefIdx context derivation (Eq 9-12)"
                 );
             }
-            // predModeEqualFlagN: P slices always Pred_L0 unless B slice logic (not impl)
-            // refIdxZeroFlagN: ref_idx > 0
+            let pred_mode = accessor.get_pred_mode(blk_idx, nb);
+            let pred_mode_equal = match list_idx {
+                0 => matches!(
+                    pred_mode,
+                    super::macroblock::MbPredictionMode::Pred_L0
+                        | super::macroblock::MbPredictionMode::BiPred
+                        | super::macroblock::MbPredictionMode::None
+                ),
+                1 => matches!(
+                    pred_mode,
+                    super::macroblock::MbPredictionMode::Pred_L1
+                        | super::macroblock::MbPredictionMode::BiPred
+                ),
+                _ => true,
+            };
+            if !pred_mode_equal {
+                return 0;
+            }
             let ref_idx = accessor.get_ref_idx(blk_idx, nb, list_idx).unwrap_or(0);
             if ref_idx > 0 {
                 1
@@ -703,7 +799,26 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             if accessor.get_mb_type_is_skipped(blk_idx as u8, nb) {
                 return 0;
             }
-            // predModeEqualFlagN: P slices always Pred_L0 unless B slice logic
+            // predModeEqualFlagN (clause 9.3.3.1.1.7):
+            // If neighbor's partition doesn't use the current list, absMvdCompN = 0.
+            let pred_mode = accessor.get_pred_mode(blk_idx as u8, nb);
+            let pred_mode_equal = match list_idx {
+                0 => matches!(
+                    pred_mode,
+                    super::macroblock::MbPredictionMode::Pred_L0
+                        | super::macroblock::MbPredictionMode::BiPred
+                        | super::macroblock::MbPredictionMode::None
+                ),
+                1 => matches!(
+                    pred_mode,
+                    super::macroblock::MbPredictionMode::Pred_L1
+                        | super::macroblock::MbPredictionMode::BiPred
+                ),
+                _ => true,
+            };
+            if !pred_mode_equal {
+                return 0;
+            }
             if accessor.slice.MbaffFrameFlag() {
                 unimplemented!(
                     "MBAFF field macroblock scaling for MVD context derivation (Eq 9-15, 9-16)"
@@ -1233,11 +1348,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     unreachable!("MbTypeB bin {} needs CtxIncParams::MbType", bin_idx)
                 }
             }
-            (SyntaxElement::MbTypeB, CtxIncParams::MbType { prior: _ }) => {
-                // Table 9-39, ctxIdxOffset 27
+            (SyntaxElement::MbTypeB, CtxIncParams::MbType { prior }) => {
+                // Table 9-39/9-41, ctxIdxOffset 27
                 match bin_idx {
                     1 => 3,
-                    2 => 4,
+                    2 => {
+                        // Table 9-41: ctxIdxInc = (b1 != 0) ? 4 : 5
+                        if prior != 0 { 4 } else { 5 }
+                    }
                     3 => 5,
                     _ => unreachable!("Invalid binIdx {} for MbTypeB", bin_idx),
                 }
@@ -1721,7 +1839,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             let inc2 = Self::get_ctx_idx_inc(
                 SyntaxElement::MbTypeB,
                 2,
-                CtxIncParams::MbType { prior: 0 },
+                CtxIncParams::MbType { prior: b1 },
             );
             let b2 = self.decode_bin(ctx_idx_offset + inc2)?;
             if b2 == 0 {
@@ -1733,85 +1851,104 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         }
 
-        // Bin 2
+        // b0=1, b1=1: Bin 2 (context, ctxIdxInc depends on b1 per Table 9-41)
         let inc2 =
-            Self::get_ctx_idx_inc(SyntaxElement::MbTypeB, 2, CtxIncParams::MbType { prior: 0 });
+            Self::get_ctx_idx_inc(SyntaxElement::MbTypeB, 2, CtxIncParams::MbType { prior: b1 });
         let b2 = self.decode_bin(ctx_idx_offset + inc2)?;
+        // Bin 3 (context, ctxIdxInc = 5)
+        let inc3 = Self::get_ctx_idx_inc(
+            SyntaxElement::MbTypeB,
+            3,
+            CtxIncParams::MbType { prior: 0 },
+        );
         if b2 == 0 {
-            // Bin 3 (5 = ctxIdxOffset + 5)
-            let inc3 = Self::get_ctx_idx_inc(
-                SyntaxElement::MbTypeB,
-                3,
-                CtxIncParams::MbType { prior: 0 },
-            );
             let b3 = self.decode_bin(ctx_idx_offset + inc3)?;
-            if b3 == 0 {
-                // Bin 4, 5: remaining types B_L0_L0_16x8..B_L1_L0_8x16
-                let b4 = self.decode_bypass()?;
-                let b5 = self.decode_bypass()?;
-                let idx = (b4 * 2 + b5) as u32;
-                let mb_type = match idx {
+            // 2 context-coded bins for types 3-10 (Table 9-37)
+            // Reference decoder uses biari_decode_symbol with ctx[6] (ctxIdxInc=5) for all bins after bin 2
+            let bp0 = self.decode_bin(ctx_idx_offset + inc3)?;
+            let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
+            let idx = (bp0 * 2 + bp1) as u32;
+            let mb_type = if b3 == 0 {
+                // 1,1,0,0,xx → types 3-6
+                match idx {
                     0 => super::macroblock::BMbType::B_Bi_16x16,
                     1 => super::macroblock::BMbType::B_L0_L0_16x8,
                     2 => super::macroblock::BMbType::B_L0_L0_8x16,
                     3 => super::macroblock::BMbType::B_L1_L1_16x8,
                     _ => unreachable!(),
-                };
-                trace!("parse_mb_type_b type={:?}", mb_type);
-                return Ok(CabacMbType::B(mb_type));
+                }
             } else {
-                // Bin 4, 5, 6: B_L1_L1_8x16..B_Bi_L0_8x16
-                let b4 = self.decode_bypass()?;
-                let b5 = self.decode_bypass()?;
-                let b6 = self.decode_bypass()?;
-                let idx = (b4 * 4 + b5 * 2 + b6) as u32;
-                let mb_type = match idx {
+                // 1,1,0,1,xx → types 7-10
+                match idx {
                     0 => super::macroblock::BMbType::B_L1_L1_8x16,
                     1 => super::macroblock::BMbType::B_L0_L1_16x8,
                     2 => super::macroblock::BMbType::B_L0_L1_8x16,
                     3 => super::macroblock::BMbType::B_L1_L0_16x8,
-                    4 => super::macroblock::BMbType::B_L1_L0_8x16,
-                    5 => super::macroblock::BMbType::B_L0_Bi_16x8,
-                    6 => super::macroblock::BMbType::B_L0_Bi_8x16,
-                    7 => super::macroblock::BMbType::B_L1_Bi_16x8,
                     _ => unreachable!(),
-                };
-                trace!("parse_mb_type_b type={:?}", mb_type);
-                return Ok(CabacMbType::B(mb_type));
-            }
+                }
+            };
+            trace!("parse_mb_type_b type={:?}", mb_type);
+            return Ok(CabacMbType::B(mb_type));
         }
 
         // b0=1, b1=1, b2=1
-        // Bin 3
-        let inc3 =
-            Self::get_ctx_idx_inc(SyntaxElement::MbTypeB, 3, CtxIncParams::MbType { prior: 0 });
         let b3 = self.decode_bin(ctx_idx_offset + inc3)?;
         if b3 == 0 {
-            // Bin 4, 5, 6: B_L1_Bi_8x16..B_Bi_Bi_8x16
-            let b4 = self.decode_bypass()?;
-            let b5 = self.decode_bypass()?;
-            let b6 = self.decode_bypass()?;
-            let idx = (b4 * 4 + b5 * 2 + b6) as u32;
+            // 1,1,1,0,xxx → 3 context-coded bins → types 12-19
+            // All use ctxIdxInc=5 (same as bin 3), matching reference decoder ctx[6]
+            let bp0 = self.decode_bin(ctx_idx_offset + inc3)?;
+            let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
+            let bp2 = self.decode_bin(ctx_idx_offset + inc3)?;
+            let idx = (bp0 * 4 + bp1 * 2 + bp2) as u32;
             let mb_type = match idx {
-                0 => super::macroblock::BMbType::B_L1_Bi_8x16,
-                1 => super::macroblock::BMbType::B_Bi_L0_16x8,
-                2 => super::macroblock::BMbType::B_Bi_L0_8x16,
-                3 => super::macroblock::BMbType::B_Bi_L1_16x8,
-                4 => super::macroblock::BMbType::B_Bi_L1_8x16,
-                5 => super::macroblock::BMbType::B_Bi_Bi_16x8,
-                6 => super::macroblock::BMbType::B_Bi_Bi_8x16,
-                7 => super::macroblock::BMbType::B_8x8,
+                0 => super::macroblock::BMbType::B_L0_Bi_16x8,
+                1 => super::macroblock::BMbType::B_L0_Bi_8x16,
+                2 => super::macroblock::BMbType::B_L1_Bi_16x8,
+                3 => super::macroblock::BMbType::B_L1_Bi_8x16,
+                4 => super::macroblock::BMbType::B_Bi_L0_16x8,
+                5 => super::macroblock::BMbType::B_Bi_L0_8x16,
+                6 => super::macroblock::BMbType::B_Bi_L1_16x8,
+                7 => super::macroblock::BMbType::B_Bi_L1_8x16,
                 _ => unreachable!(),
             };
             trace!("parse_mb_type_b type={:?}", mb_type);
             return Ok(CabacMbType::B(mb_type));
         }
 
-        // b0=1, b1=1, b2=1, b3=1: Intra MB in B slice
-        // Suffix: ctxIdxOffset 32
-        let i_mb_type = self.parse_mb_type_i_suffix(ctx_idx_offset_suffix, slice, mb_addr)?;
-        trace!("parse_mb_type_b type=I({:?})", i_mb_type);
-        Ok(CabacMbType::I(i_mb_type))
+        // b0=1, b1=1, b2=1, b3=1: context-coded subtree for types 11, 20-22, Intra
+        // All bins use ctxIdxInc=5 (same context as bin 3), matching reference decoder ctx[6]
+        let bp0 = self.decode_bin(ctx_idx_offset + inc3)?;
+        if bp0 == 0 {
+            let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
+            if bp1 == 0 {
+                // 1,1,1,1,0,0,x → types 20-21
+                let bp2 = self.decode_bin(ctx_idx_offset + inc3)?;
+                let mb_type = if bp2 == 0 {
+                    super::macroblock::BMbType::B_Bi_Bi_16x8
+                } else {
+                    super::macroblock::BMbType::B_Bi_Bi_8x16
+                };
+                trace!("parse_mb_type_b type={:?}", mb_type);
+                return Ok(CabacMbType::B(mb_type));
+            } else {
+                // 1,1,1,1,0,1 → Intra MB in B slice (types 23-48)
+                let i_mb_type =
+                    self.parse_mb_type_i_suffix(ctx_idx_offset_suffix, slice, mb_addr)?;
+                trace!("parse_mb_type_b type=I({:?})", i_mb_type);
+                return Ok(CabacMbType::I(i_mb_type));
+            }
+        } else {
+            let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
+            let mb_type = if bp1 == 0 {
+                // 1,1,1,1,1,0 → B_L1_L0_8x16 (type 11)
+                super::macroblock::BMbType::B_L1_L0_8x16
+            } else {
+                // 1,1,1,1,1,1 → B_8x8 (type 22)
+                super::macroblock::BMbType::B_8x8
+            };
+            trace!("parse_mb_type_b type={:?}", mb_type);
+            Ok(CabacMbType::B(mb_type))
+        }
     }
 
     // Helper for P-slice Intra suffix
@@ -1879,18 +2016,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let props = get_syntax_element_properties(SyntaxElement::SubMbTypeB);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
 
-        // Bin 0
+        // Bin 0 (ctxIdxInc=0)
         let b0 = self.decode_bin(ctx_idx_offset)?;
         if b0 == 0 {
             trace!("parse_sub_mb_type_b type=B_Direct_8x8");
             return Ok(super::macroblock::BSubMbType::B_Direct_8x8);
         }
 
-        // Bin 1
+        // Bin 1 (ctxIdxInc=1)
         let b1 = self.decode_bin(ctx_idx_offset + 1)?;
         if b1 == 0 {
-            // Bin 2
-            let b2 = self.decode_bin(ctx_idx_offset + 2)?;
+            // Bin 2 (Table 9-41: b1=0 → ctxIdxInc=3)
+            let b2 = self.decode_bin(ctx_idx_offset + 3)?;
             if b2 == 0 {
                 trace!("parse_sub_mb_type_b type=B_L0_8x8");
                 return Ok(super::macroblock::BSubMbType::B_L0_8x8);
@@ -1900,44 +2037,39 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         }
 
-        // Bin 2
+        // b0=1, b1=1
+        // Bin 2 (Table 9-41: b1=1 → ctxIdxInc=2)
         let b2 = self.decode_bin(ctx_idx_offset + 2)?;
         if b2 == 0 {
-            // Bin 3
+            // Bin 3 (ctxIdxInc=3)
             let b3 = self.decode_bin(ctx_idx_offset + 3)?;
-            if b3 == 0 {
-                trace!("parse_sub_mb_type_b type=B_Bi_8x8");
-                return Ok(super::macroblock::BSubMbType::B_Bi_8x8);
-            } else {
-                // Bin 4, 5 (bypass)
-                let b4 = self.decode_bypass()?;
-                let b5 = self.decode_bypass()?;
-                let idx = b4 * 2 + b5;
-                let sub_type = match idx {
-                    0 => super::macroblock::BSubMbType::B_L0_8x4,
-                    1 => super::macroblock::BSubMbType::B_L0_4x8,
-                    2 => super::macroblock::BSubMbType::B_L1_8x4,
-                    3 => super::macroblock::BSubMbType::B_L1_4x8,
-                    _ => unreachable!(),
-                };
-                trace!("parse_sub_mb_type_b type={:?}", sub_type);
-                return Ok(sub_type);
-            }
+            // Bin 4 (ctxIdxInc=3, same as bin 3 — reference uses ctx[3] for all bins 3+)
+            let bp0 = self.decode_bin(ctx_idx_offset + 3)?;
+            let idx = b3 * 2 + bp0;
+            let sub_type = match idx {
+                0 => super::macroblock::BSubMbType::B_Bi_8x8,  // 11000
+                1 => super::macroblock::BSubMbType::B_L0_8x4,  // 11001
+                2 => super::macroblock::BSubMbType::B_L0_4x8,  // 11010
+                3 => super::macroblock::BSubMbType::B_L1_8x4,  // 11011
+                _ => unreachable!(),
+            };
+            trace!("parse_sub_mb_type_b type={:?}", sub_type);
+            return Ok(sub_type);
         }
 
         // b0=1, b1=1, b2=1
-        // Bin 3
+        // Bin 3 (ctxIdxInc=3)
         let b3 = self.decode_bin(ctx_idx_offset + 3)?;
         if b3 == 0 {
-            // Bin 4, 5 (bypass)
-            let b4 = self.decode_bypass()?;
-            let b5 = self.decode_bypass()?;
-            let idx = b4 * 2 + b5;
+            // Bins 4,5 (ctxIdxInc=3, same as bin 3 — reference uses ctx[3] for all bins 3+)
+            let bp0 = self.decode_bin(ctx_idx_offset + 3)?;
+            let bp1 = self.decode_bin(ctx_idx_offset + 3)?;
+            let idx = bp0 * 2 + bp1;
             let sub_type = match idx {
-                0 => super::macroblock::BSubMbType::B_Bi_8x4,
-                1 => super::macroblock::BSubMbType::B_Bi_4x8,
-                2 => super::macroblock::BSubMbType::B_L0_4x4,
-                3 => super::macroblock::BSubMbType::B_L1_4x4,
+                0 => super::macroblock::BSubMbType::B_L1_4x8,  // 111000
+                1 => super::macroblock::BSubMbType::B_Bi_8x4,  // 111001
+                2 => super::macroblock::BSubMbType::B_Bi_4x8,  // 111010
+                3 => super::macroblock::BSubMbType::B_L0_4x4,  // 111011
                 _ => unreachable!(),
             };
             trace!("parse_sub_mb_type_b type={:?}", sub_type);
@@ -1945,8 +2077,15 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // b0=1, b1=1, b2=1, b3=1
-        trace!("parse_sub_mb_type_b type=B_Bi_4x4");
-        Ok(super::macroblock::BSubMbType::B_Bi_4x4)
+        // Bin 4 (ctxIdxInc=3, same as bin 3 — reference uses ctx[3] for all bins 3+)
+        let bp0 = self.decode_bin(ctx_idx_offset + 3)?;
+        if bp0 == 0 {
+            trace!("parse_sub_mb_type_b type=B_L1_4x4");
+            Ok(super::macroblock::BSubMbType::B_L1_4x4)  // 11110
+        } else {
+            trace!("parse_sub_mb_type_b type=B_Bi_4x4");
+            Ok(super::macroblock::BSubMbType::B_Bi_4x4)  // 11111
+        }
     }
 
     // 9.3.3.1.1.8 Derivation process of ctxIdxInc for the syntax element intra_chroma_pred_mode
@@ -2454,6 +2593,23 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         sub_mbs[i].sub_mb_type = self.parse_sub_mb_type_b(slice, mb_addr)?;
                     }
 
+                    // Set pred_mode in motion grid before ref_idx/mvd parsing
+                    // (needed for predModeEqualFlagN within-MB neighbor checks)
+                    for i in 0..4 {
+                        let mode = sub_mbs[i].sub_mb_type.SubMbPredMode();
+                        let start_blk_idx: u8 = match i {
+                            0 => 0, 1 => 4, 2 => 8, 3 => 12, _ => 0,
+                        };
+                        let p = super::macroblock::get_4x4luma_block_location(start_blk_idx);
+                        let sy = (p.y / 4) as usize;
+                        let sx = (p.x / 4) as usize;
+                        for y in 0..2 {
+                            for x in 0..2 {
+                                curr_mb.motion.partitions[sy + y][sx + x].pred_mode = mode;
+                            }
+                        }
+                    }
+
                     let num_ref_idx_l0 = slice.header.num_ref_idx_l0_active_minus1;
                     let num_ref_idx_l1 = slice.header.num_ref_idx_l1_active_minus1;
 
@@ -2603,6 +2759,23 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     let num_part = b_type.NumMbPart();
                     let num_ref_idx_l0 = slice.header.num_ref_idx_l0_active_minus1;
                     let num_ref_idx_l1 = slice.header.num_ref_idx_l1_active_minus1;
+                    // Set pred_mode in motion grid before ref_idx/mvd parsing
+                    // (needed for predModeEqualFlagN within-MB neighbor checks)
+                    for i in 0..num_part {
+                        let mode = b_type.MbPartPredMode(i);
+                        let (w, h) = Self::get_mb_part_grid_size_b(b_type);
+                        let start_blk_idx = Self::get_mb_part_start_blk_idx_b(b_type, i);
+                        let p =
+                            super::macroblock::get_4x4luma_block_location(start_blk_idx as u8);
+                        let sy = (p.y / 4) as usize;
+                        let sx = (p.x / 4) as usize;
+                        for y in 0..h {
+                            for x in 0..w {
+                                curr_mb.motion.partitions[sy + y][sx + x].pred_mode = mode;
+                            }
+                        }
+                    }
+
                     // ref_idx_l0
                     for i in 0..num_part {
                         let mode = b_type.MbPartPredMode(i);
@@ -2705,6 +2878,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 }
 
                 let cbp = self.parse_coded_block_pattern_cabac(slice, mb_addr, &mut curr_mb)?;
+
                 let mut mb = super::macroblock::BMb {
                     mb_type: b_type,
                     motion: super::parser::calculate_motion_b(
@@ -2720,6 +2894,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     transform_size_8x8_flag: false,
                     residual: None,
                     cbf_info: CbfInfo::default(),
+                    sub_mb_types: [
+                        sub_mbs[0].sub_mb_type,
+                        sub_mbs[1].sub_mb_type,
+                        sub_mbs[2].sub_mb_type,
+                        sub_mbs[3].sub_mb_type,
+                    ],
                 };
 
                 if !mb.coded_block_pattern.is_zero() {

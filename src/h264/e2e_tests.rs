@@ -181,3 +181,30 @@ pub fn test_CVBS3_Sony_C() -> Result<(), String> {
     // IPB slices with CAVLC. Temporal direct prediction. direct_8x8_inference=on. num_ref_frames=4.
     test_decoding_against_gold("data/CVBS3_Sony_C.jsv", "data/CVBS3_Sony_C_rec.y4m")
 }
+
+#[test]
+pub fn test_CVWP1_TOSHIBA_E() -> Result<(), String> {
+    // Explicit weighted prediction for P slices. CAVLC. weighted_pred_flag=1. 352x288 CIF, 90 frames.
+    test_decoding_against_gold(
+        "data/CVWP1_TOSHIBA_E/CVWP1_TOSHIBA_E.264",
+        "data/CVWP1_TOSHIBA_E/CVWP1_TOSHIBA_E_dec.y4m",
+    )
+}
+
+#[test]
+pub fn test_CVWP2_TOSHIBA_E() -> Result<(), String> {
+    // Explicit weighted prediction for B slices. CAVLC. weighted_bipred_idc=1. 352x288 CIF, 90 frames.
+    test_decoding_against_gold(
+        "data/CVWP2_TOSHIBA_E/CVWP2_TOSHIBA_E.264",
+        "data/CVWP2_TOSHIBA_E/CVWP2_TOSHIBA_E_dec.y4m",
+    )
+}
+
+#[test]
+pub fn test_CVWP3_TOSHIBA_E() -> Result<(), String> {
+    // Implicit weighted prediction for B slices. CAVLC. weighted_bipred_idc=2. 352x288 CIF, 90 frames.
+    test_decoding_against_gold(
+        "data/CVWP3_TOSHIBA_E/CVWP3_TOSHIBA_E.264",
+        "data/CVWP3_TOSHIBA_E/CVWP3_TOSHIBA_E_dec.y4m",
+    )
+}

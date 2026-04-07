@@ -229,6 +229,8 @@ pub struct Slice {
     pub ref_pic_list1: Vec<usize>,
     /// POCs of references in ref_pic_list0 (parallel to ref_pic_list0).
     pub ref_pic_list0_pocs: Vec<i32>,
+    /// POCs of references in ref_pic_list1 (parallel to ref_pic_list1).
+    pub ref_pic_list1_pocs: Vec<i32>,
     /// POC of the current picture being decoded.
     pub current_pic_poc: i32,
     /// Colocated picture info for temporal direct prediction in B slices.
@@ -254,6 +256,7 @@ impl Slice {
             ref_pic_list0: Vec::new(),
             ref_pic_list1: Vec::new(),
             ref_pic_list0_pocs: Vec::new(),
+            ref_pic_list1_pocs: Vec::new(),
             current_pic_poc: 0,
             col_pic: None,
         }

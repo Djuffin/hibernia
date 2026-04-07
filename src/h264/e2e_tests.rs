@@ -54,9 +54,13 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
             }
         };
 
+        let mut nal_idx = 0usize;
         for nal_result in nal_parser {
             let nal_data = nal_result.map_err(|e| format!("NAL error: {e:?}"))?;
-            decoder.decode(&nal_data).map_err(|e| format!("Decoding error: {e:?}"))?;
+            decoder.decode(&nal_data).map_err(|e| {
+                format!("Decoding error at NAL #{nal_idx}: {e:?}")
+            })?;
+            nal_idx += 1;
 
             while let Some(frame) = decoder.retrieve_frame() {
                 process_frame(frame);

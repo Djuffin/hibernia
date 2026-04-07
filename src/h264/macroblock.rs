@@ -474,6 +474,9 @@ pub struct BMb {
     pub transform_size_8x8_flag: bool,
     pub residual: Option<Box<Residual>>,
     pub cbf_info: CbfInfo,
+    /// Sub-macroblock types for B_8x8 mode. Used for B_Direct_8x8 detection
+    /// in CABAC context derivation.
+    pub sub_mb_types: [BSubMbType; 4],
 }
 
 #[allow(non_camel_case_types)]

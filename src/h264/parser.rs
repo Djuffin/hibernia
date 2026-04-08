@@ -224,7 +224,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     expect_value!(input, "reserved_zero_2bits", 0, 2);
 
     read_value!(input, sps.level_idc, u, 8);
-    read_value!(input, sps.seq_parameter_set_id, ue, 8);
+    read_value!(input, sps.seq_parameter_set_id, ue, 8, 0, 31);
 
     if sps.profile.has_chroma_info() {
         read_value!(input, sps.chroma_format_idc, ue, 8);
@@ -232,8 +232,8 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
             read_value!(input, sps.separate_color_plane_flag, f);
         }
 
-        read_value!(input, sps.bit_depth_luma_minus8, ue, 8);
-        read_value!(input, sps.bit_depth_chroma_minus8, ue, 8);
+        read_value!(input, sps.bit_depth_luma_minus8, ue, 8, 0, 6);
+        read_value!(input, sps.bit_depth_chroma_minus8, ue, 8, 0, 6);
         read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, f);
         read_value!(input, sps.seq_scaling_matrix_present_flag, f);
         if sps.seq_scaling_matrix_present_flag {
@@ -241,11 +241,11 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
         }
     }
 
-    read_value!(input, sps.log2_max_frame_num_minus4, ue, 8);
-    read_value!(input, sps.pic_order_cnt_type, ue, 8);
+    read_value!(input, sps.log2_max_frame_num_minus4, ue, 8, 0, 12);
+    read_value!(input, sps.pic_order_cnt_type, ue, 8, 0, 2);
     match sps.pic_order_cnt_type {
         0 => {
-            read_value!(input, sps.log2_max_pic_order_cnt_lsb_minus4, ue, 8);
+            read_value!(input, sps.log2_max_pic_order_cnt_lsb_minus4, ue, 8, 0, 12);
         }
         1 => {
             read_value!(input, sps.delta_pic_order_always_zero_flag, f);
@@ -788,7 +788,9 @@ pub fn parse_slice_header(
     }
 
     if idr_pic_flag {
-        read_value!(input, header.idr_pic_id, ue, 16);
+        let idr_pic_id: u32;
+        read_value!(input, idr_pic_id, ue, 16);
+        header.idr_pic_id = Some(idr_pic_id);
     }
 
     if sps.pic_order_cnt_type == 0 {
@@ -803,7 +805,9 @@ pub fn parse_slice_header(
         }
     }
     if pps.redundant_pic_cnt_present_flag {
-        read_value!(input, header.redundant_pic_cnt, ue);
+        let redundant_pic_cnt: u32;
+        read_value!(input, redundant_pic_cnt, ue, 8, 0, 127);
+        header.redundant_pic_cnt = Some(redundant_pic_cnt);
     }
 
     if header.slice_type == SliceType::B {
@@ -816,9 +820,9 @@ pub fn parse_slice_header(
         let num_ref_idx_active_override_flag: bool;
         read_value!(input, num_ref_idx_active_override_flag, f);
         if num_ref_idx_active_override_flag {
-            read_value!(input, header.num_ref_idx_l0_active_minus1, ue);
+            read_value!(input, header.num_ref_idx_l0_active_minus1, ue, 8, 0, 31);
             if header.slice_type == SliceType::B {
-                read_value!(input, header.num_ref_idx_l1_active_minus1, ue);
+                read_value!(input, header.num_ref_idx_l1_active_minus1, ue, 8, 0, 31);
             }
         } else {
             header.num_ref_idx_l0_active_minus1 = pps.num_ref_idx_l0_default_active_minus1;
@@ -842,10 +846,10 @@ pub fn parse_slice_header(
         && header.slice_type != SliceType::I
         && header.slice_type != SliceType::SI
     {
-        read_value!(input, header.cabac_init_idc, ue, 8);
+        read_value!(input, header.cabac_init_idc, ue, 8, 0, 2);
     }
 
-    read_value!(input, header.slice_qp_delta, se);
+    read_value!(input, header.slice_qp_delta, se, -51, 51);
 
     if header.slice_type == SliceType::SP || header.slice_type == SliceType::SI {
         if header.slice_type == SliceType::SP {
@@ -854,15 +858,15 @@ pub fn parse_slice_header(
             header.sp_for_switch_flag = Some(sp_for_switch_flag);
         }
         let slice_qs_delta: i32;
-        read_value!(input, slice_qs_delta, se);
+        read_value!(input, slice_qs_delta, se, -51, 51);
         header.slice_qs_delta = Some(slice_qs_delta);
     }
 
     if pps.deblocking_filter_control_present_flag {
         read_value!(input, header.deblocking_filter_idc, ue, 8);
         if header.deblocking_filter_idc != DeblockingFilterIdc::Off {
-            read_value!(input, header.slice_alpha_c0_offset_div2, se);
-            read_value!(input, header.slice_beta_offset_div2, se);
+            read_value!(input, header.slice_alpha_c0_offset_div2, se, -6, 6);
+            read_value!(input, header.slice_beta_offset_div2, se, -6, 6);
         }
     }
 

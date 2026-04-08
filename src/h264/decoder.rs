@@ -28,6 +28,7 @@ use v_frame::frame;
 use v_frame::plane::{self, PlaneOffset, PlaneSlice};
 
 pub type VideoFrame = frame::Frame<u8>;
+pub type RefPicList<'a> = Vec<&'a DpbPicture>;
 
 #[derive(Clone, Debug)]
 pub struct Picture {
@@ -57,6 +58,7 @@ pub enum DecodingError {
     MisformedData(String),
     OutOfRange(String),
     FeatureNotSupported(String),
+    ReferenceNotFound(String),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -365,7 +367,8 @@ impl Decoder {
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
         let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
-        let references = &self.dpb.pictures[..];
+        let ref_pics_l0 = resolve_ref_pic_list(&slice.ref_pic_list0, &self.dpb.pictures, "ref_pic_list0")?;
+        let ref_pics_l1 = resolve_ref_pic_list(&slice.ref_pic_list1, &self.dpb.pictures, "ref_pic_list1")?;
         let first_mb_addr = slice.header.first_mb_in_slice;
         for i in 0..slice.get_macroblock_count() {
             let mb_addr = first_mb_addr + i as u32;
@@ -441,7 +444,11 @@ impl Decoder {
                                     mb_addr,
                                     mb_loc,
                                     luma_plane,
-                                    mb_type_to_16x16_pred_mode(imb.mb_type).unwrap(),
+                                    mb_type_to_16x16_pred_mode(imb.mb_type).ok_or_else(|| {
+                                        DecodingError::OutOfRange(format!(
+                                            "no 16x16 pred mode for mb_type {:?}", imb.mb_type
+                                        ))
+                                    })?,
                                     &residuals,
                                 );
                             }
@@ -456,7 +463,9 @@ impl Decoder {
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
                             let chroma_qp =
-                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().unwrap();
+                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().map_err(|_| {
+                                DecodingError::OutOfRange("chroma QP out of u8 range".into())
+                            })?;
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
@@ -489,22 +498,24 @@ impl Decoder {
                             mb_loc,
                             frame,
                             &residuals,
-                            references,
+                            &ref_pics_l0,
                             &mut self.interpolation_buffer,
-                        );
+                        )?;
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
                             let chroma_qp =
-                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().unwrap();
+                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().map_err(|_| {
+                                DecodingError::OutOfRange("chroma QP out of u8 range".into())
+                            })?;
                             let residuals = if let Some(residual) = block.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {
                                 SmallVec::new()
                             };
                             render_chroma_inter_prediction(
-                                slice, block, mb_loc, plane_name, frame, &residuals, references,
-                            );
+                                slice, block, mb_loc, plane_name, frame, &residuals, &ref_pics_l0,
+                            )?;
                         }
                     }
                     Macroblock::B(block) => {
@@ -523,22 +534,26 @@ impl Decoder {
                             mb_loc,
                             frame,
                             &residuals,
-                            references,
+                            &ref_pics_l0,
+                            &ref_pics_l1,
                             &mut self.interpolation_buffer,
-                        );
+                        )?;
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
                             let chroma_qp =
-                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().unwrap();
+                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().map_err(|_| {
+                                DecodingError::OutOfRange("chroma QP out of u8 range".into())
+                            })?;
                             let residuals = if let Some(residual) = block.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {
                                 SmallVec::new()
                             };
                             render_chroma_inter_prediction_b(
-                                slice, block, mb_loc, plane_name, frame, &residuals, references,
-                            );
+                                slice, block, mb_loc, plane_name, frame, &residuals,
+                                &ref_pics_l0, &ref_pics_l1,
+                            )?;
                         }
                     }
                 }
@@ -1043,43 +1058,42 @@ fn get_explicit_chroma_weights(
     WeightParams { log_wd, w0, o0, w1, o1 }
 }
 
+fn resolve_ref_pic_list<'a>(
+    ref_list: &[usize],
+    dpb_pictures: &'a [DpbPicture],
+    list_name: &str,
+) -> Result<RefPicList<'a>, DecodingError> {
+    ref_list
+        .iter()
+        .enumerate()
+        .map(|(i, &dpb_idx)| {
+            dpb_pictures.get(dpb_idx).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "{list_name}[{i}]: DPB index {dpb_idx} not in DPB (size {})",
+                    dpb_pictures.len()
+                ))
+            })
+        })
+        .collect()
+}
+
 // Section 8.4.3: Derive implicit weighting parameters from POC distances (Eq 8-277 to 8-283).
 // Same weights are used for luma and chroma in implicit mode.
 fn get_implicit_weights(
-    slice: &Slice,
-    ref_idx_l0: usize,
-    ref_idx_l1: usize,
-    references: &[DpbPicture],
+    ref_pic_l0: &DpbPicture,
+    ref_pic_l1: &DpbPicture,
+    current_poc: i32,
 ) -> WeightParams {
     let log_wd: u32 = 5;
     let default = WeightParams { log_wd, w0: 32, o0: 0, w1: 32, o1: 0 };
 
-    let l0_dpb_idx = match slice.ref_pic_list0.get(ref_idx_l0) {
-        Some(&idx) => idx,
-        None => return default,
-    };
-    let l1_dpb_idx = match slice.ref_pic_list1.get(ref_idx_l1) {
-        Some(&idx) => idx,
-        None => return default,
-    };
-
-    let l0_pic = match references.get(l0_dpb_idx) {
-        Some(p) => p,
-        None => return default,
-    };
-    let l1_pic = match references.get(l1_dpb_idx) {
-        Some(p) => p,
-        None => return default,
-    };
-
     // Fallback if either reference is long-term (Eq 8-280)
-    if l0_pic.marking.is_long_term() || l1_pic.marking.is_long_term() {
+    if ref_pic_l0.marking.is_long_term() || ref_pic_l1.marking.is_long_term() {
         return default;
     }
 
-    let poc_l0 = l0_pic.picture.pic_order_cnt;
-    let poc_l1 = l1_pic.picture.pic_order_cnt;
-    let curr_poc = slice.current_pic_poc;
+    let poc_l0 = ref_pic_l0.picture.pic_order_cnt;
+    let poc_l1 = ref_pic_l1.picture.pic_order_cnt;
 
     // DiffPicOrderCnt(pic1, pic0) — Eq 8-197/8-198
     let diff_poc_l1_l0 = poc_l1 - poc_l0;
@@ -1089,7 +1103,7 @@ fn get_implicit_weights(
 
     // Eq 8-201, 8-202: DistScaleFactor
     let td = (poc_l1 - poc_l0).clamp(-128, 127);
-    let tb = (curr_poc - poc_l0).clamp(-128, 127);
+    let tb = (current_poc - poc_l0).clamp(-128, 127);
     let tx = (16384 + (td.abs() >> 1)) / td;
     let dist_scale_factor = ((tb * tx + 32) >> 6).clamp(-1024, 1023);
 
@@ -1102,15 +1116,16 @@ fn get_implicit_weights(
     WeightParams { log_wd, w0, o0: 0, w1, o1: 0 }
 }
 
+
 pub fn render_luma_inter_prediction(
     slice: &Slice,
     mb: &PMb,
     mb_loc: Point,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
-    references: &[DpbPicture],
+    ref_pics_l0: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
-) {
+) -> Result<(), DecodingError> {
     let y_plane = &mut frame.planes[0];
     let wp_mode = get_weighted_pred_mode(slice);
 
@@ -1121,63 +1136,65 @@ pub fn render_luma_inter_prediction(
         let ref_idx = partition.ref_idx_l0;
         let mv = partition.mv_l0;
 
-        if let Some(&dpb_idx) = slice.ref_pic_list0.get(ref_idx as usize) {
-            if let Some(ref_pic) = references.get(dpb_idx) {
-                let ref_plane = &ref_pic.picture.frame.planes[0];
+        let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l0 {} out of bounds (list length {})", ref_idx, ref_pics_l0.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[0];
 
-                let blk_x = grid_x * 4;
-                let blk_y = grid_y * 4;
+        let blk_x = grid_x * 4;
+        let blk_y = grid_y * 4;
 
-                let mut dst = [0u8; 16]; // 4x4 block
+        let mut dst = [0u8; 16]; // 4x4 block
 
-                interpolate_luma(
-                    ref_plane,
-                    mb_loc.x,
-                    mb_loc.y,
-                    blk_x as u8,
-                    blk_y as u8,
-                    4,
-                    4,
-                    mv,
-                    &mut dst,
-                    4, // stride for 4x4 block buffer
-                    buffer,
-                );
+        interpolate_luma(
+            ref_plane,
+            mb_loc.x,
+            mb_loc.y,
+            blk_x as u8,
+            blk_y as u8,
+            4,
+            4,
+            mv,
+            &mut dst,
+            4, // stride for 4x4 block buffer
+            buffer,
+        );
 
-                // Section 8.4.2.3: Apply weighted prediction before residual addition
-                if wp_mode == WeightedPredMode::Explicit {
-                    let wp = get_explicit_luma_weights(slice, ref_idx as usize, 0);
-                    for sample in &mut dst {
-                        *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
-                    }
-                }
+        // Section 8.4.2.3: Apply weighted prediction before residual addition
+        if wp_mode == WeightedPredMode::Explicit {
+            let wp = get_explicit_luma_weights(slice, ref_idx as usize, 0);
+            for sample in &mut dst {
+                *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
+            }
+        }
 
-                // Add residual
-                let blk_idx =
-                    macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
-                if let Some(residual_blk) = residuals.get(blk_idx as usize) {
-                    for y in 0..4 {
-                        for x in 0..4 {
-                            let res = residual_blk.samples[y][x];
-                            let pred = dst[y * 4 + x] as i32;
-                            dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
-                        }
-                    }
-                }
-
-                // Copy to frame
-                let mut plane_slice = y_plane.mut_slice(PlaneOffset {
-                    x: (mb_loc.x + blk_x as u32) as isize,
-                    y: (mb_loc.y + blk_y as u32) as isize,
-                });
-
-                for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
-                    let row_data = &dst[y * 4..(y + 1) * 4];
-                    row[..4].copy_from_slice(row_data);
+        // Add residual
+        let blk_idx =
+            macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
+        if let Some(residual_blk) = residuals.get(blk_idx as usize) {
+            for y in 0..4 {
+                for x in 0..4 {
+                    let res = residual_blk.samples[y][x];
+                    let pred = dst[y * 4 + x] as i32;
+                    dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
                 }
             }
         }
+
+        // Copy to frame
+        let mut plane_slice = y_plane.mut_slice(PlaneOffset {
+            x: (mb_loc.x + blk_x as u32) as isize,
+            y: (mb_loc.y + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            let row_data = &dst[y * 4..(y + 1) * 4];
+            row[..4].copy_from_slice(row_data);
+        }
     }
+    Ok(())
 }
 
 pub fn render_chroma_inter_prediction(
@@ -1187,8 +1204,8 @@ pub fn render_chroma_inter_prediction(
     plane: ColorPlane,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
-    references: &[DpbPicture],
-) {
+    ref_pics_l0: &[&DpbPicture],
+) -> Result<(), DecodingError> {
     let chroma_plane = &mut frame.planes[plane as usize];
     let mb_x_chroma = mb_loc.x >> 1;
     let mb_y_chroma = mb_loc.y >> 1;
@@ -1202,48 +1219,49 @@ pub fn render_chroma_inter_prediction(
         let ref_idx = partition.ref_idx_l0;
         let mv = partition.mv_l0;
 
-        if let Some(&dpb_idx) = slice.ref_pic_list0.get(ref_idx as usize) {
-            if let Some(ref_pic) = references.get(dpb_idx) {
-                let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+        let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l0 {} out of bounds (list length {})", ref_idx, ref_pics_l0.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
 
-                let blk_x = (grid_x * 4) >> 1; // 2
-                let blk_y = (grid_y * 4) >> 1; // 2
+        let blk_x = (grid_x * 4) >> 1; // 2
+        let blk_y = (grid_y * 4) >> 1; // 2
 
-                let mut dst = [0u8; 4]; // 2x2 = 4 pixels
+        let mut dst = [0u8; 4]; // 2x2 = 4 pixels
 
-                interpolate_chroma(
-                    ref_plane,
-                    mb_x_chroma,
-                    mb_y_chroma,
-                    blk_x as u8,
-                    blk_y as u8,
-                    2,
-                    2,
-                    mv,
-                    &mut dst,
-                    2, // stride
-                );
+        interpolate_chroma(
+            ref_plane,
+            mb_x_chroma,
+            mb_y_chroma,
+            blk_x as u8,
+            blk_y as u8,
+            2,
+            2,
+            mv,
+            &mut dst,
+            2, // stride
+        );
 
-                // Section 8.4.2.3: Apply weighted prediction
-                if wp_mode == WeightedPredMode::Explicit {
-                    let wp =
-                        get_explicit_chroma_weights(slice, ref_idx as usize, 0, chroma_idx);
-                    for sample in &mut dst {
-                        *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
-                    }
-                }
-
-                // Write to frame
-                let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
-                    x: (mb_x_chroma + blk_x as u32) as isize,
-                    y: (mb_y_chroma + blk_y as u32) as isize,
-                });
-
-                for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
-                    row[0] = dst[y * 2];
-                    row[1] = dst[y * 2 + 1];
-                }
+        // Section 8.4.2.3: Apply weighted prediction
+        if wp_mode == WeightedPredMode::Explicit {
+            let wp =
+                get_explicit_chroma_weights(slice, ref_idx as usize, 0, chroma_idx);
+            for sample in &mut dst {
+                *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
             }
+        }
+
+        // Write to frame
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_x as u32) as isize,
+            y: (mb_y_chroma + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
+            row[0] = dst[y * 2];
+            row[1] = dst[y * 2 + 1];
         }
     }
 
@@ -1265,6 +1283,7 @@ pub fn render_chroma_inter_prediction(
             }
         }
     }
+    Ok(())
 }
 
 pub fn render_luma_inter_prediction_b(
@@ -1273,9 +1292,10 @@ pub fn render_luma_inter_prediction_b(
     mb_loc: Point,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
-    references: &[DpbPicture],
+    ref_pics_l0: &[&DpbPicture],
+    ref_pics_l1: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
-) {
+) -> Result<(), DecodingError> {
     let y_plane = &mut frame.planes[0];
     let wp_mode = get_weighted_pred_mode(slice);
 
@@ -1296,45 +1316,47 @@ pub fn render_luma_inter_prediction_b(
         let mut pred_l1 = [0u8; 16];
 
         if has_l0 {
-            if let Some(&dpb_idx) = slice.ref_pic_list0.get(partition.ref_idx_l0 as usize) {
-                if let Some(ref_pic) = references.get(dpb_idx) {
-                    let ref_plane = &ref_pic.picture.frame.planes[0];
-                    interpolate_luma(
-                        ref_plane,
-                        mb_loc.x,
-                        mb_loc.y,
-                        blk_x as u8,
-                        blk_y as u8,
-                        4,
-                        4,
-                        partition.mv_l0,
-                        &mut pred_l0,
-                        4,
-                        buffer,
-                    );
-                }
-            }
+            let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[0];
+            interpolate_luma(
+                ref_plane,
+                mb_loc.x,
+                mb_loc.y,
+                blk_x as u8,
+                blk_y as u8,
+                4,
+                4,
+                partition.mv_l0,
+                &mut pred_l0,
+                4,
+                buffer,
+            );
         }
 
         if has_l1 {
-            if let Some(&dpb_idx) = slice.ref_pic_list1.get(partition.ref_idx_l1 as usize) {
-                if let Some(ref_pic) = references.get(dpb_idx) {
-                    let ref_plane = &ref_pic.picture.frame.planes[0];
-                    interpolate_luma(
-                        ref_plane,
-                        mb_loc.x,
-                        mb_loc.y,
-                        blk_x as u8,
-                        blk_y as u8,
-                        4,
-                        4,
-                        partition.mv_l1,
-                        &mut pred_l1,
-                        4,
-                        buffer,
-                    );
-                }
-            }
+            let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[0];
+            interpolate_luma(
+                ref_plane,
+                mb_loc.x,
+                mb_loc.y,
+                blk_x as u8,
+                blk_y as u8,
+                4,
+                4,
+                partition.mv_l1,
+                &mut pred_l1,
+                4,
+                buffer,
+            );
         }
 
         // Section 8.4.2.3: Combine predictions according to weighted prediction mode
@@ -1361,12 +1383,17 @@ pub fn render_luma_inter_prediction_b(
             }
             WeightedPredMode::Implicit => {
                 if has_l0 && has_l1 {
-                    let wp = get_implicit_weights(
-                        slice,
-                        partition.ref_idx_l0 as usize,
-                        partition.ref_idx_l1 as usize,
-                        references,
-                    );
+                    let ref_l0 = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                        DecodingError::ReferenceNotFound(format!(
+                            "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
+                        ))
+                    })?;
+                    let ref_l1 = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                        DecodingError::ReferenceNotFound(format!(
+                            "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
+                        ))
+                    })?;
+                    let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
                     for i in 0..16 {
                         dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
                     }
@@ -1414,6 +1441,7 @@ pub fn render_luma_inter_prediction_b(
             row[..4].copy_from_slice(row_data);
         }
     }
+    Ok(())
 }
 
 pub fn render_chroma_inter_prediction_b(
@@ -1423,8 +1451,9 @@ pub fn render_chroma_inter_prediction_b(
     plane: ColorPlane,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
-    references: &[DpbPicture],
-) {
+    ref_pics_l0: &[&DpbPicture],
+    ref_pics_l1: &[&DpbPicture],
+) -> Result<(), DecodingError> {
     let chroma_plane = &mut frame.planes[plane as usize];
     let mb_x_chroma = mb_loc.x >> 1;
     let mb_y_chroma = mb_loc.y >> 1;
@@ -1447,43 +1476,45 @@ pub fn render_chroma_inter_prediction_b(
         let mut pred_l1 = [0u8; 4];
 
         if has_l0 {
-            if let Some(&dpb_idx) = slice.ref_pic_list0.get(partition.ref_idx_l0 as usize) {
-                if let Some(ref_pic) = references.get(dpb_idx) {
-                    let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
-                    interpolate_chroma(
-                        ref_plane,
-                        mb_x_chroma,
-                        mb_y_chroma,
-                        blk_x as u8,
-                        blk_y as u8,
-                        2,
-                        2,
-                        partition.mv_l0,
-                        &mut pred_l0,
-                        2,
-                    );
-                }
-            }
+            let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+            interpolate_chroma(
+                ref_plane,
+                mb_x_chroma,
+                mb_y_chroma,
+                blk_x as u8,
+                blk_y as u8,
+                2,
+                2,
+                partition.mv_l0,
+                &mut pred_l0,
+                2,
+            );
         }
 
         if has_l1 {
-            if let Some(&dpb_idx) = slice.ref_pic_list1.get(partition.ref_idx_l1 as usize) {
-                if let Some(ref_pic) = references.get(dpb_idx) {
-                    let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
-                    interpolate_chroma(
-                        ref_plane,
-                        mb_x_chroma,
-                        mb_y_chroma,
-                        blk_x as u8,
-                        blk_y as u8,
-                        2,
-                        2,
-                        partition.mv_l1,
-                        &mut pred_l1,
-                        2,
-                    );
-                }
-            }
+            let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+            interpolate_chroma(
+                ref_plane,
+                mb_x_chroma,
+                mb_y_chroma,
+                blk_x as u8,
+                blk_y as u8,
+                2,
+                2,
+                partition.mv_l1,
+                &mut pred_l1,
+                2,
+            );
         }
 
         // Section 8.4.2.3: Combine predictions according to weighted prediction mode
@@ -1513,12 +1544,17 @@ pub fn render_chroma_inter_prediction_b(
             WeightedPredMode::Implicit => {
                 if has_l0 && has_l1 {
                     // Implicit mode uses same weights for luma and chroma
-                    let wp = get_implicit_weights(
-                        slice,
-                        partition.ref_idx_l0 as usize,
-                        partition.ref_idx_l1 as usize,
-                        references,
-                    );
+                    let ref_l0 = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                        DecodingError::ReferenceNotFound(format!(
+                            "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
+                        ))
+                    })?;
+                    let ref_l1 = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                        DecodingError::ReferenceNotFound(format!(
+                            "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
+                        ))
+                    })?;
+                    let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
                     for i in 0..4 {
                         dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
                     }
@@ -1570,6 +1606,7 @@ pub fn render_chroma_inter_prediction_b(
             }
         }
     }
+    Ok(())
 }
 
 // Section 8.5.8 Derivation process for chroma quantization parameters

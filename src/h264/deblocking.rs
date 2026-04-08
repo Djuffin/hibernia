@@ -258,51 +258,46 @@ fn filter_luma_edge(
             continue;
         }
 
-        // Load samples p3..p0, q0..q3 (8 samples total)
-        let mut samples = [0u8; 8];
-        if is_vertical {
+        let (q0_idx, p0_idx, p1_idx, q1_idx, p2_idx, q2_idx, p3_idx, q3_idx) = if is_vertical {
             let row_off = abs_y_q as usize * stride;
             let x_off = abs_x_q as usize;
-            samples.copy_from_slice(&data[row_off + x_off - 4..row_off + x_off + 4]);
+            (
+                row_off + x_off,
+                row_off + x_off - 1,
+                row_off + x_off - 2,
+                row_off + x_off + 1,
+                row_off + x_off - 3,
+                row_off + x_off + 2,
+                row_off + x_off - 4,
+                row_off + x_off + 3,
+            )
         } else {
             let y_off = abs_y_q as usize * stride;
             let x_off = abs_x_q as usize;
-            for i in 0..4 {
-                samples[3 - i] = data[y_off - (i + 1) * stride + x_off];
-                samples[4 + i] = data[y_off + i * stride + x_off];
-            }
-        }
+            (
+                y_off + x_off,
+                y_off - stride + x_off,
+                y_off - 2 * stride + x_off,
+                y_off + stride + x_off,
+                y_off - 3 * stride + x_off,
+                y_off + 2 * stride + x_off,
+                y_off - 4 * stride + x_off,
+                y_off + 3 * stride + x_off,
+            )
+        };
 
-        let (p0, q0) = (samples[3], samples[4]);
+        let p0 = data[p0_idx];
+        let q0 = data[q0_idx];
+        let p1 = data[p1_idx];
+        let q1 = data[q1_idx];
 
         // Check filter condition (Equation 8-460, alpha/beta from 8-456/8-457)
         if (p0 as i32 - q0 as i32).abs() < alpha as i32
-            && (samples[2] as i32 - p0 as i32).abs() < beta as i32
-            && (samples[5] as i32 - q0 as i32).abs() < beta as i32
+            && (p1 as i32 - p0 as i32).abs() < beta as i32
+            && (q1 as i32 - q0 as i32).abs() < beta as i32
         {
-            let (q0_idx, p0_idx, p1_idx, q1_idx, p2_idx, q2_idx) = if is_vertical {
-                let row_off = abs_y_q as usize * stride;
-                let x_off = abs_x_q as usize;
-                (
-                    row_off + x_off,
-                    row_off + x_off - 1,
-                    row_off + x_off - 2,
-                    row_off + x_off + 1,
-                    row_off + x_off - 3,
-                    row_off + x_off + 2,
-                )
-            } else {
-                let y_off = abs_y_q as usize * stride;
-                let x_off = abs_x_q as usize;
-                (
-                    y_off + x_off,
-                    y_off - stride + x_off,
-                    y_off - 2 * stride + x_off,
-                    y_off + stride + x_off,
-                    y_off - 3 * stride + x_off,
-                    y_off + 2 * stride + x_off,
-                )
-            };
+            let p2 = data[p2_idx];
+            let q2 = data[q2_idx];
 
             if bs < BS_STRONG {
                 // Section 8.7.2.3 Filtering process for edges with bS < 4
@@ -310,8 +305,8 @@ fn filter_luma_edge(
                 let tc0 = TC0_TABLE[(bs - 1) as usize][index_a];
                 let mut tc = tc0 as i32;
 
-                let ap = (samples[1] as i32 - p0 as i32).abs();
-                let aq = (samples[6] as i32 - q0 as i32).abs();
+                let ap = (p2 as i32 - p0 as i32).abs();
+                let aq = (q2 as i32 - q0 as i32).abs();
 
                 // Equation 8-465
                 if ap < beta as i32 {
@@ -324,7 +319,7 @@ fn filter_luma_edge(
                 // Weak filtering
                 // Equation 8-467: Delta
                 let delta =
-                    (((q0 as i32 - p0 as i32) << 2) + (samples[2] as i32 - samples[5] as i32) + 4)
+                    (((q0 as i32 - p0 as i32) << 2) + (p1 as i32 - q1 as i32) + 4)
                         >> 3;
                 let delta_c = delta.clamp(-tc, tc);
 
@@ -338,84 +333,66 @@ fn filter_luma_edge(
 
                 // Filter p1 (Section 8.7.2.3) if condition met
                 if ap < beta as i32 {
-                    let p2 = samples[1] as i32;
-                    let p1 = samples[2] as i32;
                     // Equation 8-470
-                    let delta_p1 = (p2 + ((p0 as i32 + q0 as i32 + 1) >> 1) - (p1 << 1)) >> 1;
+                    let delta_p1 = (p2 as i32 + ((p0 as i32 + q0 as i32 + 1) >> 1) - ((p1 as i32) << 1)) >> 1;
                     // Equation 8-470 (application)
                     let p1_new =
-                        (p1 + delta_p1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
+                        (p1 as i32 + delta_p1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
                     data[p1_idx] = p1_new;
                 }
 
                 // Filter q1
                 if aq < beta as i32 {
-                    let q2 = samples[6] as i32;
-                    let q1 = samples[5] as i32;
                     // Equation 8-472
-                    let delta_q1 = (q2 + ((p0 as i32 + q0 as i32 + 1) >> 1) - (q1 << 1)) >> 1;
+                    let delta_q1 = (q2 as i32 + ((p0 as i32 + q0 as i32 + 1) >> 1) - ((q1 as i32) << 1)) >> 1;
                     // Equation 8-472 (application)
                     let q1_new =
-                        (q1 + delta_q1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
+                        (q1 as i32 + delta_q1.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
                     data[q1_idx] = q1_new;
                 }
             } else {
                 // Section 8.7.2.4 Filtering process for edges with bS equal to 4
                 // Strong filtering
-                let ap = (samples[1] as i32 - p0 as i32).abs();
-                let aq = (samples[6] as i32 - q0 as i32).abs();
+                let ap = (p2 as i32 - p0 as i32).abs();
+                let aq = (q2 as i32 - q0 as i32).abs();
 
                 // Equation 8-476
                 let small_diff = (p0 as i32 - q0 as i32).abs() < ((alpha as i32 >> 2) + 2);
 
                 if ap < beta as i32 && small_diff {
                     // Strong filter for p0, p1, p2
-                    let p2 = samples[1] as i32;
-                    let p1 = samples[2] as i32;
-                    let p0 = samples[3] as i32;
-                    let q0 = samples[4] as i32;
-                    let q1 = samples[5] as i32;
+                    let p3 = data[p3_idx];
 
                     // Equation 8-477
                     data[p0_idx] =
-                        ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(0, 255) as u8;
+                        ((p2 as i32 + 2 * p1 as i32 + 2 * p0 as i32 + 2 * q0 as i32 + q1 as i32 + 4) >> 3).clamp(0, 255) as u8;
                     // Equation 8-478
-                    data[p1_idx] = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
+                    data[p1_idx] = ((p2 as i32 + p1 as i32 + p0 as i32 + q0 as i32 + 2) >> 2).clamp(0, 255) as u8;
                     // Equation 8-479
-                    data[p2_idx] = ((2 * samples[0] as i32 + 3 * p2 + p1 + p0 + q0 + 4) >> 3)
+                    data[p2_idx] = ((2 * p3 as i32 + 3 * p2 as i32 + p1 as i32 + p0 as i32 + q0 as i32 + 4) >> 3)
                         .clamp(0, 255) as u8;
                 } else {
                     // Weak filter p0 only (same as bs < 4 but with tc0=0)
                     // Equation 8-480
-                    let p1 = samples[2] as i32;
-                    let p0 = samples[3] as i32;
-                    let q1 = samples[5] as i32;
-                    data[p0_idx] = ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
+                    data[p0_idx] = ((2 * p1 as i32 + p0 as i32 + q1 as i32 + 2) >> 2).clamp(0, 255) as u8;
                 }
 
                 if aq < beta as i32 && small_diff {
                     // Strong filter for q0, q1, q2
-                    let q2 = samples[6] as i32;
-                    let q1 = samples[5] as i32;
-                    let q0 = samples[4] as i32;
-                    let p0 = samples[3] as i32;
-                    let p1 = samples[2] as i32;
+                    let q3 = data[q3_idx];
 
                     // Equation 8-484
                     data[q0_idx] =
-                        ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
+                        ((p1 as i32 + 2 * p0 as i32 + 2 * q0 as i32 + 2 * q1 as i32 + q2 as i32 + 4) >> 3).clamp(0, 255) as u8;
                     // Equation 8-485
-                    data[q1_idx] = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
+                    data[q1_idx] = ((p0 as i32 + q0 as i32 + q1 as i32 + q2 as i32 + 2) >> 2).clamp(0, 255) as u8;
                     // Equation 8-486
-                    data[q2_idx] = ((2 * samples[7] as i32 + 3 * q2 + q1 + q0 + p0 + 4) >> 3)
+                    data[q2_idx] = ((2 * q3 as i32 + 3 * q2 as i32 + q1 as i32 + q0 as i32 + p0 as i32 + 4) >> 3)
                         .clamp(0, 255) as u8;
                 } else {
                     // Weak filter q0 only
                     // Equation 8-487
-                    let q1 = samples[5] as i32;
-                    let q0 = samples[4] as i32;
-                    let p1 = samples[2] as i32;
-                    data[q0_idx] = ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
+                    data[q0_idx] = ((2 * q1 as i32 + q0 as i32 + p1 as i32 + 2) >> 2).clamp(0, 255) as u8;
                 }
             }
         }
@@ -464,6 +441,30 @@ fn filter_chroma_edge(
         bs_array[b] = get_bs(slice, q_mb, p_mb, luma_edge_idx, b, is_vertical);
     }
 
+    struct ChromaParams {
+        alpha: u8,
+        beta: u8,
+        index_a: usize,
+    }
+    
+    let get_chroma_params = |plane_idx: ColorPlane| -> ChromaParams {
+        let qp_index_offset = slice.pps.get_chroma_qp_index_offset(plane_idx);
+        let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
+        let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0);
+        let qp_av_c = (qp_p_c + qp_q_c + 1) >> 1;
+        let index_a = (qp_av_c + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
+        let index_b = (qp_av_c + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
+        ChromaParams {
+            alpha: ALPHA_TABLE[index_a],
+            beta: BETA_TABLE[index_b],
+            index_a,
+        }
+    };
+
+    let params_cb = get_chroma_params(ColorPlane::Cb);
+    let params_cr = get_chroma_params(ColorPlane::Cr);
+    let chroma_params = [params_cb, params_cr];
+
     for k in 0..8 {
         let (x_q_c, y_q_c) = if is_vertical {
             (edge_idx as u32 * 4, k as u32)
@@ -481,19 +482,10 @@ fn filter_chroma_edge(
 
         // Filtering for both Cb and Cr
         for plane_idx in [ColorPlane::Cb, ColorPlane::Cr] {
-            let qp_index_offset = slice.pps.get_chroma_qp_index_offset(plane_idx);
-
-            // Equation 8-453 (qPav) and Clause 8.5.8 (QPC)
-            let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
-            let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0);
-            let qp_av_c = (qp_p_c + qp_q_c + 1) >> 1;
-
-            let index_a =
-                (qp_av_c + slice.header.slice_alpha_c0_offset_div2 * 2).clamp(0, 51) as usize;
-            let index_b = (qp_av_c + slice.header.slice_beta_offset_div2 * 2).clamp(0, 51) as usize;
-
-            let alpha = ALPHA_TABLE[index_a];
-            let beta = BETA_TABLE[index_b];
+            let params = &chroma_params[plane_idx as usize - 1]; // Cb is 1, Cr is 2
+            let alpha = params.alpha;
+            let beta = params.beta;
+            let index_a = params.index_a;
 
             let plane = &mut frame.planes[plane_idx as usize];
 

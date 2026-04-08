@@ -164,13 +164,13 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     let nal_hrd_parameters_present: bool;
     read_value!(input, nal_hrd_parameters_present, f);
     if nal_hrd_parameters_present {
-        todo!("NAL HDR");
+        return Err("NAL HRD parameters are not supported".into());
     }
 
     let vcl_hrd_parameters_present: bool;
     read_value!(input, vcl_hrd_parameters_present, f);
     if vcl_hrd_parameters_present {
-        todo!("VCL HDR");
+        return Err("VCL HRD parameters are not supported".into());
     }
 
     read_value!(input, vui.pic_struct_present_flag, f);
@@ -216,7 +216,7 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
         read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, f);
         read_value!(input, sps.seq_scaling_matrix_present_flag, f);
         if sps.seq_scaling_matrix_present_flag {
-            todo!("scaling matrix");
+            return Err("custom scaling matrices are not supported".into());
         }
     }
 
@@ -382,7 +382,7 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
         let pic_scaling_matrix_present_flag: bool;
         read_value!(input, pic_scaling_matrix_present_flag, f);
         if pic_scaling_matrix_present_flag {
-            todo!("scaling matrix");
+            return Err("PPS scaling matrices are not supported".into());
         }
         read_value!(input, pps.second_chroma_qp_index_offset, se);
     } else {
@@ -756,7 +756,7 @@ pub fn parse_slice_header(
             read_value!(input, bottom_field_flag, f);
             header.bottom_field_flag = Some(bottom_field_flag);
         }
-        todo!("implement interlaced video. i.e. fields");
+        return Err("interlaced video (fields) is not supported".into());
     }
 
     if idr_pic_flag {
@@ -944,7 +944,7 @@ pub fn parse_residual(
             }
         }
     } else {
-        todo!("i444");
+        return Err("YUV 4:4:4 residual parsing is not supported".into());
     }
     Ok(())
 }
@@ -2447,7 +2447,7 @@ pub fn parse_i_macroblock(
                 }
             }
             MbPredictionMode::Intra_16x16 => {}
-            _ => todo!("implement Intra_8x8"),
+            _ => return Err("Intra_8x8 prediction is not supported".into()),
         };
         if slice.sps.ChromaArrayType().is_chroma_subsampled() {
             read_value!(input, block.intra_chroma_pred_mode, ue, 2);
@@ -2484,14 +2484,6 @@ pub fn parse_i_macroblock(
 
 // Section 7.3.4 Slice data syntax
 pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
-    // Baseline profile features
-    assert!(!slice.pps.transform_8x8_mode_flag, "8x8 transform decoding is not implemented yet");
-    assert!(!slice.sps.seq_scaling_matrix_present_flag, "scaling list is not implemented yet");
-    assert!(slice.sps.frame_mbs_only_flag, "interlaced video is not implemented yet");
-    assert!(slice.pps.slice_group.is_none(), "slice groups not implemented yet");
-    assert!(!slice.pps.constrained_intra_pred_flag);
-    assert_eq!(slice.sps.ChromaArrayType().get_chroma_shift(), super::Size { width: 1, height: 1 });
-
     if slice.pps.entropy_coding_mode_flag {
         parse_slice_data_cabac(input, slice)
     } else {

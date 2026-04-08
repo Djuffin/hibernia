@@ -56,6 +56,7 @@ pub struct MotionFieldStorage {
 pub enum DecodingError {
     MisformedData(String),
     OutOfRange(String),
+    FeatureNotSupported(String),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -264,7 +265,27 @@ impl Decoder {
             NalUnitType::SeqParameterSet => {
                 let sps = parser::parse_sps(&mut input).map_err(parse_error_handler)?;
                 info!("SPS: {:#?}", sps);
-                assert_eq!(sps.ChromaArrayType(), ChromaFormat::YUV420);
+                if sps.ChromaArrayType() != ChromaFormat::YUV420 {
+                    return Err(DecodingError::FeatureNotSupported(format!(
+                        "chroma format {:?} is not supported, only YUV420",
+                        sps.ChromaArrayType()
+                    )));
+                }
+                if !sps.frame_mbs_only_flag {
+                    return Err(DecodingError::FeatureNotSupported(
+                        "interlaced video (frame_mbs_only_flag=0) is not supported".into(),
+                    ));
+                }
+                if sps.gaps_in_frame_num_value_allowed_flag {
+                    return Err(DecodingError::FeatureNotSupported(
+                        "gaps_in_frame_num_value_allowed_flag=1 is not supported".into(),
+                    ));
+                }
+                if sps.seq_scaling_matrix_present_flag {
+                    return Err(DecodingError::FeatureNotSupported(
+                        "custom scaling matrices are not supported".into(),
+                    ));
+                }
 
                 // Update DPB size: use level-derived MaxDpbFrames per A.3.1,
                 // or VUI max_dec_frame_buffering if bitstream_restriction_flag is set.
@@ -283,6 +304,21 @@ impl Decoder {
             NalUnitType::PicParameterSet => {
                 let pps = parser::parse_pps(&mut input).map_err(parse_error_handler)?;
                 info!("PPS: {:#?}", pps);
+                if pps.transform_8x8_mode_flag {
+                    return Err(DecodingError::FeatureNotSupported(
+                        "8x8 transform is not supported".into(),
+                    ));
+                }
+                if pps.slice_group.is_some() {
+                    return Err(DecodingError::FeatureNotSupported(
+                        "slice groups are not supported".into(),
+                    ));
+                }
+                if pps.constrained_intra_pred_flag {
+                    return Err(DecodingError::FeatureNotSupported(
+                        "constrained intra prediction is not supported".into(),
+                    ));
+                }
                 self.context.put_pps(pps);
             }
             NalUnitType::AccessUnitDelimiter => {}
@@ -394,7 +430,11 @@ impl Decoder {
                                     slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
                                 );
                             }
-                            MbPredictionMode::Intra_8x8 => todo!("8x8 pred mode"),
+                            MbPredictionMode::Intra_8x8 => {
+                                return Err(DecodingError::FeatureNotSupported(
+                                    "Intra_8x8 prediction is not supported".into(),
+                                ));
+                            }
                             MbPredictionMode::Intra_16x16 => {
                                 render_luma_16x16_intra_prediction(
                                     slice,

@@ -1430,14 +1430,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             && residual.coded_block_pattern.chroma() != 0
         {
             if slice.sps.ChromaArrayType() == super::ChromaFormat::YUV422 {
-                unimplemented!("Chroma DC residual parsing for YUV422 (NumC8x8 > 1)");
+                return Err("YUV422 chroma DC residual parsing is not supported".into());
             }
             // Cb DC: Cat 3, comp_idx 0
             self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 3, 0, 0, 4)?;
             // Cr DC: Cat 3, comp_idx 1
             self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 3, 0, 1, 4)?;
         } else if slice.sps.ChromaArrayType() == super::ChromaFormat::YUV444 {
-            unimplemented!("Chroma DC/AC residual parsing for YUV444 (Categories 6-13)");
+            return Err("YUV444 chroma residual parsing is not supported".into());
         }
 
         // 4. Chroma AC
@@ -1455,7 +1455,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         if curr_mb.transform_size_8x8_flag {
-            unimplemented!("Luma 8x8 residual parsing (Category 5)");
+            return Err("8x8 transform residual parsing is not supported".into());
         }
 
         Ok(())
@@ -1481,7 +1481,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         );
         // 1. coded_block_flag
         if slice.header.field_pic_flag {
-            unimplemented!("Field-coded macroblock support (ctxIdxOffset 277 etc)");
+            return Err("field-coded macroblock decoding is not supported".into());
         }
         let cbf_props = get_syntax_element_properties(SyntaxElement::CodedBlockFlag(ctx_block_cat));
         let ctx_idx_offset_cbf = cbf_props.ctx_idx_offset as usize;
@@ -2177,7 +2177,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         trace!("parse_macroblock addr={}", mb_addr);
 
         if slice.MbaffFrameFlag() {
-            unimplemented!("MBAFF mb_field_decoding_flag parsing");
+            return Err("MBAFF (mb_adaptive_frame_field) is not supported".into());
         }
 
         if slice.header.slice_type == super::slice::SliceType::P {
@@ -2227,7 +2227,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mb_type = if slice.header.slice_type == super::slice::SliceType::I {
             CabacMbType::I(self.parse_mb_type_i(slice, mb_addr)?)
         } else if slice.header.slice_type == super::slice::SliceType::SI {
-            unimplemented!("SI slice mb_type parsing");
+            return Err("SI slice decoding is not supported".into());
         } else if slice.header.slice_type == super::slice::SliceType::B {
             self.parse_mb_type_b(slice, mb_addr)?
         } else {
@@ -2305,7 +2305,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     }
 
                     if mb.transform_size_8x8_flag {
-                        unimplemented!("Intra 8x8 prediction parsing (prev_intra8x8_pred_mode_flag, rem_intra8x8_pred_mode)");
+                        return Err("Intra 8x8 prediction parsing is not supported".into());
                     } else {
                         let prev_intra_props =
                             get_syntax_element_properties(SyntaxElement::PrevIntra4x4PredModeFlag);

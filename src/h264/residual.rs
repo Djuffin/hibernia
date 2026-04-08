@@ -94,7 +94,7 @@ impl Residual {
                 | MbPredictionMode::BiPred
                 | MbPredictionMode::Direct
                 | MbPredictionMode::None => self.luma_level4x4_nc[blk_idx],
-                MbPredictionMode::Intra_8x8 => todo!(),
+                MbPredictionMode::Intra_8x8 => panic!("Intra_8x8 should be rejected by decoder"),
             },
 
             ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx],

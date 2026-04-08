@@ -184,7 +184,7 @@ pub fn test_CVBS3_Sony_C() -> Result<(), String> {
 
 #[test]
 pub fn test_CVWP1_TOSHIBA_E() -> Result<(), String> {
-    // Explicit weighted prediction for P slices. CAVLC. weighted_pred_flag=1. 352x288 CIF, 90 frames.
+    // Explicit weighted prediction for P slices. CAVLC. weighted_pred_flag=1.
     test_decoding_against_gold(
         "data/CVWP1_TOSHIBA_E/CVWP1_TOSHIBA_E.264",
         "data/CVWP1_TOSHIBA_E/CVWP1_TOSHIBA_E_dec.y4m",
@@ -193,7 +193,7 @@ pub fn test_CVWP1_TOSHIBA_E() -> Result<(), String> {
 
 #[test]
 pub fn test_CVWP2_TOSHIBA_E() -> Result<(), String> {
-    // Explicit weighted prediction for B slices. CAVLC. weighted_bipred_idc=1. 352x288 CIF, 90 frames.
+    // Explicit weighted prediction for B slices. CAVLC. weighted_bipred_idc=1.
     test_decoding_against_gold(
         "data/CVWP2_TOSHIBA_E/CVWP2_TOSHIBA_E.264",
         "data/CVWP2_TOSHIBA_E/CVWP2_TOSHIBA_E_dec.y4m",
@@ -202,7 +202,7 @@ pub fn test_CVWP2_TOSHIBA_E() -> Result<(), String> {
 
 #[test]
 pub fn test_CVWP3_TOSHIBA_E() -> Result<(), String> {
-    // Implicit weighted prediction for B slices. CAVLC. weighted_bipred_idc=2. 352x288 CIF, 90 frames.
+    // Implicit weighted prediction for B slices. CAVLC. weighted_bipred_idc=2.
     test_decoding_against_gold(
         "data/CVWP3_TOSHIBA_E/CVWP3_TOSHIBA_E.264",
         "data/CVWP3_TOSHIBA_E/CVWP3_TOSHIBA_E_dec.y4m",
@@ -211,7 +211,7 @@ pub fn test_CVWP3_TOSHIBA_E() -> Result<(), String> {
 
 #[test]
 pub fn test_CAWP1_TOSHIBA_E() -> Result<(), String> {
-    // Explicit weighted prediction for P slices. CABAC. weighted_pred_flag=1. 352x288 CIF, 90 frames.
+    // Explicit weighted prediction for P slices. CABAC. weighted_pred_flag=1.
     test_decoding_against_gold(
         "data/CAWP1_TOSHIBA_E/CAWP1_TOSHIBA_E.264",
         "data/CAWP1_TOSHIBA_E/CAWP1_TOSHIBA_E_dec.y4m",
@@ -220,7 +220,7 @@ pub fn test_CAWP1_TOSHIBA_E() -> Result<(), String> {
 
 #[test]
 pub fn test_CAWP5_TOSHIBA_E() -> Result<(), String> {
-    // Explicit weighted prediction for P slices. CABAC. weighted_pred_flag=1. 352x288 CIF, 90 frames.
+    // Explicit weighted prediction for P slices. CABAC. weighted_pred_flag=1.
     test_decoding_against_gold(
         "data/CAWP5_TOSHIBA_E/CAWP5_TOSHIBA_E.264",
         "data/CAWP5_TOSHIBA_E/CAWP5_TOSHIBA_E_dec.y4m",

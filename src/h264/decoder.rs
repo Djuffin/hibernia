@@ -56,7 +56,6 @@ pub struct MotionFieldStorage {
 pub enum DecodingError {
     MisformedData(String),
     OutOfRange(String),
-    Wtf,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -215,7 +214,7 @@ impl Decoder {
                 let pic_order_cnt = self.poc_state.calculate_poc(&slice, disposition);
 
                 let pic = Picture { frame, frame_num: slice.header.frame_num, pic_order_cnt, motion_field: None };
-                let dpb_pic = DpbPicture {
+                let mut dpb_pic = DpbPicture {
                     picture: pic,
                     marking: if nal.nal_ref_idc != 0 {
                         super::dpb::DpbMarking::UsedForShortTermReference
@@ -226,28 +225,36 @@ impl Decoder {
                     structure: super::dpb::DpbPictureStructure::Frame,
                     needed_for_output: true,
                 };
-                let pictures = self.dpb.store_picture(dpb_pic);
+
+                // --- C.2.2: Picture decoding (current picture NOT in DPB) ---
 
                 // Construct reference picture lists before parsing, because temporal
                 // direct prediction (used during B-slice parsing) needs the colocated picture.
-                self.construct_ref_pic_list0(&mut slice)?;
+                self.construct_ref_pic_list0(&mut slice, pic_order_cnt)?;
                 if slice.header.slice_type == SliceType::B {
-                    self.construct_ref_pic_list1(&mut slice)?;
-                    self.setup_colocated_pic_info(&mut slice);
+                    self.construct_ref_pic_list1(&mut slice, pic_order_cnt)?;
+                    self.setup_colocated_pic_info(&mut slice, pic_order_cnt);
                 }
 
                 parser::parse_slice_data(&mut input, &mut slice).map_err(parse_error_handler)?;
-                self.process_slice(&mut slice)?;
+                self.process_slice(&mut slice, &mut dpb_pic.picture.frame)?;
 
-                // Save motion field for future temporal direct prediction.
-                self.save_motion_field(&slice, disposition);
+                // Build motion field while DPB indices are still valid (before mutations).
+                self.save_motion_field(&slice, disposition, &mut dpb_pic);
 
-                self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
-                // MMCO 5 (Memory Management Control Operation 5) marks all reference pictures
-                // as "unused for reference" and sets the current frame's frame_num and POC to 0.
-                let has_mmco5 = self.dpb.mark_references(&slice.header, disposition, &slice.sps);
-                // Clean up pictures that are both unused for reference and already output.
+                // --- C.2.3: Mark references + remove dead pictures (before storage) ---
+                let has_mmco5 = self.dpb.mark_prior_references(
+                    &slice.header,
+                    disposition,
+                    &slice.sps,
+                    &mut dpb_pic,
+                );
                 self.dpb.remove_dead_pictures();
+
+                // --- C.2.4: Store current picture (with bumping if DPB is full) ---
+                let pictures = self.dpb.store_picture(dpb_pic);
+                self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
+
                 self.poc_state.update_mmco5_state(
                     has_mmco5,
                     disposition != ReferenceDisposition::NonReference,
@@ -312,19 +319,17 @@ impl Decoder {
         Ok(())
     }
 
-    fn process_slice(&mut self, slice: &mut Slice) -> Result<(), DecodingError> {
-        if self.dpb.pictures.is_empty() {
-            return Err(DecodingError::Wtf);
-        }
-
-        // Ref pic lists are now constructed before parse_slice_data in decode().
-
+    /// Process the decoded slice, performing prediction and reconstruction.
+    /// The current picture's frame is passed separately (it is not yet in the DPB).
+    fn process_slice(
+        &mut self,
+        slice: &mut Slice,
+        frame: &mut VideoFrame,
+    ) -> Result<(), DecodingError> {
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
         let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
-        let split_idx = self.dpb.pictures.len() - 1;
-        let (references, current) = self.dpb.pictures.split_at_mut(split_idx);
-        let frame = &mut current[0].picture.frame;
+        let references = &self.dpb.pictures[..];
         let first_mb_addr = slice.header.first_mb_in_slice;
         for i in 0..slice.get_macroblock_count() {
             let mb_addr = first_mb_addr + i as u32;
@@ -511,14 +516,18 @@ impl Decoder {
     }
 
     // Section 8.2.4.1 Decoding process for picture numbers
-    fn construct_ref_pic_list0(&self, slice: &mut Slice) -> Result<(), DecodingError> {
+    fn construct_ref_pic_list0(
+        &self,
+        slice: &mut Slice,
+        current_poc: i32,
+    ) -> Result<(), DecodingError> {
         if slice.header.slice_type == SliceType::I || slice.header.slice_type == SliceType::SI {
             slice.ref_pic_list0.clear();
             return Ok(());
         }
 
         let mut ref_list0 = if slice.header.slice_type == SliceType::B {
-            self.initialize_ref_pic_list0_b(slice)
+            self.initialize_ref_pic_list0_b(slice, current_poc)
         } else {
             self.initialize_ref_pic_list0(slice)
         };
@@ -539,15 +548,12 @@ impl Decoder {
         let max_frame_num = 1 << (slice.sps.log2_max_frame_num_minus4 + 4);
         let curr_frame_num = slice.header.frame_num as i32;
 
-        // Collect valid reference pictures
         let mut short_term_refs = Vec::new();
         let mut long_term_refs = Vec::new();
 
-        // We use indices into the DPB
-        // The last picture in the DPB is the current picture being decoded,
-        // so we exclude it from the reference list.
-        let candidates_count = self.dpb.pictures.len().saturating_sub(1);
-        for (i, pic) in self.dpb.pictures.iter().enumerate().take(candidates_count) {
+        // The current picture is not yet in the DPB (stored after decoding per C.2.4),
+        // so all DPB entries are valid reference candidates.
+        for (i, pic) in self.dpb.pictures.iter().enumerate() {
             match pic.marking {
                 DpbMarking::UsedForShortTermReference => {
                     let frame_num = pic.picture.frame_num as i32;
@@ -668,15 +674,12 @@ impl Decoder {
 
     // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
     // List 0 for B slices: short-term with POC <= current (desc), then POC > current (asc), then long-term (asc)
-    fn initialize_ref_pic_list0_b(&self, slice: &Slice) -> Vec<usize> {
-        let candidates_count = self.dpb.pictures.len().saturating_sub(1);
-        let current_poc = self.dpb.pictures.last().map(|p| p.picture.pic_order_cnt).unwrap_or(0);
-
+    fn initialize_ref_pic_list0_b(&self, slice: &Slice, current_poc: i32) -> Vec<usize> {
         let mut short_term_le = Vec::new(); // POC <= current
         let mut short_term_gt = Vec::new(); // POC > current
         let mut long_term_refs = Vec::new();
 
-        for (i, pic) in self.dpb.pictures.iter().enumerate().take(candidates_count) {
+        for (i, pic) in self.dpb.pictures.iter().enumerate() {
             match pic.marking {
                 DpbMarking::UsedForShortTermReference => {
                     if pic.picture.pic_order_cnt <= current_poc {
@@ -706,15 +709,12 @@ impl Decoder {
 
     // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
     // List 1 for B slices: short-term with POC > current (asc), then POC <= current (desc), then long-term (asc)
-    fn initialize_ref_pic_list1(&self, slice: &Slice) -> Vec<usize> {
-        let candidates_count = self.dpb.pictures.len().saturating_sub(1);
-        let current_poc = self.dpb.pictures.last().map(|p| p.picture.pic_order_cnt).unwrap_or(0);
-
+    fn initialize_ref_pic_list1(&self, slice: &Slice, current_poc: i32) -> Vec<usize> {
         let mut short_term_gt = Vec::new(); // POC > current
         let mut short_term_le = Vec::new(); // POC <= current
         let mut long_term_refs = Vec::new();
 
-        for (i, pic) in self.dpb.pictures.iter().enumerate().take(candidates_count) {
+        for (i, pic) in self.dpb.pictures.iter().enumerate() {
             match pic.marking {
                 DpbMarking::UsedForShortTermReference => {
                     if pic.picture.pic_order_cnt > current_poc {
@@ -742,9 +742,13 @@ impl Decoder {
             .collect()
     }
 
-    fn construct_ref_pic_list1(&self, slice: &mut Slice) -> Result<(), DecodingError> {
+    fn construct_ref_pic_list1(
+        &self,
+        slice: &mut Slice,
+        current_poc: i32,
+    ) -> Result<(), DecodingError> {
         let ref_list0 = &slice.ref_pic_list0;
-        let mut ref_list1 = self.initialize_ref_pic_list1(slice);
+        let mut ref_list1 = self.initialize_ref_pic_list1(slice, current_poc);
 
         // Section 8.2.4.2.3: When list1 is identical to list0 and has more than one entry, swap first two
         if ref_list1.len() > 1 && ref_list1 == *ref_list0 {
@@ -820,11 +824,8 @@ impl Decoder {
     }
 
     /// Set up colocated picture info on the slice for temporal direct prediction.
-    fn setup_colocated_pic_info(&self, slice: &mut Slice) {
-        // Set current picture POC
-        if let Some(current) = self.dpb.pictures.last() {
-            slice.current_pic_poc = current.picture.pic_order_cnt;
-        }
+    fn setup_colocated_pic_info(&self, slice: &mut Slice, current_poc: i32) {
+        slice.current_pic_poc = current_poc;
 
         // Set ref_pic_list0 POCs
         slice.ref_pic_list0_pocs = slice
@@ -858,8 +859,15 @@ impl Decoder {
         }
     }
 
-    /// Save the current picture's motion field for future temporal direct prediction.
-    fn save_motion_field(&mut self, slice: &Slice, disposition: ReferenceDisposition) {
+    /// Build motion field storage and attach it to the current picture.
+    /// Must be called while DPB indices (from ref lists) are still valid,
+    /// i.e., before mark_prior_references / remove_dead_pictures / store_picture.
+    fn save_motion_field(
+        &self,
+        slice: &Slice,
+        disposition: ReferenceDisposition,
+        dpb_pic: &mut DpbPicture,
+    ) {
         if disposition == ReferenceDisposition::NonReference {
             return;
         }
@@ -877,7 +885,7 @@ impl Decoder {
                 mb_is_intra.push(true);
             }
         }
-        // Collect ref pic list POCs
+        // Resolve DPB indices to POCs now, before DPB mutations invalidate indices.
         let ref_pic_l0_pocs: Vec<i32> = slice
             .ref_pic_list0
             .iter()
@@ -889,14 +897,12 @@ impl Decoder {
             .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
             .collect();
 
-        if let Some(current) = self.dpb.pictures.last_mut() {
-            current.picture.motion_field = Some(MotionFieldStorage {
-                mb_motion,
-                mb_is_intra,
-                ref_pic_l0_pocs,
-                ref_pic_l1_pocs,
-            });
-        }
+        dpb_pic.picture.motion_field = Some(MotionFieldStorage {
+            mb_motion,
+            mb_is_intra,
+            ref_pic_l0_pocs,
+            ref_pic_l1_pocs,
+        });
     }
 }
 

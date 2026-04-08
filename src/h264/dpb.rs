@@ -203,19 +203,25 @@ impl DecodedPictureBuffer {
         })
     }
 
-    /// Section 8.2.5 Decoded reference picture marking process.
+    /// Section C.2.3 / 8.2.5: Mark prior references and set current picture's marking.
     ///
-    /// Returns true if a memory_management_control_operation equal to 5 (MMCO 5) was processed,
-    /// indicating that the POC state should be reset for the next picture.
-    pub fn mark_references(
+    /// Called BEFORE the current picture is stored in the DPB (spec C.2.3 before C.2.4).
+    /// Operations on prior pictures modify the DPB directly; operations that affect the
+    /// current picture (IDR marking, MMCO 5/6, short-term default) are applied to `current_pic`.
+    ///
+    /// Returns true if MMCO 5 was processed, indicating POC state should be reset.
+    pub fn mark_prior_references(
         &mut self,
         header: &SliceHeader,
         disposition: ReferenceDisposition,
         sps: &SequenceParameterSet,
+        current_pic: &mut DpbPicture,
     ) -> bool {
         let mut has_mmco5 = false;
         match disposition {
-            ReferenceDisposition::Idr => self.mark_idr_references(header),
+            ReferenceDisposition::Idr => {
+                self.mark_idr_prior_references(header, current_pic);
+            }
             ReferenceDisposition::NonIdrReference => {
                 let adaptive_ref_pic_marking_mode_flag = header
                     .dec_ref_pic_marking
@@ -224,7 +230,7 @@ impl DecodedPictureBuffer {
                     .unwrap_or(false);
 
                 if adaptive_ref_pic_marking_mode_flag {
-                    has_mmco5 = self.mark_adaptive_references(header, sps);
+                    has_mmco5 = self.mark_adaptive_references(header, sps, current_pic);
                 } else {
                     self.mark_sliding_window_references(sps);
                 }
@@ -232,10 +238,8 @@ impl DecodedPictureBuffer {
                 // Section 8.2.5.1 Step 3:
                 // When the current picture is not an IDR picture and it was not marked as
                 // "used for long-term reference" by MMCO 6, it is marked as "used for short-term reference".
-                if let Some(last) = self.pictures.last_mut() {
-                    if !last.marking.is_long_term() {
-                        last.marking = DpbMarking::UsedForShortTermReference;
-                    }
+                if !current_pic.marking.is_long_term() {
+                    current_pic.marking = DpbMarking::UsedForShortTermReference;
                 }
             }
             ReferenceDisposition::NonReference => {}
@@ -243,32 +247,30 @@ impl DecodedPictureBuffer {
         has_mmco5
     }
 
-    fn mark_idr_references(&mut self, header: &SliceHeader) {
-        // Section 8.2.5.1
-        // The current picture is the last in the vec (just stored by store_picture).
-        // Mark all prior pictures as unused for reference.
-        let last_idx = self.pictures.len() - 1;
-        for pic in self.pictures[..last_idx].iter_mut() {
+    /// Section 8.2.5.1 for IDR pictures.
+    /// Mark all DPB pictures as unused, optionally flush, and set current_pic marking.
+    fn mark_idr_prior_references(
+        &mut self,
+        header: &SliceHeader,
+        current_pic: &mut DpbPicture,
+    ) {
+        // Mark all pictures currently in the DPB as unused for reference.
+        for pic in self.pictures.iter_mut() {
             pic.marking = DpbMarking::UnusedForReference;
         }
 
         if let Some(dec_ref_pic_marking) = &header.dec_ref_pic_marking {
             if dec_ref_pic_marking.no_output_of_prior_pics_flag.unwrap_or(false) {
-                // Remove all prior pictures without output, preserving the current IDR.
-                if let Some(current) = self.pictures.pop() {
-                    self.pictures.clear();
-                    self.pictures.push(current);
-                }
+                // Remove all prior pictures without output.
+                self.pictures.clear();
             }
 
-            if let Some(last) = self.pictures.last_mut() {
-                if dec_ref_pic_marking.long_term_reference_flag.unwrap_or(false) {
-                    last.marking = DpbMarking::UsedForLongTermReference(0);
-                    // max_long_term_frame_idx = 0; (implicit)
-                } else {
-                    last.marking = DpbMarking::UsedForShortTermReference;
-                    // max_long_term_frame_idx = -1; (implicit)
-                }
+            if dec_ref_pic_marking.long_term_reference_flag.unwrap_or(false) {
+                current_pic.marking = DpbMarking::UsedForLongTermReference(0);
+                // max_long_term_frame_idx = 0; (implicit)
+            } else {
+                current_pic.marking = DpbMarking::UsedForShortTermReference;
+                // max_long_term_frame_idx = -1; (implicit)
             }
         }
     }
@@ -280,8 +282,8 @@ impl DecodedPictureBuffer {
         &mut self,
         header: &SliceHeader,
         sps: &SequenceParameterSet,
+        current_pic: &mut DpbPicture,
     ) -> bool {
-        // Section 8.2.5.4 Adaptive memory control decoded reference picture marking process
         let ops = match &header.dec_ref_pic_marking {
             Some(m) => &m.memory_management_operations,
             None => return false,
@@ -339,35 +341,33 @@ impl DecodedPictureBuffer {
                     for pic in self.pictures.iter_mut() {
                         pic.marking = DpbMarking::UnusedForReference;
                     }
-                    if let Some(last) = self.pictures.last_mut() {
-                        last.picture.frame_num = 0;
-                        last.picture.pic_order_cnt = 0;
-                    }
+                    current_pic.picture.frame_num = 0;
+                    current_pic.picture.pic_order_cnt = 0;
                 }
                 MemoryManagementControlOperation::MarkCurrentAsLongTerm { long_term_frame_idx } => {
                     self.mark_long_term_unused(*long_term_frame_idx);
-                    if let Some(last) = self.pictures.last_mut() {
-                        last.marking = DpbMarking::UsedForLongTermReference(*long_term_frame_idx);
-                    }
+                    current_pic.marking =
+                        DpbMarking::UsedForLongTermReference(*long_term_frame_idx);
                 }
             }
         }
         has_mmco5
     }
 
+    /// Section 8.2.5.3 Sliding window decoded reference picture marking process.
+    /// Called when the current picture is NOT yet in the DPB.
+    /// The spec triggers eviction when numShortTerm + numLongTerm == Max(max_num_ref_frames, 1),
+    /// counting only prior references (current picture not yet stored/marked).
     fn mark_sliding_window_references(&mut self, sps: &SequenceParameterSet) {
-        // Section 8.2.5.3 Sliding window decoded reference picture marking process
         let num_ref = self.pictures.iter().filter(|p| !p.marking.is_unused()).count();
+        let max_ref = std::cmp::max(sps.max_num_ref_frames as usize, 1);
 
-        if num_ref > sps.max_num_ref_frames as usize {
-            // We remove the first found short-term reference that is NOT the current picture.
-            // The current picture is always the last one in our Vec.
-            // Since we want the "oldest", and we push to the back, searching from the front is correct.
-
-            let index_to_remove = self.pictures.iter().enumerate().position(|(i, pic)| {
-                // Don't remove the current picture (last one)
-                i != self.pictures.len() - 1 && pic.marking.is_short_term()
-            });
+        if num_ref >= max_ref {
+            // Find the oldest short-term reference picture.
+            let index_to_remove = self
+                .pictures
+                .iter()
+                .position(|pic| pic.marking.is_short_term());
 
             if let Some(i) = index_to_remove {
                 self.pictures[i].marking = DpbMarking::UnusedForReference;
@@ -573,13 +573,12 @@ mod tests {
         let mut dpb = DecodedPictureBuffer::new();
         dpb.set_max_size(4);
 
-        // Add some reference pictures
+        // Add some reference pictures (prior pictures, already in DPB)
         dpb.store_picture(create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference));
         dpb.store_picture(create_dummy_dpb_picture(2, 4, DpbMarking::UsedForShortTermReference));
 
-        // Current picture with MMCO 5
-        let current = create_dummy_dpb_picture(3, 6, DpbMarking::UsedForShortTermReference);
-        dpb.store_picture(current);
+        // Current picture (NOT stored in DPB yet — per spec C.2.3 before C.2.4)
+        let mut current = create_dummy_dpb_picture(3, 6, DpbMarking::UsedForShortTermReference);
 
         let mut header = SliceHeader::default();
         header.frame_num = 3;
@@ -589,18 +588,22 @@ mod tests {
         header.dec_ref_pic_marking = Some(marking);
 
         let sps = SequenceParameterSet::default();
-        let has_mmco5 = dpb.mark_references(&header, ReferenceDisposition::NonIdrReference, &sps);
+        let has_mmco5 = dpb.mark_prior_references(
+            &header,
+            ReferenceDisposition::NonIdrReference,
+            &sps,
+            &mut current,
+        );
 
         assert!(has_mmco5);
-        // All previous should be unused
+        // All prior pictures should be unused
         assert!(dpb.pictures[0].marking.is_unused());
         assert!(dpb.pictures[1].marking.is_unused());
 
-        // Current (last) should be short-term reference (Section 8.2.5.1 Step 3)
-        let last = dpb.pictures.last().unwrap();
-        assert!(last.marking.is_short_term());
+        // Current should be short-term reference (Section 8.2.5.1 Step 3)
+        assert!(current.marking.is_short_term());
         // And reset to 0
-        assert_eq!(last.picture.frame_num, 0);
-        assert_eq!(last.picture.pic_order_cnt, 0);
+        assert_eq!(current.picture.frame_num, 0);
+        assert_eq!(current.picture.pic_order_cnt, 0);
     }
 }

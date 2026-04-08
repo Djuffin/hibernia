@@ -208,3 +208,21 @@ pub fn test_CVWP3_TOSHIBA_E() -> Result<(), String> {
         "data/CVWP3_TOSHIBA_E/CVWP3_TOSHIBA_E_dec.y4m",
     )
 }
+
+#[test]
+pub fn test_CAWP1_TOSHIBA_E() -> Result<(), String> {
+    // Explicit weighted prediction for P slices. CABAC. weighted_pred_flag=1. 352x288 CIF, 90 frames.
+    test_decoding_against_gold(
+        "data/CAWP1_TOSHIBA_E/CAWP1_TOSHIBA_E.264",
+        "data/CAWP1_TOSHIBA_E/CAWP1_TOSHIBA_E_dec.y4m",
+    )
+}
+
+#[test]
+pub fn test_CAWP5_TOSHIBA_E() -> Result<(), String> {
+    // Explicit weighted prediction for P slices. CABAC. weighted_pred_flag=1. 352x288 CIF, 90 frames.
+    test_decoding_against_gold(
+        "data/CAWP5_TOSHIBA_E/CAWP5_TOSHIBA_E.264",
+        "data/CAWP5_TOSHIBA_E/CAWP5_TOSHIBA_E_dec.y4m",
+    )
+}

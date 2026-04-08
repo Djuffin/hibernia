@@ -300,7 +300,7 @@ impl DecodedPictureBuffer {
                         *difference_of_pic_nums_minus1,
                         sps.log2_max_frame_num_minus4,
                     );
-                    self.mark_short_term_unused(pic_num_x, curr_frame_num, sps);
+                    self.mark_short_term_unused(pic_num_x);
                 }
                 MemoryManagementControlOperation::MarkLongTermUnused { long_term_pic_num } => {
                     self.mark_long_term_unused(*long_term_pic_num);
@@ -317,7 +317,7 @@ impl DecodedPictureBuffer {
 
                     self.mark_long_term_unused(*long_term_frame_idx);
 
-                    if let Some(idx) = self.find_short_term_index(pic_num_x, curr_frame_num, sps) {
+                    if let Some(idx) = self.find_short_term_index(pic_num_x) {
                         self.pictures[idx].marking =
                             DpbMarking::UsedForLongTermReference(*long_term_frame_idx);
                     }
@@ -375,35 +375,14 @@ impl DecodedPictureBuffer {
         }
     }
 
-    fn find_short_term_index(
-        &self,
-        pic_num: i32,
-        curr_frame_num: i32,
-        sps: &SequenceParameterSet,
-    ) -> Option<usize> {
-        let max_frame_num = 1 << (sps.log2_max_frame_num_minus4 + 4);
+    fn find_short_term_index(&self, frame_num: i32) -> Option<usize> {
         self.pictures.iter().position(|pic| {
-            if pic.marking.is_short_term() {
-                let pic_frame_num = pic.picture.frame_num as i32;
-                let pn = if pic_frame_num > curr_frame_num {
-                    pic_frame_num - max_frame_num
-                } else {
-                    pic_frame_num
-                };
-                pn == pic_num
-            } else {
-                false
-            }
+            pic.marking.is_short_term() && pic.picture.frame_num as i32 == frame_num
         })
     }
 
-    fn mark_short_term_unused(
-        &mut self,
-        pic_num: i32,
-        curr_frame_num: i32,
-        sps: &SequenceParameterSet,
-    ) {
-        if let Some(idx) = self.find_short_term_index(pic_num, curr_frame_num, sps) {
+    fn mark_short_term_unused(&mut self, frame_num: i32) {
+        if let Some(idx) = self.find_short_term_index(frame_num) {
             self.pictures[idx].marking = DpbMarking::UnusedForReference;
         }
     }

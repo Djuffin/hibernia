@@ -597,7 +597,7 @@ impl Decoder {
                     pic_num_lx_pred = pic_num_lx;
 
                     if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx, curr_frame_num, max_frame_num)
+                        self.find_short_term_in_dpb(pic_num_lx)
                     {
                         self.place_picture_in_list(ref_list0, idx, ref_idx_l0);
                         ref_idx_l0 += 1;
@@ -614,7 +614,7 @@ impl Decoder {
                     pic_num_lx_pred = pic_num_lx;
 
                     if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx, curr_frame_num, max_frame_num)
+                        self.find_short_term_in_dpb(pic_num_lx)
                     {
                         self.place_picture_in_list(ref_list0, idx, ref_idx_l0);
                         ref_idx_l0 += 1;
@@ -649,22 +649,9 @@ impl Decoder {
         }
     }
 
-    // Find short term picture in DPB and return its index.
-    fn find_short_term_in_dpb(
-        &self,
-        pic_num: i32,
-        curr_frame_num: i32,
-        max_frame_num: i32,
-    ) -> Option<usize> {
+    fn find_short_term_in_dpb(&self, frame_num: i32) -> Option<usize> {
         self.dpb.pictures.iter().position(|pic| {
-            if pic.marking.is_short_term() {
-                let frame_num = pic.picture.frame_num as i32;
-                let pn =
-                    if frame_num > curr_frame_num { frame_num - max_frame_num } else { frame_num };
-                pn == pic_num
-            } else {
-                false
-            }
+            pic.marking.is_short_term() && pic.picture.frame_num as i32 == frame_num
         })
     }
 
@@ -799,7 +786,7 @@ impl Decoder {
                     pic_num_lx_pred = pic_num_lx;
 
                     if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx, curr_frame_num, max_frame_num)
+                        self.find_short_term_in_dpb(pic_num_lx)
                     {
                         self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
                         ref_idx_l1 += 1;
@@ -816,7 +803,7 @@ impl Decoder {
                     pic_num_lx_pred = pic_num_lx;
 
                     if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx, curr_frame_num, max_frame_num)
+                        self.find_short_term_in_dpb(pic_num_lx)
                     {
                         self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
                         ref_idx_l1 += 1;

@@ -239,6 +239,11 @@ fn filter_luma_edge(
     let alpha = ALPHA_TABLE[index_a];
     let beta = BETA_TABLE[index_b];
 
+    let mut bs_array = [0u8; 4];
+    for b in 0..4 {
+        bs_array[b] = get_bs(slice, q_mb, p_mb, edge_idx, b, is_vertical);
+    }
+
     // Filter 16 samples (length of edge)
     for k in 0..16 {
         let (abs_x_q, abs_y_q) = if is_vertical {
@@ -248,7 +253,7 @@ fn filter_luma_edge(
         };
 
         // Determine Boundary Strength (bS)
-        let bs = get_bs(slice, mb_addr, p_mb_addr, edge_idx, k, is_vertical);
+        let bs = bs_array[k / 4];
         if bs == BS_NONE {
             continue;
         }
@@ -454,6 +459,11 @@ fn filter_chroma_edge(
     let chroma_shift_x = 1; // 4:2:0
     let chroma_shift_y = 1;
 
+    let mut bs_array = [0u8; 4];
+    for b in 0..4 {
+        bs_array[b] = get_bs(slice, q_mb, p_mb, luma_edge_idx, b, is_vertical);
+    }
+
     for k in 0..8 {
         let (x_q_c, y_q_c) = if is_vertical {
             (edge_idx as u32 * 4, k as u32)
@@ -464,7 +474,7 @@ fn filter_chroma_edge(
         // Map to luma coordinates for BS calculation
         let luma_k = k * 2;
 
-        let bs = get_bs(slice, mb_addr, p_mb_addr, luma_edge_idx, luma_k as usize, is_vertical);
+        let bs = bs_array[(luma_k / 4) as usize];
         if bs == BS_NONE {
             continue;
         }
@@ -550,31 +560,22 @@ fn filter_chroma_edge(
 
 fn get_bs(
     slice: &Slice,
-    mb_q_addr: MbAddr,
-    mb_p_addr: MbAddr,
+    mb_q: &Macroblock,
+    mb_p: &Macroblock,
     // 0 corresponds to the external edge. 1..3 correspond to internal edges.
     edge_idx: usize,
-    k: usize,
+    block_idx: usize,
     is_vertical: bool,
 ) -> u8 {
     // Section 8.7.2.1 Derivation process for the luma content dependent boundary filtering strength
     // p samples are in mb_p, q samples are in mb_q
-
-    // We need to identify the 4x4 blocks containing p0 and q0.
-    // k is sample index along the edge (0..15).
-    // edge_idx is the block boundary index (0..3).
-    // is_vertical: true -> vertical edge.
 
     // Determine 4x4 block indices for p and q.
     // Luma 4x4 blocks are indexed 0..15.
 
     let (blk_q_idx, blk_p_idx) = if is_vertical {
         // Vertical edge
-        // q is at (edge_idx * 4, k) relative to MB Q
-        // p is at (edge_idx * 4 - 1, k) relative to MB Q, which is (3, k) in a 4x4 block at (edge_idx-1)
-        // If edge_idx=0, p is in MB P (rightmost column)
-
-        let y_blk = k / 4;
+        let y_blk = block_idx;
         let q_blk_x = edge_idx;
         let q_idx = super::residual::scan_4x4(y_blk, q_blk_x);
 
@@ -589,8 +590,7 @@ fn get_bs(
         }
     } else {
         // Horizontal edge
-        // q is at (k, edge_idx * 4)
-        let x_blk = k / 4;
+        let x_blk = block_idx;
         let q_blk_y = edge_idx;
         let q_idx = super::residual::scan_4x4(q_blk_y, x_blk);
 
@@ -603,9 +603,6 @@ fn get_bs(
             (q_idx, p_idx)
         }
     };
-
-    let mb_p = slice.get_mb(mb_p_addr).unwrap();
-    let mb_q = slice.get_mb(mb_q_addr).unwrap();
 
     // Section 8.7.2.1: mixedModeEdgeFlag derivation (MBAFF not yet supported)
     let mixed_mode_edge_flag = false;

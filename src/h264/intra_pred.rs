@@ -552,7 +552,7 @@ pub fn render_chroma_intra_prediction(
                     let x = x as isize;
                     let y = y as isize;
                     // Equation 8-144
-                    *pixel = ((a + b * (x - 3) + c * (y - 3) + 16) >> 5) as u8;
+                    *pixel = ((a + b * (x - 3) + c * (y - 3) + 16) >> 5).clamp(0, 255) as u8;
                 }
             }
         }

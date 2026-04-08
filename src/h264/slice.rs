@@ -21,6 +21,8 @@ pub struct ColPicInfo {
     pub ref_pic_l1_pocs: Vec<i32>,
     /// POC of the colocated picture itself.
     pub pic_poc: i32,
+    /// Whether RefPicList1[0] is marked as short-term reference (needed for colZeroFlag in spatial direct).
+    pub ref_l1_0_is_short_term: bool,
 }
 
 /// Specifies the coding type of the slice (e.g., I, P, B).

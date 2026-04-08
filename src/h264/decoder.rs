@@ -865,6 +865,7 @@ impl Decoder {
                     ref_pic_l0_pocs: mf.ref_pic_l0_pocs.clone(),
                     ref_pic_l1_pocs: mf.ref_pic_l1_pocs.clone(),
                     pic_poc: col_pic.picture.pic_order_cnt,
+                    ref_l1_0_is_short_term: col_pic.marking.is_short_term(),
                 });
             }
         }

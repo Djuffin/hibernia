@@ -91,9 +91,10 @@ macro_rules! read_value {
 
 // Section 7.4.1
 fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
-    // 1-bit at the end
-    expect_value!(input, "rbsp_trailing_bits", 1, 1);
-    input.align();
+    expect_value!(input, "rbsp_stop_one_bit", 1, 1);
+    while !input.is_aligned() {
+        expect_value!(input, "rbsp_alignment_zero_bit", 0, 1);
+    }
     Ok(())
 }
 
@@ -1537,7 +1538,7 @@ fn derive_spatial_direct(
     let b = get_neighbor(x, y - 1);
     let c = get_neighbor(x + 16, y - 1).or_else(|| get_neighbor(x - 1, y - 1));
 
-    // Derive refIdxL0 and refIdxL1 as minimum of available neighbors' valid ref indices
+    // Step 4: Derive refIdxL0, refIdxL1 using MinPositive (Eq 8-184 to 8-187)
     let mut ref_idx_l0: i16 = -1;
     let mut ref_idx_l1: i16 = -1;
 
@@ -1558,68 +1559,119 @@ fn derive_spatial_direct(
         }
     }
 
-    // Derive motion vectors using median prediction
-    let mv_l0 = if ref_idx_l0 >= 0 {
+    // Step 5: directZeroPredictionFlag — when both refIdx are invalid (Eq 8-188 to 8-190)
+    let direct_zero_prediction = ref_idx_l0 < 0 && ref_idx_l1 < 0;
+    if direct_zero_prediction {
+        ref_idx_l0 = 0;
+        ref_idx_l1 = 0;
+    }
+
+    // Table 8-9: prediction utilization flags
+    let pred_mode = match (ref_idx_l0 >= 0, ref_idx_l1 >= 0) {
+        (true, true) => MbPredictionMode::BiPred,
+        (true, false) => MbPredictionMode::Pred_L0,
+        (false, true) => MbPredictionMode::Pred_L1,
+        (false, false) => unreachable!(), // handled by directZeroPredictionFlag
+    };
+
+    // Compute predicted MVs once (clause 8.4.1.3, same for all sub-blocks per NOTE 3).
+    // These may be overridden to zero per sub-block by colZeroFlag.
+    let predicted_mv_l0 = if !direct_zero_prediction && ref_idx_l0 >= 0 {
         predict_mv_l0(slice, mb_addr, 0, 0, 16, 16, ref_idx_l0 as u8, None)
     } else {
         MotionVector::default()
     };
-
-    let mv_l1 = if ref_idx_l1 >= 0 {
+    let predicted_mv_l1 = if !direct_zero_prediction && ref_idx_l1 >= 0 {
         predict_mv_l1(slice, mb_addr, 0, 0, 16, 16, ref_idx_l1 as u8, None)
     } else {
         MotionVector::default()
     };
 
-    // Determine prediction mode
-    let pred_mode = match (ref_idx_l0 >= 0, ref_idx_l1 >= 0) {
-        (true, true) => MbPredictionMode::BiPred,
-        (true, false) => MbPredictionMode::Pred_L0,
-        (false, true) => MbPredictionMode::Pred_L1,
-        (false, false) => {
-            // Both invalid — use zero motion L0
-            ref_idx_l0 = 0;
-            ref_idx_l1 = 0;
-            MbPredictionMode::BiPred
-        }
-    };
+    let ref_l0_u8 = if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { u8::MAX };
+    let ref_l1_u8 = if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { u8::MAX };
+    let direct_8x8_inference = slice.sps.direct_8x8_inference_flag;
 
-    // Check for directZeroFlag (8.4.1.2.2 step 3)
-    let direct_zero = ref_idx_l0 == 0
-        && ref_idx_l1 == 0
-        && mv_l0 == MotionVector::default()
-        && mv_l1 == MotionVector::default();
+    // Fill each 4x4 sub-block, applying per-sub-block colZeroFlag check
+    for grid_y in 0..4usize {
+        for grid_x in 0..4usize {
+            // Determine final MVs for this sub-block per spec:
+            // mvLX = 0 if directZeroPredictionFlag=1 OR refIdxLX<0 OR (refIdxLX==0 AND colZeroFlag==1)
+            // mvLX = predicted otherwise
+            let mut mv_l0 = predicted_mv_l0;
+            let mut mv_l1 = predicted_mv_l1;
 
-    let info = if direct_zero {
-        PartitionInfo {
-            pred_mode,
-            ref_idx_l0: 0,
-            mv_l0: MotionVector::default(),
-            mvd_l0: MotionVector::default(),
-            ref_idx_l1: 0,
-            mv_l1: MotionVector::default(),
-            mvd_l1: MotionVector::default(),
-        }
-    } else {
-        PartitionInfo {
-            pred_mode,
-            // Per spec: unused direction gets refIdx = -1 (represented as u8::MAX)
-            ref_idx_l0: if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { u8::MAX },
-            mv_l0,
-            mvd_l0: MotionVector::default(),
-            ref_idx_l1: if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { u8::MAX },
-            mv_l1,
-            mvd_l1: MotionVector::default(),
-        }
-    };
+            if direct_zero_prediction {
+                mv_l0 = MotionVector::default();
+                mv_l1 = MotionVector::default();
+            } else {
+                let col_zero = get_col_zero_flag(slice, mb_addr, grid_x, grid_y, direct_8x8_inference);
+                if col_zero {
+                    if ref_idx_l0 == 0 { mv_l0 = MotionVector::default(); }
+                    if ref_idx_l1 == 0 { mv_l1 = MotionVector::default(); }
+                }
+            }
 
-    for row in motion.partitions.iter_mut() {
-        row.fill(info);
+            motion.partitions[grid_y][grid_x] = PartitionInfo {
+                pred_mode,
+                ref_idx_l0: ref_l0_u8,
+                mv_l0,
+                mvd_l0: MotionVector::default(),
+                ref_idx_l1: ref_l1_u8,
+                mv_l1,
+                mvd_l1: MotionVector::default(),
+            };
+        }
     }
     motion
 }
 
+// Section 8.4.1.2.2: Derive colZeroFlag for a 4x4 sub-block from the colocated picture.
+fn get_col_zero_flag(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    grid_x: usize,
+    grid_y: usize,
+    direct_8x8_inference: bool,
+) -> bool {
+    let col_pic = match &slice.col_pic {
+        Some(cp) => cp,
+        None => return false,
+    };
+
+    // RefPicList1[0] must be short-term reference
+    if !col_pic.ref_l1_0_is_short_term {
+        return false;
+    }
+
+    let col_mb_addr = mb_addr as usize;
+    if col_mb_addr >= col_pic.mb_is_intra.len() || col_pic.mb_is_intra[col_mb_addr] {
+        return false;
+    }
+
+    let col_motion = &col_pic.mb_motion[col_mb_addr];
+    let (cgx, cgy) = if direct_8x8_inference {
+        let mb_part_idx = (grid_x / 2) + (grid_y / 2) * 2;
+        col_block_for_direct_8x8(mb_part_idx)
+    } else {
+        (grid_x, grid_y)
+    };
+    let col_part = &col_motion.partitions[cgy][cgx];
+
+    // Clause 8.4.1.2.1: determine refIdxCol and mvCol
+    let (mv_col, ref_idx_col) = if col_part.pred_mode == MbPredictionMode::Pred_L1 {
+        (col_part.mv_l1, col_part.ref_idx_l1)
+    } else {
+        (col_part.mv_l0, col_part.ref_idx_l0)
+    };
+
+    ref_idx_col == 0 && mv_col.x.abs() <= 1 && mv_col.y.abs() <= 1
+}
+
 // Spatial direct for a single 8x8 sub-block within B_8x8
+// Per spec clause 8.4.1.2.2 + clause 6.4.11.7 step 3 + NOTE 1:
+// For B_Direct_8x8, predPartWidth=16 and neighbor derivation always uses
+// mbPartIdx=0, subMbPartIdx=0 (the MB origin). The predicted MV is the
+// predicted MV for the complete macroblock, not the sub-block.
 fn derive_spatial_direct_sub(
     slice: &Slice,
     mb_addr: MbAddr,
@@ -1629,14 +1681,15 @@ fn derive_spatial_direct_sub(
 ) -> MbMotion {
     let mut motion = current_motion.clone();
     let mb_loc = slice.get_mb_location(mb_addr);
-    let x = mb_loc.x as i32 + sub_mb_x as i32;
-    let y = mb_loc.y as i32 + sub_mb_y as i32;
+    // Use MB origin for neighbor derivation, not sub-block position
+    let x = mb_loc.x as i32;
+    let y = mb_loc.y as i32;
 
-    let get_neighbor = |nx, ny| get_motion_at_coord(slice, nx, ny, mb_addr, Some(current_motion));
+    let get_neighbor = |nx, ny| get_motion_at_coord(slice, nx, ny, mb_addr, None);
 
     let a = get_neighbor(x - 1, y);
     let b = get_neighbor(x, y - 1);
-    let c = get_neighbor(x + 8, y - 1).or_else(|| get_neighbor(x - 1, y - 1));
+    let c = get_neighbor(x + 16, y - 1).or_else(|| get_neighbor(x - 1, y - 1));
 
     let mut ref_idx_l0: i16 = -1;
     let mut ref_idx_l1: i16 = -1;
@@ -1658,63 +1711,65 @@ fn derive_spatial_direct_sub(
         }
     }
 
-    let mv_l0 = if ref_idx_l0 >= 0 {
-        predict_mv_l0(
-            slice,
-            mb_addr,
-            sub_mb_x,
-            sub_mb_y,
-            8,
-            8,
-            ref_idx_l0 as u8,
-            Some(current_motion),
-        )
-    } else {
-        MotionVector::default()
-    };
-
-    let mv_l1 = if ref_idx_l1 >= 0 {
-        predict_mv_l1(
-            slice,
-            mb_addr,
-            sub_mb_x,
-            sub_mb_y,
-            8,
-            8,
-            ref_idx_l1 as u8,
-            Some(current_motion),
-        )
-    } else {
-        MotionVector::default()
-    };
+    // directZeroPredictionFlag
+    let direct_zero_prediction = ref_idx_l0 < 0 && ref_idx_l1 < 0;
+    if direct_zero_prediction {
+        ref_idx_l0 = 0;
+        ref_idx_l1 = 0;
+    }
 
     let pred_mode = match (ref_idx_l0 >= 0, ref_idx_l1 >= 0) {
         (true, true) => MbPredictionMode::BiPred,
         (true, false) => MbPredictionMode::Pred_L0,
         (false, true) => MbPredictionMode::Pred_L1,
-        (false, false) => {
-            ref_idx_l0 = 0;
-            ref_idx_l1 = 0;
-            MbPredictionMode::BiPred
-        }
+        (false, false) => unreachable!(),
     };
 
-    let info = PartitionInfo {
-        pred_mode,
-        // Per spec: unused direction gets refIdx = -1 (represented as u8::MAX)
-        ref_idx_l0: if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { u8::MAX },
-        mv_l0,
-        mvd_l0: MotionVector::default(),
-        ref_idx_l1: if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { u8::MAX },
-        mv_l1,
-        mvd_l1: MotionVector::default(),
+    // MV prediction uses MB origin and full 16x16 partition width (spec NOTE 1/3)
+    let predicted_mv_l0 = if !direct_zero_prediction && ref_idx_l0 >= 0 {
+        predict_mv_l0(slice, mb_addr, 0, 0, 16, 16, ref_idx_l0 as u8, None)
+    } else {
+        MotionVector::default()
+    };
+    let predicted_mv_l1 = if !direct_zero_prediction && ref_idx_l1 >= 0 {
+        predict_mv_l1(slice, mb_addr, 0, 0, 16, 16, ref_idx_l1 as u8, None)
+    } else {
+        MotionVector::default()
     };
 
-    let grid_x = (sub_mb_x / 4) as usize;
-    let grid_y = (sub_mb_y / 4) as usize;
-    for dy in 0..2 {
-        for dx in 0..2 {
-            motion.partitions[grid_y + dy][grid_x + dx] = info;
+    let ref_l0_u8 = if ref_idx_l0 >= 0 { ref_idx_l0 as u8 } else { u8::MAX };
+    let ref_l1_u8 = if ref_idx_l1 >= 0 { ref_idx_l1 as u8 } else { u8::MAX };
+    let direct_8x8_inference = slice.sps.direct_8x8_inference_flag;
+    let base_grid_x = (sub_mb_x / 4) as usize;
+    let base_grid_y = (sub_mb_y / 4) as usize;
+
+    for dy in 0..2usize {
+        for dx in 0..2usize {
+            let gx = base_grid_x + dx;
+            let gy = base_grid_y + dy;
+            let mut mv_l0 = predicted_mv_l0;
+            let mut mv_l1 = predicted_mv_l1;
+
+            if direct_zero_prediction {
+                mv_l0 = MotionVector::default();
+                mv_l1 = MotionVector::default();
+            } else {
+                let col_zero = get_col_zero_flag(slice, mb_addr, gx, gy, direct_8x8_inference);
+                if col_zero {
+                    if ref_idx_l0 == 0 { mv_l0 = MotionVector::default(); }
+                    if ref_idx_l1 == 0 { mv_l1 = MotionVector::default(); }
+                }
+            }
+
+            motion.partitions[gy][gx] = PartitionInfo {
+                pred_mode,
+                ref_idx_l0: ref_l0_u8,
+                mv_l0,
+                mvd_l0: MotionVector::default(),
+                ref_idx_l1: ref_l1_u8,
+                mv_l1,
+                mvd_l1: MotionVector::default(),
+            };
         }
     }
     motion

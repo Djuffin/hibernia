@@ -87,6 +87,27 @@ macro_rules! read_value {
         let value = $input.f().map_err(error_handler)?;
         cast_or_error!($dest, value);
     };
+    ($input:ident, $dest:expr, u, $bits:expr, $min:expr, $max:expr) => {
+        read_value!($input, $dest, u, $bits);
+        #[allow(unused_comparisons)]
+        if $dest < $min || $dest > $max {
+            return Err(format!("{} ({}) must be in range {} to {}", stringify!($dest), $dest, $min, $max));
+        }
+    };
+    ($input:ident, $dest:expr, ue, $bits:expr, $min:expr, $max:expr) => {
+        read_value!($input, $dest, ue, $bits);
+        #[allow(unused_comparisons)]
+        if $dest < $min || $dest > $max {
+            return Err(format!("{} ({}) must be in range {} to {}", stringify!($dest), $dest, $min, $max));
+        }
+    };
+    ($input:ident, $dest:expr, se, $min:expr, $max:expr) => {
+        read_value!($input, $dest, se);
+        #[allow(unused_comparisons)]
+        if $dest < $min || $dest > $max {
+            return Err(format!("{} ({}) must be in range {} to {}", stringify!($dest), $dest, $min, $max));
+        }
+    };
 }
 
 // Section 7.4.1
@@ -560,9 +581,16 @@ pub fn parse_pred_weight_table(
     }
 
     let mut table = PredWeightTable::default();
-    read_value!(input, table.luma_log2_weight_denom, ue, 8);
+    read_value!(input, table.luma_log2_weight_denom, ue, 8, 0, 7);
     if sps.ChromaArrayType() != ChromaFormat::Monochrome {
-        read_value!(input, table.chroma_log2_weight_denom, ue, 8);
+        read_value!(input, table.chroma_log2_weight_denom, ue, 8, 0, 7);
+        let denom_diff = table.chroma_log2_weight_denom as i32 - table.luma_log2_weight_denom as i32;
+        if denom_diff < -7 || denom_diff > 7 {
+            return Err(format!(
+                "Difference between chroma_log2_weight_denom and luma_log2_weight_denom ({}) must be in range -7 to 7",
+                denom_diff
+            ));
+        }
     }
 
     for i in 0..=slice_header.num_ref_idx_l0_active_minus1 {
@@ -579,8 +607,8 @@ pub fn parse_pred_weight_table(
         let luma_weight_l0_flag: bool;
         read_value!(input, luma_weight_l0_flag, f);
         if luma_weight_l0_flag {
-            read_value!(input, factors.luma_weight, se);
-            read_value!(input, factors.luma_offset, se);
+            read_value!(input, factors.luma_weight, se, -128, 127);
+            read_value!(input, factors.luma_offset, se, -128, 127);
         }
 
         if sps.ChromaArrayType() != ChromaFormat::Monochrome {
@@ -588,8 +616,8 @@ pub fn parse_pred_weight_table(
             read_value!(input, chroma_weight_l0_flag, f);
             if chroma_weight_l0_flag {
                 for j in 0..2 {
-                    read_value!(input, factors.chroma_weights[j], se);
-                    read_value!(input, factors.chroma_offsets[j], se);
+                    read_value!(input, factors.chroma_weights[j], se, -128, 127);
+                    read_value!(input, factors.chroma_offsets[j], se, -128, 127);
                 }
             }
         }
@@ -611,8 +639,8 @@ pub fn parse_pred_weight_table(
             let luma_weight_l1_flag: bool;
             read_value!(input, luma_weight_l1_flag, f);
             if luma_weight_l1_flag {
-                read_value!(input, factors.luma_weight, se);
-                read_value!(input, factors.luma_offset, se);
+                read_value!(input, factors.luma_weight, se, -128, 127);
+                read_value!(input, factors.luma_offset, se, -128, 127);
             }
 
             if sps.ChromaArrayType() != ChromaFormat::Monochrome {
@@ -620,8 +648,8 @@ pub fn parse_pred_weight_table(
                 read_value!(input, chroma_weight_l1_flag, f);
                 if chroma_weight_l1_flag {
                     for j in 0..2 {
-                        read_value!(input, factors.chroma_weights[j], se);
-                        read_value!(input, factors.chroma_offsets[j], se);
+                        read_value!(input, factors.chroma_weights[j], se, -128, 127);
+                        read_value!(input, factors.chroma_offsets[j], se, -128, 127);
                     }
                 }
             }

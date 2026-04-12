@@ -33,7 +33,7 @@ const TC0_TABLE: [[u8; 52]; 3] = [
     ],
     // bS = 2 (BS_CODED)
     [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 2, 2, 2, 2, 3, 3, 3, 4, 4, 5, 5, 6, 7, 8, 8, 10, 11, 12, 13, 15, 17,
     ],
     // bS = 3 (BS_INTRA)
@@ -80,7 +80,7 @@ pub fn filter_slice(slice: &mut Slice, frame: &mut VideoFrame) {
     }
 }
 
-/// Section 8.7, steps 2–4 — Filter all edges of a single macroblock.
+/// Section 8.7, steps 1–3 — Filter all edges of a single macroblock.
 /// BS values are precomputed once per MB and reused across luma and chroma
 /// to avoid redundant derivation (Section 8.7.2.1).
 fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
@@ -102,7 +102,7 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
         _ => false,
     };
 
-    // Section 8.7, step 2.a / 2.b — locate neighbor macroblocks A (left) and B (top)
+    // Section 8.7, step 1 — locate neighbor macroblocks A (left) and B (top)
     let left_info: Option<(&Macroblock, u8)> = if filter_left {
         slice
             .get_mb_neighbor(mb_addr, MbNeighborName::A)
@@ -125,7 +125,7 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
 
     let has_nonzero_bs = |bs: &[u8; 4]| bs[0] | bs[1] | bs[2] | bs[3] != 0;
 
-    // Section 8.7, step 3 — luma vertical edges
+    // Section 8.7, step 3.a/3.b — luma vertical edges
     if let Some((_, p_qp)) = left_info {
         if has_nonzero_bs(&bs_vert[0]) {
             filter_luma_edge(slice, frame, mb_xy, 0, true, &bs_vert[0], p_qp, q_qp);
@@ -141,7 +141,7 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
         filter_luma_edge(slice, frame, mb_xy, 2, true, &bs_vert[2], q_qp, q_qp);
     }
 
-    // Section 8.7, step 4 — luma horizontal edges
+    // Section 8.7, step 3.c/3.d — luma horizontal edges
     if let Some((_, p_qp)) = top_info {
         if has_nonzero_bs(&bs_horz[0]) {
             filter_luma_edge(slice, frame, mb_xy, 0, false, &bs_horz[0], p_qp, q_qp);
@@ -157,7 +157,7 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
         filter_luma_edge(slice, frame, mb_xy, 2, false, &bs_horz[2], q_qp, q_qp);
     }
 
-    // Section 8.7, steps 3–4 for chroma (4:2:0)
+    // Section 8.7, step 3 for chroma (4:2:0)
     // Chroma edge 0 reuses luma edge 0 BS, chroma edge 1 reuses luma edge 2 BS
     if let Some((_, p_qp)) = left_info {
         if has_nonzero_bs(&bs_vert[0]) {
@@ -212,7 +212,7 @@ fn should_filter_edge(slice: &Slice, mb_addr: MbAddr, neighbor: MbNeighborName) 
     true
 }
 
-/// Section 8.7.2 — Filtering process for a single luma block edge.
+/// Sections 8.7.1/8.7.2 — Filtering process for a single luma block edge.
 fn filter_luma_edge(
     slice: &Slice,
     frame: &mut VideoFrame,
@@ -337,7 +337,7 @@ fn filter_luma_edge(
     }
 }
 
-/// Section 8.7.2 — Filtering process for a single chroma block edge (4:2:0).
+/// Sections 8.7.1/8.7.2 — Filtering process for a single chroma block edge (4:2:0).
 fn filter_chroma_edge(
     slice: &Slice,
     frame: &mut VideoFrame,

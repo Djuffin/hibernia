@@ -32,12 +32,14 @@ fn run_ffmpeg(args: &[&str]) -> Result<bool, String> {
     let output = match Command::new("ffmpeg").args(args).output() {
         Ok(output) => output,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            println!("ffmpeg not found, skipping test");
             return Ok(false);
         }
         Err(e) => return Err(format!("Failed to execute ffmpeg: {}", e)),
     };
 
     if !output.status.success() {
+        println!("ffmpeg execution failed, skipping test");
         return Ok(false);
     }
     Ok(true)
@@ -60,7 +62,7 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
                 let h = y_plane.cfg.height as usize;
                 if let Some(writer) = writer_opt.take() {
                     encoder_opt = Some(
-                        y4m::encode(w, h, y4m::Ratio { num: 15, den: 1 })
+                        y4m::encode(w, h, y4m::Ratio { num: 30, den: 1 })
                             .with_colorspace(y4m::Colorspace::C420)
                             .write_header(writer)
                             .unwrap(),

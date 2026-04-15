@@ -1,6 +1,29 @@
 use std::fs;
 use std::io::{self, Cursor};
+use std::path::PathBuf;
 use std::process::Command;
+
+struct TestDir {
+    path: PathBuf,
+}
+
+impl TestDir {
+    fn new(path: &str) -> io::Result<Self> {
+        let path = PathBuf::from(path);
+        fs::create_dir_all(&path)?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
 use hibernia::h264;
 use hibernia::h264::nal_parser::NalParser;
 use hibernia::y4m_cmp::compare_y4m_buffers;
@@ -9,19 +32,12 @@ fn run_ffmpeg(args: &[&str]) -> Result<bool, String> {
     let output = match Command::new("ffmpeg").args(args).output() {
         Ok(output) => output,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            eprintln!("ffmpeg not found, skipping test");
             return Ok(false);
         }
         Err(e) => return Err(format!("Failed to execute ffmpeg: {}", e)),
     };
 
     if !output.status.success() {
-        eprintln!(
-            "ffmpeg failed with status {}: \nSTDOUT: {}\nSTDERR: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
         return Ok(false);
     }
     Ok(true)
@@ -96,11 +112,13 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
 
 #[test]
 fn test_ffmpeg_baseline_testsrc() -> Result<(), String> {
-    let test_dir = "tests/tmp_ffmpeg_baseline_testsrc";
-    fs::create_dir_all(test_dir).map_err(|e| e.to_string())?;
+    let test_dir = TestDir::new("tests/tmp_ffmpeg_baseline_testsrc").map_err(|e| e.to_string())?;
 
-    let h264_path = format!("{}/test_stream.264", test_dir);
-    let y4m_path = format!("{}/output.y4m", test_dir);
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
 
     // Generate H.264 baseline stream using ffmpeg
     // We use -pix_fmt yuv420p to ensure it's compatible with baseline profile
@@ -116,15 +134,13 @@ fn test_ffmpeg_baseline_testsrc() -> Result<(), String> {
         "baseline",
         "-pix_fmt",
         "yuv420p",
-        &h264_path,
+        h264_path_str,
     ])? {
-        let _ = fs::remove_dir_all(test_dir);
         return Ok(());
     }
 
     // Generate reference Y4M from the H.264 stream
-    if !run_ffmpeg(&["-y", "-i", &h264_path, &y4m_path])? {
-        let _ = fs::remove_dir_all(test_dir);
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
         return Ok(());
     }
 
@@ -134,9 +150,6 @@ fn test_ffmpeg_baseline_testsrc() -> Result<(), String> {
     let actual_y4m = decode_to_y4m(&encoded_data)?;
 
     compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
-
-    // Clean up
-    let _ = fs::remove_dir_all(test_dir);
 
     Ok(())
 }

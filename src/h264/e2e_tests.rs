@@ -367,3 +367,152 @@ fn test_ffmpeg_main() -> Result<(), String> {
 
     Ok(())
 }
+
+#[test]
+fn test_ffmpeg_multiple_reference_frames() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_multiple_reference_frames").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    // Multiple Reference Frames (-refs 5)
+    // Force the encoder to keep a deeper history of frames to use for prediction.
+    // This stresses the DPB memory management control operations (MMCO) and sliding window algorithms.
+    // It ensures the decoder correctly maps ref_idx to the right historical frame in ref_pic_list0 and ref_pic_list1.
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "5",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "main",
+        "-pix_fmt",
+        "yuv420p",
+        "-refs",
+        "5",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    // Generate reference Y4M from the H.264 stream
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_weighted_prediction() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_weighted_prediction").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    // Weighted Prediction (-x264-params weightp=2:weightb=1)
+    // Weighted prediction allows the encoder to apply a multiplier and offset
+    // to reference frames to handle fades or lighting changes.
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "5",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "main",
+        "-pix_fmt",
+        "yuv420p",
+        "-x264-params",
+        "weightp=2:weightb=1",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    // Generate reference Y4M from the H.264 stream
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_cavlc_b_frames() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_cavlc_b_frames").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    // CAVLC with B-Frames (-coder 0 on Main Profile)
+    // While Main profile usually defaults to CABAC, it still fully supports CAVLC.
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "5",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "main",
+        "-pix_fmt",
+        "yuv420p",
+        "-bf",
+        "3",
+        "-coder",
+        "0",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    // Generate reference Y4M from the H.264 stream
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+
+    Ok(())
+}

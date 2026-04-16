@@ -252,7 +252,7 @@ pub const fn zig_zag_4x4(row: usize, column: usize) -> usize {
     TABLE[row * 4 + column]
 }
 
-#[inline]
+#[inline(always)]
 const fn norm_adjust_4x4(m: u8, idx: usize) -> u8 {
     const IDX_TO_V_COLUMN: [u8; 16] = [0, 2, 2, 0, 1, 0, 2, 2, 2, 2, 1, 0, 1, 2, 2, 1];
     const V: [[u8; 3]; 6] =
@@ -261,7 +261,7 @@ const fn norm_adjust_4x4(m: u8, idx: usize) -> u8 {
 }
 
 // Section 8.5.9 Derivation process for scaling functions
-#[inline]
+#[inline(always)]
 pub const fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
     // See seq_scaling_matrix_present_flag=0, all values in Flat_4x4_16 are equal 16.
     let scaling_list = 16;
@@ -269,6 +269,7 @@ pub const fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
 }
 
 // Section 8.5.12.1 Scaling process for residual 4x4 blocks
+#[inline(always)]
 pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, skip_dc: bool, qp: u8) {
     debug_assert!(block.len() == 16);
     let m = qp % 6;
@@ -311,6 +312,7 @@ pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, skip_dc: bool, q
 }
 
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
+#[inline(always)]
 pub fn dc_scale_4x4_block(block: &mut Block4x4, qp: u8) {
     let m = qp % 6;
     let is_inter = false;
@@ -329,6 +331,7 @@ pub fn dc_scale_4x4_block(block: &mut Block4x4, qp: u8) {
 }
 
 // Section 8.5.11.2 Scaling and transformation process for chroma DC transform coefficients
+#[inline(always)]
 pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
     let m = qp % 6;
     let is_inter = false;
@@ -342,6 +345,7 @@ pub fn dc_scale_2x2_block(block: &mut Block2x2, qp: u8) {
 }
 
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
+#[inline(always)]
 pub fn transform_dc(block: &Block4x4) -> Block4x4 {
     let b = &block.samples;
     let mut result = Block4x4::default();
@@ -388,6 +392,7 @@ pub fn transform_dc(block: &Block4x4) -> Block4x4 {
 }
 
 // Section 8.5.11.1 Transformation process for chroma DC transform coefficients
+#[inline(always)]
 pub fn transform_chroma_dc(block: &Block2x2) -> Block2x2 {
     let c = &block.samples;
 
@@ -403,6 +408,7 @@ pub fn transform_chroma_dc(block: &Block2x2) -> Block2x2 {
     Block2x2 { samples: [[hc00 + hc01, hc00 - hc01], [hc10 + hc11, hc10 - hc11]] }
 }
 
+#[inline(always)]
 pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     assert_eq!(block.len(), 16);
     let mut result = Block4x4::default();
@@ -413,6 +419,7 @@ pub fn unzip_block_4x4(block: &[i32]) -> Block4x4 {
     result
 }
 
+#[inline(always)]
 pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
     let mut result = Block4x4::default();
     for (idx, value) in block.iter().enumerate() {
@@ -423,6 +430,7 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
 }
 
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks
+#[inline(always)]
 pub fn transform_4x4(block: &mut Block4x4) {
     let d = &mut block.samples;
 

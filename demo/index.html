@@ -251,17 +251,12 @@
         // Copy the planes out to create the VideoFrame
         // VideoFrame expects contiguous data or specific plane layouts
         // Let's pass the planes in an initialization object
-        const yData = new Uint8Array(memory.buffer, yPtr, yLen).slice();
-        const uData = new Uint8Array(memory.buffer, uPtr, uLen).slice();
-        const vData = new Uint8Array(memory.buffer, vPtr, vLen).slice();
-
-        // Total size needed for contiguous I420
         const totalSize = yLen + uLen + vLen;
         const i420Buffer = new Uint8Array(totalSize);
         
-        i420Buffer.set(yData, 0);
-        i420Buffer.set(uData, yLen);
-        i420Buffer.set(vData, yLen + uLen);
+        i420Buffer.set(new Uint8Array(memory.buffer, yPtr, yLen), 0);
+        i420Buffer.set(new Uint8Array(memory.buffer, uPtr, uLen), yLen);
+        i420Buffer.set(new Uint8Array(memory.buffer, vPtr, vLen), yLen + uLen);
 
         const timestamp_us = (frameCount * 1000000) / 30; // Assume 30 fps
         
@@ -274,7 +269,8 @@
                 { offset: 0, stride: yStride },
                 { offset: yLen, stride: uStride },
                 { offset: yLen + uLen, stride: vStride }
-            ]
+            ],
+            transfer: [i420Buffer.buffer]
         });
 
         await trackWriter.write(vf);

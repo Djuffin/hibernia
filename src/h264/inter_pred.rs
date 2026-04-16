@@ -32,6 +32,31 @@ pub fn interpolate_luma(
     dst_stride: usize,
     buffer: &mut InterpolationBuffer,
 ) {
+    match (width, height) {
+        (16, 16) => interpolate_luma_impl::<16, 16>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        (16, 8) => interpolate_luma_impl::<16, 8>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        (8, 16) => interpolate_luma_impl::<8, 16>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        (8, 8) => interpolate_luma_impl::<8, 8>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        (8, 4) => interpolate_luma_impl::<8, 4>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        (4, 8) => interpolate_luma_impl::<4, 8>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        (4, 4) => interpolate_luma_impl::<4, 4>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        _ => unreachable!("unsupported block size {}x{}", width, height),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn interpolate_luma_impl<const W: usize, const H: usize>(
+    ref_plane: &Plane<u8>,
+    mb_x: u32,
+    mb_y: u32,
+    blk_x: u8,
+    blk_y: u8,
+    mv: MotionVector,
+    dst: &mut [u8],
+    dst_stride: usize,
+    buffer: &mut InterpolationBuffer,
+) {
     // Equation 8-223, 8-224: Full sample units (Int) and Equation 8-225, 8-226: Fractional units (Frac)
     let x_int = (mb_x as i32) + (blk_x as i32) + (mv.x >> 2) as i32;
     let y_int = (mb_y as i32) + (blk_y as i32) + (mv.y >> 2) as i32;
@@ -43,24 +68,24 @@ pub fn interpolate_luma(
 
     if x_frac == 0 && y_frac == 0 {
         if x_int >= 0
-            && x_int + (width as i32) <= plane_width
+            && x_int + (W as i32) <= plane_width
             && y_int >= 0
-            && y_int + (height as i32) <= plane_height
+            && y_int + (H as i32) <= plane_height
         {
             // Fast path: direct copy
-            for y in 0..height as usize {
+            for y in 0..H {
                 let row = ref_plane.row((y_int + (y as i32)) as isize);
-                let src = &row[x_int as usize..x_int as usize + width as usize];
-                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
+                let src = &row[x_int as usize..x_int as usize + W];
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 d.copy_from_slice(src);
             }
         } else {
             // Slow path: clamping
-            for y in 0..height as usize {
+            for y in 0..H {
                 let cy = (y_int + (y as i32)).clamp(0, plane_height - 1);
                 let row = ref_plane.row(cy as isize);
-                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
-                for x in 0..width as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
                     let cx = (x_int + (x as i32)).clamp(0, plane_width - 1);
                     d[x] = row[cx as usize];
                 }
@@ -69,12 +94,12 @@ pub fn interpolate_luma(
         return;
     }
 
-    // To implement the 6-tap filter for a block of size (width x height),
-    // we need a window of (width + 5) x (height + 5) integer pixels.
+    // To implement the 6-tap filter for a block of size (W x H),
+    // we need a window of (W + 5) x (H + 5) integer pixels.
     // Specifically, for 6-tap filter at pos G (integer), we need E, F, G, H, I, J (1D view).
     // That is 2 pixels to the left/top and 3 pixels to the right/bottom relative to the top-left 'G'.
-    let buf_w = (width as usize) + 5;
-    let buf_h = (height as usize) + 5;
+    let buf_w = W + 5;
+    let buf_h = H + 5;
 
     // Load integer samples into the scratch buffer with boundary checks.
     // Corresponds to fetching samples A through U (in 2D) for the filter process.
@@ -86,9 +111,7 @@ pub fn interpolate_luma(
         for y in 0..buf_h {
             let row = ref_plane.row((y_int + (y as i32) - 2) as isize);
             let src = &row[(x_int - 2) as usize..(x_int - 2 + buf_w as i32) as usize];
-            for (d, s) in buffer.data[y][..buf_w].iter_mut().zip(src) {
-                *d = *s as i16;
-            }
+            buffer.data[y][..buf_w].copy_from_slice(src);
         }
     } else {
         // Slow path: clamping for boundary pixels (Section 8.4.2.2.1, RefLayerFrame behavior)
@@ -97,17 +120,17 @@ pub fn interpolate_luma(
             let row = ref_plane.row(cy as isize);
             for x in 0..buf_w {
                 let cx = (x_int + (x as i32) - 2).clamp(0, plane_width - 1);
-                buffer.data[y][x] = row[cx as usize] as i16;
+                buffer.data[y][x] = row[cx as usize];
             }
         }
     }
 
     macro_rules! interpolate {
         (|$x:ident, $y:ident| $calc:expr) => {
-            for y in 0..height as usize {
+            for y in 0..H {
                 let $y = y;
-                let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
-                for x in 0..width as usize {
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
                     let $x = x;
                     d[x] = $calc;
                 }
@@ -116,7 +139,7 @@ pub fn interpolate_luma(
     }
 
     // Accessors for integer and half-pel positions
-    let data: &[[i16; 21]; 21] = &buffer.data;
+    let data: &[[u8; 21]; 21] = &buffer.data;
     // G, H, M are integer samples at different offsets
     macro_rules! G {
         ($x:expr, $y:expr) => {
@@ -195,7 +218,7 @@ pub fn interpolate_luma(
             for y in 0..buf_h {
                 let row = &buffer.data[y];
                 let int_row = &mut intermediate[y];
-                for x in 0..width as usize {
+                for x in 0..W {
                     // Compute horizontal filter first (unclipped)
                     int_row[x] = filter_6tap(&row[x..x + 6]);
                 }
@@ -352,7 +375,7 @@ pub fn interpolate_chroma(
 /// Filter coefficients: [1, -5, 20, 20, -5, 1].
 /// This returns the unscaled/unclipped intermediate value.
 #[inline(always)]
-fn filter_6tap(p: &[i16]) -> i32 {
+fn filter_6tap(p: &[u8]) -> i32 {
     let p = &p[..6];
     (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32) + 20 * (p[3] as i32) - 5 * (p[4] as i32)
         + (p[5] as i32)
@@ -361,7 +384,7 @@ fn filter_6tap(p: &[i16]) -> i32 {
 /// Applies the 6-tap filter and clips the result to 8-bit range [0, 255].
 /// Corresponds to Equations 8-243, 8-244, 8-248, 8-249 (final clipping for half-sample values).
 #[inline(always)]
-fn filter_6tap_and_clip(p: &[i16]) -> u8 {
+fn filter_6tap_and_clip(p: &[u8]) -> u8 {
     let val = filter_6tap(p);
     ((val + 16) >> 5).clamp(0, 255) as u8
 }
@@ -411,7 +434,7 @@ fn clip_intermediate(val: i32) -> u8 {
 /// The size is 21x21 to accommodate a 16x16 block with 2 pixels padding on top/left
 /// and 3 pixels padding on bottom/right (required for 6-tap filter).
 pub struct InterpolationBuffer {
-    data: [[i16; 21]; 21],
+    data: [[u8; 21]; 21],
 }
 
 impl Default for InterpolationBuffer {
@@ -477,7 +500,7 @@ mod tests {
                 }
             }
         }
-        let mut dst = [0u8; 4];
+        let mut dst = [0u8; 16];
         let mut buffer = InterpolationBuffer::new();
         interpolate_luma(
             &plane,
@@ -486,7 +509,7 @@ mod tests {
             0,
             0,
             4,
-            1,
+            4,
             MotionVector { x: 2, y: 0 },
             &mut dst,
             4,
@@ -509,7 +532,7 @@ mod tests {
                 plane.data[y * stride + x] = if x % 2 == 0 { 100 } else { 200 };
             }
         }
-        let mut dst = [0u8; 4];
+        let mut dst = [0u8; 16];
         let mut buffer = InterpolationBuffer::new();
         interpolate_luma(
             &plane,
@@ -518,7 +541,7 @@ mod tests {
             0,
             0,
             4,
-            1,
+            4,
             MotionVector { x: 1, y: 0 },
             &mut dst,
             4,

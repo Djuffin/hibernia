@@ -255,7 +255,7 @@ impl DecodedPictureBuffer {
 
     /// Section 8.2.5.1 for IDR pictures.
     /// Mark all DPB pictures as unused, optionally flush, and set current_pic marking.
-    /// 
+    ///
     /// Returns a `Vec<Picture>` of any pictures that were flushed and need to be output.
     fn mark_idr_prior_references(
         &mut self,
@@ -386,10 +386,7 @@ impl DecodedPictureBuffer {
 
         if num_ref >= max_ref {
             // Find the oldest short-term reference picture.
-            let index_to_remove = self
-                .pictures
-                .iter()
-                .position(|pic| pic.marking.is_short_term());
+            let index_to_remove = self.pictures.iter().position(|pic| pic.marking.is_short_term());
 
             if let Some(i) = index_to_remove {
                 self.pictures[i].marking = DpbMarking::UnusedForReference;
@@ -647,14 +644,10 @@ mod tests {
         let mut current = create_dummy_dpb_picture(4, 8, DpbMarking::UsedForShortTermReference);
         let mut header = SliceHeader::default();
         header.frame_num = 4;
-        
+
         let sps = SequenceParameterSet::default();
-        let (has_mmco5, flushed) = dpb.mark_prior_references(
-            &header,
-            ReferenceDisposition::Idr,
-            &sps,
-            &mut current,
-        );
+        let (has_mmco5, flushed) =
+            dpb.mark_prior_references(&header, ReferenceDisposition::Idr, &sps, &mut current);
 
         assert!(!has_mmco5);
         assert_eq!(flushed.len(), 3);
@@ -676,14 +669,10 @@ mod tests {
         let mut marking = DecRefPicMarking::default();
         marking.no_output_of_prior_pics_flag = Some(true);
         header.dec_ref_pic_marking = Some(marking);
-        
+
         let sps = SequenceParameterSet::default();
-        let (has_mmco5, flushed) = dpb.mark_prior_references(
-            &header,
-            ReferenceDisposition::Idr,
-            &sps,
-            &mut current,
-        );
+        let (has_mmco5, flushed) =
+            dpb.mark_prior_references(&header, ReferenceDisposition::Idr, &sps, &mut current);
 
         assert!(!has_mmco5);
         assert_eq!(flushed.len(), 0);

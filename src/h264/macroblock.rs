@@ -418,7 +418,10 @@ impl TryFrom<u32> for BSubMbType {
 impl BSubMbType {
     pub const fn NumSubMbPart(&self) -> usize {
         match self {
-            BSubMbType::B_Direct_8x8 | BSubMbType::B_L0_8x8 | BSubMbType::B_L1_8x8 | BSubMbType::B_Bi_8x8 => 1,
+            BSubMbType::B_Direct_8x8
+            | BSubMbType::B_L0_8x8
+            | BSubMbType::B_L1_8x8
+            | BSubMbType::B_Bi_8x8 => 1,
             BSubMbType::B_L0_8x4
             | BSubMbType::B_L0_4x8
             | BSubMbType::B_L1_8x4
@@ -432,23 +435,27 @@ impl BSubMbType {
     pub const fn SubMbPredMode(&self) -> MbPredictionMode {
         match self {
             BSubMbType::B_Direct_8x8 => MbPredictionMode::Direct,
-            BSubMbType::B_L0_8x8 | BSubMbType::B_L0_8x4 | BSubMbType::B_L0_4x8 | BSubMbType::B_L0_4x4 => {
-                MbPredictionMode::Pred_L0
-            }
-            BSubMbType::B_L1_8x8 | BSubMbType::B_L1_8x4 | BSubMbType::B_L1_4x8 | BSubMbType::B_L1_4x4 => {
-                MbPredictionMode::Pred_L1
-            }
-            BSubMbType::B_Bi_8x8 | BSubMbType::B_Bi_8x4 | BSubMbType::B_Bi_4x8 | BSubMbType::B_Bi_4x4 => {
-                MbPredictionMode::BiPred
-            }
+            BSubMbType::B_L0_8x8
+            | BSubMbType::B_L0_8x4
+            | BSubMbType::B_L0_4x8
+            | BSubMbType::B_L0_4x4 => MbPredictionMode::Pred_L0,
+            BSubMbType::B_L1_8x8
+            | BSubMbType::B_L1_8x4
+            | BSubMbType::B_L1_4x8
+            | BSubMbType::B_L1_4x4 => MbPredictionMode::Pred_L1,
+            BSubMbType::B_Bi_8x8
+            | BSubMbType::B_Bi_8x4
+            | BSubMbType::B_Bi_4x8
+            | BSubMbType::B_Bi_4x4 => MbPredictionMode::BiPred,
         }
     }
 
     pub const fn SubMbPartSize(&self) -> (u8, u8) {
         match self {
-            BSubMbType::B_Direct_8x8 | BSubMbType::B_L0_8x8 | BSubMbType::B_L1_8x8 | BSubMbType::B_Bi_8x8 => {
-                (8, 8)
-            }
+            BSubMbType::B_Direct_8x8
+            | BSubMbType::B_L0_8x8
+            | BSubMbType::B_L1_8x8
+            | BSubMbType::B_Bi_8x8 => (8, 8),
             BSubMbType::B_L0_8x4 | BSubMbType::B_L1_8x4 | BSubMbType::B_Bi_8x4 => (8, 4),
             BSubMbType::B_L0_4x8 | BSubMbType::B_L1_4x8 | BSubMbType::B_Bi_4x8 => (4, 8),
             BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4 => (4, 4),

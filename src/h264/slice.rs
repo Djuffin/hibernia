@@ -3,7 +3,7 @@ use std::{default, fmt, result};
 
 use num_traits::FromPrimitive;
 
-use super::macroblock::{get_neighbor_mbs, MbMotion, Macroblock, MbAddr, MbNeighborName};
+use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbMotion, MbNeighborName};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
 use super::{tables, ColorPlane, Point};

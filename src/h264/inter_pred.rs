@@ -33,21 +33,34 @@ pub fn interpolate_luma(
     buffer: &mut InterpolationBuffer,
 ) {
     match (width, height) {
-        (16, 16) => interpolate_luma_impl::<16, 16>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
-        (16, 8) => interpolate_luma_impl::<16, 8>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
-        (8, 16) => interpolate_luma_impl::<8, 16>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
-        (8, 8) => interpolate_luma_impl::<8, 8>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
-        (8, 4) => interpolate_luma_impl::<8, 4>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
-        (4, 8) => interpolate_luma_impl::<4, 8>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
-        (4, 4) => interpolate_luma_impl::<4, 4>(ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer),
+        (16, 16) => interpolate_luma_impl::<16, 16>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (16, 8) => interpolate_luma_impl::<16, 8>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (8, 16) => interpolate_luma_impl::<8, 16>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (8, 8) => interpolate_luma_impl::<8, 8>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (8, 4) => interpolate_luma_impl::<8, 4>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (4, 8) => interpolate_luma_impl::<4, 8>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (4, 4) => interpolate_luma_impl::<4, 4>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
         _ => unreachable!("unsupported block size {}x{}", width, height),
     }
 }
 
 macro_rules! vert_6tap_clip {
     ($data:expr, $y:expr, $col:expr) => {{
-        let val = $data[$y][$col] as i32
-            - 5 * $data[$y + 1][$col] as i32
+        let val = $data[$y][$col] as i32 - 5 * $data[$y + 1][$col] as i32
             + 20 * $data[$y + 2][$col] as i32
             + 20 * $data[$y + 3][$col] as i32
             - 5 * $data[$y + 4][$col] as i32
@@ -58,8 +71,7 @@ macro_rules! vert_6tap_clip {
 
 macro_rules! vert_6tap_j {
     ($intermediate:expr, $y:expr, $x:expr) => {{
-        let val = $intermediate[$y][$x]
-            - 5 * $intermediate[$y + 1][$x]
+        let val = $intermediate[$y][$x] - 5 * $intermediate[$y + 1][$x]
             + 20 * $intermediate[$y + 2][$x]
             + 20 * $intermediate[$y + 3][$x]
             - 5 * $intermediate[$y + 4][$x]
@@ -77,8 +89,9 @@ macro_rules! clip_i32 {
 macro_rules! filter_6tap {
     ($p:expr) => {{
         let p = &$p[..6];
-        (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32)
-            + 20 * (p[3] as i32) - 5 * (p[4] as i32) + (p[5] as i32)
+        (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32) + 20 * (p[3] as i32)
+            - 5 * (p[4] as i32)
+            + (p[5] as i32)
     }};
 }
 
@@ -245,10 +258,7 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
                 let row = &data[y + 2];
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(
-                        horiz_6tap_clip!(row, x),
-                        vert_6tap_clip!(data, y, x + 2),
-                    );
+                    d[x] = avg_u8!(horiz_6tap_clip!(row, x), vert_6tap_clip!(data, y, x + 2),);
                 }
             }
         }
@@ -258,10 +268,7 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
                 let row = &data[y + 2];
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(
-                        horiz_6tap_clip!(row, x),
-                        vert_6tap_clip!(data, y, x + 3),
-                    );
+                    d[x] = avg_u8!(horiz_6tap_clip!(row, x), vert_6tap_clip!(data, y, x + 3),);
                 }
             }
         }
@@ -270,10 +277,8 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
             for y in 0..H {
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(
-                        vert_6tap_clip!(data, y, x + 2),
-                        horiz_6tap_clip!(data[y + 3], x),
-                    );
+                    d[x] =
+                        avg_u8!(vert_6tap_clip!(data, y, x + 2), horiz_6tap_clip!(data[y + 3], x),);
                 }
             }
         }
@@ -282,10 +287,8 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
             for y in 0..H {
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(
-                        vert_6tap_clip!(data, y, x + 3),
-                        horiz_6tap_clip!(data[y + 3], x),
-                    );
+                    d[x] =
+                        avg_u8!(vert_6tap_clip!(data, y, x + 3), horiz_6tap_clip!(data[y + 3], x),);
                 }
             }
         }
@@ -481,7 +484,6 @@ pub fn interpolate_chroma(
         }
     }
 }
-
 
 /// Buffer for storing integer pixels with padding for 6-tap filtering.
 /// The size is 21x21 to accommodate a 16x16 block with 2 pixels padding on top/left

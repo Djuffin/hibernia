@@ -377,8 +377,10 @@ impl Decoder {
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
         let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
-        let ref_pics_l0 = resolve_ref_pic_list(&slice.ref_pic_list0, &self.dpb.pictures, "ref_pic_list0")?;
-        let ref_pics_l1 = resolve_ref_pic_list(&slice.ref_pic_list1, &self.dpb.pictures, "ref_pic_list1")?;
+        let ref_pics_l0 =
+            resolve_ref_pic_list(&slice.ref_pic_list0, &self.dpb.pictures, "ref_pic_list0")?;
+        let ref_pics_l1 =
+            resolve_ref_pic_list(&slice.ref_pic_list1, &self.dpb.pictures, "ref_pic_list1")?;
         let first_mb_addr = slice.header.first_mb_in_slice;
         for i in 0..slice.get_macroblock_count() {
             let mb_addr = first_mb_addr + i as u32;
@@ -456,7 +458,8 @@ impl Decoder {
                                     luma_plane,
                                     mb_type_to_16x16_pred_mode(imb.mb_type).ok_or_else(|| {
                                         DecodingError::OutOfRange(format!(
-                                            "no 16x16 pred mode for mb_type {:?}", imb.mb_type
+                                            "no 16x16 pred mode for mb_type {:?}",
+                                            imb.mb_type
                                         ))
                                     })?,
                                     &residuals,
@@ -472,10 +475,11 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp =
-                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().map_err(|_| {
-                                DecodingError::OutOfRange("chroma QP out of u8 range".into())
-                            })?;
+                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c)
+                                .try_into()
+                                .map_err(|_| {
+                                    DecodingError::OutOfRange("chroma QP out of u8 range".into())
+                                })?;
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
@@ -514,17 +518,24 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp =
-                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().map_err(|_| {
-                                DecodingError::OutOfRange("chroma QP out of u8 range".into())
-                            })?;
+                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c)
+                                .try_into()
+                                .map_err(|_| {
+                                    DecodingError::OutOfRange("chroma QP out of u8 range".into())
+                                })?;
                             let residuals = if let Some(residual) = block.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {
                                 SmallVec::new()
                             };
                             render_chroma_inter_prediction(
-                                slice, block, mb_loc, plane_name, frame, &residuals, &ref_pics_l0,
+                                slice,
+                                block,
+                                mb_loc,
+                                plane_name,
+                                frame,
+                                &residuals,
+                                &ref_pics_l0,
                             )?;
                         }
                     }
@@ -551,18 +562,25 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp =
-                                get_chroma_qp(qp, qp_offset, qp_bd_offset_c).try_into().map_err(|_| {
-                                DecodingError::OutOfRange("chroma QP out of u8 range".into())
-                            })?;
+                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c)
+                                .try_into()
+                                .map_err(|_| {
+                                    DecodingError::OutOfRange("chroma QP out of u8 range".into())
+                                })?;
                             let residuals = if let Some(residual) = block.residual.as_ref() {
                                 residual.restore(plane_name, chroma_qp)
                             } else {
                                 SmallVec::new()
                             };
                             render_chroma_inter_prediction_b(
-                                slice, block, mb_loc, plane_name, frame, &residuals,
-                                &ref_pics_l0, &ref_pics_l1,
+                                slice,
+                                block,
+                                mb_loc,
+                                plane_name,
+                                frame,
+                                &residuals,
+                                &ref_pics_l0,
+                                &ref_pics_l1,
                             )?;
                         }
                     }
@@ -667,9 +685,7 @@ impl Decoder {
                     };
                     pic_num_lx_pred = pic_num_lx;
 
-                    if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx)
-                    {
+                    if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
                         self.place_picture_in_list(ref_list0, idx, ref_idx_l0);
                         ref_idx_l0 += 1;
                     }
@@ -684,9 +700,7 @@ impl Decoder {
                     };
                     pic_num_lx_pred = pic_num_lx;
 
-                    if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx)
-                    {
+                    if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
                         self.place_picture_in_list(ref_list0, idx, ref_idx_l0);
                         ref_idx_l0 += 1;
                     }
@@ -854,9 +868,7 @@ impl Decoder {
                     };
                     pic_num_lx_pred = pic_num_lx;
 
-                    if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx)
-                    {
+                    if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
                         self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
                         ref_idx_l1 += 1;
                     }
@@ -871,9 +883,7 @@ impl Decoder {
                     };
                     pic_num_lx_pred = pic_num_lx;
 
-                    if let Some(idx) =
-                        self.find_short_term_in_dpb(pic_num_lx)
-                    {
+                    if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
                         self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
                         ref_idx_l1 += 1;
                     }
@@ -962,12 +972,8 @@ impl Decoder {
             .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
             .collect();
 
-        dpb_pic.picture.motion_field = Some(MotionFieldStorage {
-            mb_motion,
-            mb_is_intra,
-            ref_pic_l0_pocs,
-            ref_pic_l1_pocs,
-        });
+        dpb_pic.picture.motion_field =
+            Some(MotionFieldStorage { mb_motion, mb_is_intra, ref_pic_l0_pocs, ref_pic_l1_pocs });
     }
 }
 
@@ -1021,8 +1027,7 @@ fn weighted_uni_pred(pred: u8, w: i32, o: i32, log_wd: u32) -> u8 {
 // Section 8.4.2.3.2, Eq 8-276: Weighted sample prediction for bi-prediction.
 #[inline]
 fn weighted_bi_pred(pred_l0: u8, pred_l1: u8, wp: &WeightParams) -> u8 {
-    let val = ((i32::from(pred_l0) * wp.w0 + i32::from(pred_l1) * wp.w1
-        + (1 << wp.log_wd))
+    let val = ((i32::from(pred_l0) * wp.w0 + i32::from(pred_l1) * wp.w1 + (1 << wp.log_wd))
         >> (wp.log_wd + 1))
         + ((wp.o0 + wp.o1 + 1) >> 1);
     val.clamp(0, 255) as u8
@@ -1032,14 +1037,10 @@ fn weighted_bi_pred(pred_l0: u8, pred_l1: u8, wp: &WeightParams) -> u8 {
 fn get_explicit_luma_weights(slice: &Slice, ref_idx_l0: usize, ref_idx_l1: usize) -> WeightParams {
     let table = slice.header.pred_weight_table.as_ref().unwrap();
     let log_wd = table.luma_log2_weight_denom;
-    let (w0, o0) = table
-        .list0
-        .get(ref_idx_l0)
-        .map_or((1 << log_wd, 0), |f| (f.luma_weight, f.luma_offset));
-    let (w1, o1) = table
-        .list1
-        .get(ref_idx_l1)
-        .map_or((1 << log_wd, 0), |f| (f.luma_weight, f.luma_offset));
+    let (w0, o0) =
+        table.list0.get(ref_idx_l0).map_or((1 << log_wd, 0), |f| (f.luma_weight, f.luma_offset));
+    let (w1, o1) =
+        table.list1.get(ref_idx_l1).map_or((1 << log_wd, 0), |f| (f.luma_weight, f.luma_offset));
     WeightParams { log_wd, w0, o0, w1, o1 }
 }
 
@@ -1056,15 +1057,11 @@ fn get_explicit_chroma_weights(
     let (w0, o0) = table
         .list0
         .get(ref_idx_l0)
-        .map_or((1 << log_wd, 0), |f| {
-            (f.chroma_weights[chroma_idx], f.chroma_offsets[chroma_idx])
-        });
+        .map_or((1 << log_wd, 0), |f| (f.chroma_weights[chroma_idx], f.chroma_offsets[chroma_idx]));
     let (w1, o1) = table
         .list1
         .get(ref_idx_l1)
-        .map_or((1 << log_wd, 0), |f| {
-            (f.chroma_weights[chroma_idx], f.chroma_offsets[chroma_idx])
-        });
+        .map_or((1 << log_wd, 0), |f| (f.chroma_weights[chroma_idx], f.chroma_offsets[chroma_idx]));
     WeightParams { log_wd, w0, o0, w1, o1 }
 }
 
@@ -1126,7 +1123,6 @@ fn get_implicit_weights(
     WeightParams { log_wd, w0, o0: 0, w1, o1: 0 }
 }
 
-
 pub fn render_luma_inter_prediction(
     slice: &Slice,
     mb: &PMb,
@@ -1148,7 +1144,9 @@ pub fn render_luma_inter_prediction(
 
         let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
             DecodingError::ReferenceNotFound(format!(
-                "ref_idx_l0 {} out of bounds (list length {})", ref_idx, ref_pics_l0.len()
+                "ref_idx_l0 {} out of bounds (list length {})",
+                ref_idx,
+                ref_pics_l0.len()
             ))
         })?;
         let ref_plane = &ref_pic.picture.frame.planes[0];
@@ -1231,7 +1229,9 @@ pub fn render_chroma_inter_prediction(
 
         let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
             DecodingError::ReferenceNotFound(format!(
-                "ref_idx_l0 {} out of bounds (list length {})", ref_idx, ref_pics_l0.len()
+                "ref_idx_l0 {} out of bounds (list length {})",
+                ref_idx,
+                ref_pics_l0.len()
             ))
         })?;
         let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
@@ -1256,8 +1256,7 @@ pub fn render_chroma_inter_prediction(
 
         // Section 8.4.2.3: Apply weighted prediction
         if wp_mode == WeightedPredMode::Explicit {
-            let wp =
-                get_explicit_chroma_weights(slice, ref_idx as usize, 0, chroma_idx);
+            let wp = get_explicit_chroma_weights(slice, ref_idx as usize, 0, chroma_idx);
             for sample in &mut dst {
                 *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
             }
@@ -1319,8 +1318,10 @@ pub fn render_luma_inter_prediction_b(
 
         let mut dst = [0u8; 16];
 
-        let has_l0 = pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
-        let has_l1 = pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
+        let has_l0 =
+            pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
+        let has_l1 =
+            pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
 
         let mut pred_l0 = [0u8; 16];
         let mut pred_l1 = [0u8; 16];
@@ -1328,7 +1329,9 @@ pub fn render_luma_inter_prediction_b(
         if has_l0 {
             let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
                 DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
+                    "ref_idx_l0 {} out of bounds (list length {})",
+                    partition.ref_idx_l0,
+                    ref_pics_l0.len()
                 ))
             })?;
             let ref_plane = &ref_pic.picture.frame.planes[0];
@@ -1350,7 +1353,9 @@ pub fn render_luma_inter_prediction_b(
         if has_l1 {
             let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
                 DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
+                    "ref_idx_l1 {} out of bounds (list length {})",
+                    partition.ref_idx_l1,
+                    ref_pics_l1.len()
                 ))
             })?;
             let ref_plane = &ref_pic.picture.frame.planes[0];
@@ -1393,16 +1398,22 @@ pub fn render_luma_inter_prediction_b(
             }
             WeightedPredMode::Implicit => {
                 if has_l0 && has_l1 {
-                    let ref_l0 = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
-                        DecodingError::ReferenceNotFound(format!(
-                            "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
-                        ))
-                    })?;
-                    let ref_l1 = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
-                        DecodingError::ReferenceNotFound(format!(
-                            "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
-                        ))
-                    })?;
+                    let ref_l0 =
+                        ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l0 {} out of bounds (list length {})",
+                                partition.ref_idx_l0,
+                                ref_pics_l0.len()
+                            ))
+                        })?;
+                    let ref_l1 =
+                        ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l1 {} out of bounds (list length {})",
+                                partition.ref_idx_l1,
+                                ref_pics_l1.len()
+                            ))
+                        })?;
                     let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
                     for i in 0..16 {
                         dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
@@ -1476,8 +1487,10 @@ pub fn render_chroma_inter_prediction_b(
         let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
         let pred_mode = partition.pred_mode;
 
-        let has_l0 = pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
-        let has_l1 = pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
+        let has_l0 =
+            pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
+        let has_l1 =
+            pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
 
         let blk_x = (grid_x * 4) >> 1;
         let blk_y = (grid_y * 4) >> 1;
@@ -1488,7 +1501,9 @@ pub fn render_chroma_inter_prediction_b(
         if has_l0 {
             let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
                 DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
+                    "ref_idx_l0 {} out of bounds (list length {})",
+                    partition.ref_idx_l0,
+                    ref_pics_l0.len()
                 ))
             })?;
             let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
@@ -1509,7 +1524,9 @@ pub fn render_chroma_inter_prediction_b(
         if has_l1 {
             let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
                 DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
+                    "ref_idx_l1 {} out of bounds (list length {})",
+                    partition.ref_idx_l1,
+                    ref_pics_l1.len()
                 ))
             })?;
             let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
@@ -1554,16 +1571,22 @@ pub fn render_chroma_inter_prediction_b(
             WeightedPredMode::Implicit => {
                 if has_l0 && has_l1 {
                     // Implicit mode uses same weights for luma and chroma
-                    let ref_l0 = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
-                        DecodingError::ReferenceNotFound(format!(
-                            "ref_idx_l0 {} out of bounds (list length {})", partition.ref_idx_l0, ref_pics_l0.len()
-                        ))
-                    })?;
-                    let ref_l1 = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
-                        DecodingError::ReferenceNotFound(format!(
-                            "ref_idx_l1 {} out of bounds (list length {})", partition.ref_idx_l1, ref_pics_l1.len()
-                        ))
-                    })?;
+                    let ref_l0 =
+                        ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l0 {} out of bounds (list length {})",
+                                partition.ref_idx_l0,
+                                ref_pics_l0.len()
+                            ))
+                        })?;
+                    let ref_l1 =
+                        ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l1 {} out of bounds (list length {})",
+                                partition.ref_idx_l1,
+                                ref_pics_l1.len()
+                            ))
+                        })?;
                     let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
                     for i in 0..4 {
                         dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);

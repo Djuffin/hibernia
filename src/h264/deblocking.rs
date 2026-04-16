@@ -104,23 +104,23 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
 
     // Section 8.7, step 1 — locate neighbor macroblocks A (left) and B (top)
     let left_info: Option<(&Macroblock, u8)> = if filter_left {
-        slice
-            .get_mb_neighbor(mb_addr, MbNeighborName::A)
-            .map(|p_mb| (p_mb, get_qp(p_mb)))
+        slice.get_mb_neighbor(mb_addr, MbNeighborName::A).map(|p_mb| (p_mb, get_qp(p_mb)))
     } else {
         None
     };
 
     let top_info: Option<(&Macroblock, u8)> = if filter_top {
-        slice
-            .get_mb_neighbor(mb_addr, MbNeighborName::B)
-            .map(|p_mb| (p_mb, get_qp(p_mb)))
+        slice.get_mb_neighbor(mb_addr, MbNeighborName::B).map(|p_mb| (p_mb, get_qp(p_mb)))
     } else {
         None
     };
 
     let (bs_vert, bs_horz) = compute_bs_arrays(
-        slice, mb, left_info.map(|(m, _)| m), top_info.map(|(m, _)| m), transform_8x8,
+        slice,
+        mb,
+        left_info.map(|(m, _)| m),
+        top_info.map(|(m, _)| m),
+        transform_8x8,
     );
 
     let has_nonzero_bs = |bs: &[u8; 4]| bs[0] | bs[1] | bs[2] | bs[3] != 0;
@@ -198,12 +198,8 @@ fn should_filter_edge(slice: &Slice, mb_addr: MbAddr, neighbor: MbNeighborName) 
         if !slice.has_mb_neighbor(mb_addr, neighbor) {
             return false;
         }
-        let neighbor_addr = get_neighbor_mbs(
-            mb_width as u32,
-            slice.header.first_mb_in_slice,
-            mb_addr,
-            neighbor,
-        );
+        let neighbor_addr =
+            get_neighbor_mbs(mb_width as u32, slice.header.first_mb_in_slice, mb_addr, neighbor);
         match neighbor_addr {
             Some(addr) if slice.get_mb(addr).is_some() => {}
             _ => return false,
@@ -240,17 +236,9 @@ fn filter_luma_edge(
     // edge_step: distance between consecutive samples along the edge
     // perp_step: distance from q0 toward p0 (perpendicular to the edge)
     let (edge_step, perp_step, base_idx) = if is_vertical {
-        (
-            stride,
-            1usize,
-            mb_xy.y as usize * stride + mb_xy.x as usize + edge_idx * 4,
-        )
+        (stride, 1usize, mb_xy.y as usize * stride + mb_xy.x as usize + edge_idx * 4)
     } else {
-        (
-            1,
-            stride,
-            (mb_xy.y as usize + edge_idx * 4) * stride + mb_xy.x as usize,
-        )
+        (1, stride, (mb_xy.y as usize + edge_idx * 4) * stride + mb_xy.x as usize)
     };
 
     let mut q0_idx = base_idx;
@@ -278,21 +266,27 @@ fn filter_luma_edge(
                 let mut tc = tc0 as i32;
                 let ap = (p2 - p0).abs();
                 let aq = (q2 - q0).abs();
-                if ap < beta { tc += 1; } // Equation 8-465
-                if aq < beta { tc += 1; }
+                if ap < beta {
+                    tc += 1;
+                } // Equation 8-465
+                if aq < beta {
+                    tc += 1;
+                }
 
                 let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3; // Eq 8-467
                 let delta_c = delta.clamp(-tc, tc);
 
                 data[q0_idx - perp_step] = (p0 + delta_c).clamp(0, 255) as u8; // Eq 8-468: p0'
-                data[q0_idx] = (q0 - delta_c).clamp(0, 255) as u8;             // Eq 8-469: q0'
+                data[q0_idx] = (q0 - delta_c).clamp(0, 255) as u8; // Eq 8-469: q0'
 
-                if ap < beta { // Eq 8-470: p1'
+                if ap < beta {
+                    // Eq 8-470: p1'
                     let d = (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1;
                     data[q0_idx - 2 * perp_step] =
                         (p1 + d.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
                 }
-                if aq < beta { // Eq 8-472: q1'
+                if aq < beta {
+                    // Eq 8-472: q1'
                     let d = (q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1;
                     data[q0_idx + perp_step] =
                         (q1 + d.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
@@ -313,8 +307,7 @@ fn filter_luma_edge(
                     data[q0_idx - 3 * perp_step] =
                         ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(0, 255) as u8;
                 } else {
-                    data[q0_idx - perp_step] =
-                        ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
+                    data[q0_idx - perp_step] = ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
                 }
 
                 // q-side: Equations 8-484..8-486 (strong) or 8-487 (weak fallback)
@@ -322,13 +315,11 @@ fn filter_luma_edge(
                     let q3 = data[q0_idx + 3 * perp_step] as i32;
                     data[q0_idx] =
                         ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
-                    data[q0_idx + perp_step] =
-                        ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
+                    data[q0_idx + perp_step] = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
                     data[q0_idx + 2 * perp_step] =
                         ((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3).clamp(0, 255) as u8;
                 } else {
-                    data[q0_idx] =
-                        ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
+                    data[q0_idx] = ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
                 }
             }
         }
@@ -584,7 +575,6 @@ fn check_motion_discontinuity(
     mb_q: &Macroblock,
     blk_q_idx: usize,
 ) -> bool {
-
     let get_part = |mb: &Macroblock, idx: usize| -> Option<super::macroblock::PartitionInfo> {
         let motion = match mb {
             Macroblock::P(pmb) => &pmb.motion,
@@ -619,9 +609,10 @@ fn check_motion_discontinuity(
             }
 
             // B-slice: check if refs and MVs match in either direct or swapped order
-            let mv_close = |a: super::macroblock::MotionVector, b: super::macroblock::MotionVector| -> bool {
-                (a.x as i32 - b.x as i32).abs() < 4 && (a.y as i32 - b.y as i32).abs() < 4
-            };
+            let mv_close =
+                |a: super::macroblock::MotionVector, b: super::macroblock::MotionVector| -> bool {
+                    (a.x as i32 - b.x as i32).abs() < 4 && (a.y as i32 - b.y as i32).abs() < 4
+                };
 
             // Direct order: L0p==L0q && L1p==L1q && MVs close
             let direct_match = ref_p_l0 == ref_q_l0

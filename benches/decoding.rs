@@ -61,7 +61,7 @@ pub fn decoding_benchmark(c: &mut Criterion) {
     c.bench_function("decode NL2_Sony_H", |b| bench_decoder(b, &nl2_buffer));
 
     // Tests Main profile, CABAC entropy coding, deblocking filter enabled, and B-slices.
-    // This measures a heavy, realistic workload, evaluating CABAC parser efficiency, 
+    // This measures a heavy, realistic workload, evaluating CABAC parser efficiency,
     // memory bandwidth during deblocking, and sub-pixel interpolation in B-slices.
     let caba3_buffer = fs::read("data/CABA3_SVA_B.264").expect("can't read CABA3_SVA_B.264");
     c.bench_function("decode CABA3_SVA_B", |b| bench_decoder(b, &caba3_buffer));
@@ -76,9 +76,10 @@ pub fn decoding_benchmark(c: &mut Criterion) {
     let ffmpeg_720p_path = "target/mandelbrot_720p_main.264";
     let _ = fs::create_dir_all("target");
     generate_ffmpeg_benchmark_data(ffmpeg_720p_path);
-    let ffmpeg_720p_buffer = fs::read(ffmpeg_720p_path).expect("can't read generated benchmark file");
+    let ffmpeg_720p_buffer =
+        fs::read(ffmpeg_720p_path).expect("can't read generated benchmark file");
     let _ = fs::remove_file(ffmpeg_720p_path);
-    
+
     let mut group = c.benchmark_group("720p_main");
     group.sample_size(10); // Reduce sample size as 720p 90 frames will take longer to decode
     group.bench_function("decode mandelbrot", |b| bench_decoder(b, &ffmpeg_720p_buffer));

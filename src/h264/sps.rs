@@ -161,38 +161,34 @@ impl SequenceParameterSet {
 
     /// Returns `CropDimensions`
     pub fn crop_dimensions(&self) -> CropDimensions {
-        let (crop_left, crop_right, crop_top, crop_bottom) = if let Some(crop) = &self.frame_cropping {
-            let sub_width_c = if self.ChromaArrayType() == ChromaFormat::Monochrome {
-                1
-            } else {
-                1 << self.ChromaArrayType().get_chroma_shift().width
-            };
-            let sub_height_c = if self.ChromaArrayType() == ChromaFormat::Monochrome {
-                1
-            } else {
-                1 << self.ChromaArrayType().get_chroma_shift().height
-            };
-            let crop_unit_x = sub_width_c;
-            let crop_unit_y = sub_height_c * (2 - self.frame_mbs_only_flag as usize);
+        let (crop_left, crop_right, crop_top, crop_bottom) =
+            if let Some(crop) = &self.frame_cropping {
+                let sub_width_c = if self.ChromaArrayType() == ChromaFormat::Monochrome {
+                    1
+                } else {
+                    1 << self.ChromaArrayType().get_chroma_shift().width
+                };
+                let sub_height_c = if self.ChromaArrayType() == ChromaFormat::Monochrome {
+                    1
+                } else {
+                    1 << self.ChromaArrayType().get_chroma_shift().height
+                };
+                let crop_unit_x = sub_width_c;
+                let crop_unit_y = sub_height_c * (2 - self.frame_mbs_only_flag as usize);
 
-            (
-                crop.left as usize * crop_unit_x,
-                crop.right as usize * crop_unit_x,
-                crop.top as usize * crop_unit_y,
-                crop.bottom as usize * crop_unit_y,
-            )
-        } else {
-            (0, 0, 0, 0)
-        };
+                (
+                    crop.left as usize * crop_unit_x,
+                    crop.right as usize * crop_unit_x,
+                    crop.top as usize * crop_unit_y,
+                    crop.bottom as usize * crop_unit_y,
+                )
+            } else {
+                (0, 0, 0, 0)
+            };
 
         let display_width = self.pic_width() - crop_left - crop_right;
         let display_height = self.pic_height() - crop_top - crop_bottom;
 
-        CropDimensions {
-            display_width,
-            display_height,
-            crop_left,
-            crop_top,
-        }
+        CropDimensions { display_width, display_height, crop_left, crop_top }
     }
 }

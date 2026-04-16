@@ -91,21 +91,39 @@ macro_rules! read_value {
         read_value!($input, $dest, u, $bits);
         #[allow(unused_comparisons)]
         if $dest < $min || $dest > $max {
-            return Err(format!("{} ({}) must be in range {} to {}", stringify!($dest), $dest, $min, $max));
+            return Err(format!(
+                "{} ({}) must be in range {} to {}",
+                stringify!($dest),
+                $dest,
+                $min,
+                $max
+            ));
         }
     };
     ($input:ident, $dest:expr, ue, $bits:expr, $min:expr, $max:expr) => {
         read_value!($input, $dest, ue, $bits);
         #[allow(unused_comparisons)]
         if $dest < $min || $dest > $max {
-            return Err(format!("{} ({}) must be in range {} to {}", stringify!($dest), $dest, $min, $max));
+            return Err(format!(
+                "{} ({}) must be in range {} to {}",
+                stringify!($dest),
+                $dest,
+                $min,
+                $max
+            ));
         }
     };
     ($input:ident, $dest:expr, se, $min:expr, $max:expr) => {
         read_value!($input, $dest, se);
         #[allow(unused_comparisons)]
         if $dest < $min || $dest > $max {
-            return Err(format!("{} ({}) must be in range {} to {}", stringify!($dest), $dest, $min, $max));
+            return Err(format!(
+                "{} ({}) must be in range {} to {}",
+                stringify!($dest),
+                $dest,
+                $min,
+                $max
+            ));
         }
     };
 }
@@ -584,7 +602,8 @@ pub fn parse_pred_weight_table(
     read_value!(input, table.luma_log2_weight_denom, ue, 8, 0, 7);
     if sps.ChromaArrayType() != ChromaFormat::Monochrome {
         read_value!(input, table.chroma_log2_weight_denom, ue, 8, 0, 7);
-        let denom_diff = table.chroma_log2_weight_denom as i32 - table.luma_log2_weight_denom as i32;
+        let denom_diff =
+            table.chroma_log2_weight_denom as i32 - table.luma_log2_weight_denom as i32;
         if denom_diff < -7 || denom_diff > 7 {
             return Err(format!(
                 "Difference between chroma_log2_weight_denom and luma_log2_weight_denom ({}) must be in range -7 to 7",
@@ -1313,10 +1332,7 @@ pub fn predict_mv_l1(
     }
 
     let get_vals = |info: Option<PartitionInfo>| {
-        info.unwrap_or(PartitionInfo {
-            ref_idx_l1: u8::MAX,
-            ..Default::default()
-        })
+        info.unwrap_or(PartitionInfo { ref_idx_l1: u8::MAX, ..Default::default() })
     };
 
     let val_a = get_vals(mv_a);
@@ -1369,19 +1385,17 @@ fn fill_motion_grid_b(
     let mut final_mv_l1 = MotionVector::default();
 
     if pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred {
-        let mvp = predict_mv_l0(slice, mb_addr, part_x, part_y, part_w, part_h, ref_idx_l0, Some(motion));
-        final_mv_l0 = MotionVector {
-            x: mvp.x.wrapping_add(mvd_l0.x),
-            y: mvp.y.wrapping_add(mvd_l0.y),
-        };
+        let mvp =
+            predict_mv_l0(slice, mb_addr, part_x, part_y, part_w, part_h, ref_idx_l0, Some(motion));
+        final_mv_l0 =
+            MotionVector { x: mvp.x.wrapping_add(mvd_l0.x), y: mvp.y.wrapping_add(mvd_l0.y) };
     }
 
     if pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred {
-        let mvp = predict_mv_l1(slice, mb_addr, part_x, part_y, part_w, part_h, ref_idx_l1, Some(motion));
-        final_mv_l1 = MotionVector {
-            x: mvp.x.wrapping_add(mvd_l1.x),
-            y: mvp.y.wrapping_add(mvd_l1.y),
-        };
+        let mvp =
+            predict_mv_l1(slice, mb_addr, part_x, part_y, part_w, part_h, ref_idx_l1, Some(motion));
+        final_mv_l1 =
+            MotionVector { x: mvp.x.wrapping_add(mvd_l1.x), y: mvp.y.wrapping_add(mvd_l1.y) };
     }
 
     let info = PartitionInfo {
@@ -1429,12 +1443,7 @@ pub fn calculate_motion_b(
             if use_spatial {
                 return derive_spatial_direct(slice, this_mb_addr, &motion);
             } else if let Some(ref col_pic) = slice.col_pic {
-                return derive_temporal_direct(
-                    slice,
-                    this_mb_addr,
-                    col_pic,
-                    slice.current_pic_poc,
-                );
+                return derive_temporal_direct(slice, this_mb_addr, col_pic, slice.current_pic_poc);
             } else {
                 // No colocated picture available, fall back to spatial
                 return derive_spatial_direct(slice, this_mb_addr, &motion);
@@ -1447,13 +1456,7 @@ pub fn calculate_motion_b(
 
                 if sub_mb.sub_mb_type == BSubMbType::B_Direct_8x8 {
                     let direct_motion = if use_spatial {
-                        derive_spatial_direct_sub(
-                            slice,
-                            this_mb_addr,
-                            &motion,
-                            sub_mb_x,
-                            sub_mb_y,
-                        )
+                        derive_spatial_direct_sub(slice, this_mb_addr, &motion, sub_mb_x, sub_mb_y)
                     } else if let Some(ref col_pic) = slice.col_pic {
                         derive_temporal_direct_sub(
                             slice,
@@ -1465,13 +1468,7 @@ pub fn calculate_motion_b(
                             sub_mb_y,
                         )
                     } else {
-                        derive_spatial_direct_sub(
-                            slice,
-                            this_mb_addr,
-                            &motion,
-                            sub_mb_x,
-                            sub_mb_y,
-                        )
+                        derive_spatial_direct_sub(slice, this_mb_addr, &motion, sub_mb_x, sub_mb_y)
                     };
                     let grid_x = (sub_mb_x / 4) as usize;
                     let grid_y = (sub_mb_y / 4) as usize;
@@ -1490,15 +1487,33 @@ pub fn calculate_motion_b(
                     let p_info = sub_mb.partitions[j];
                     let (part_w, part_h) = sub_mb.sub_mb_type.SubMbPartSize();
                     let (dx, dy) = match (sub_mb.sub_mb_type, j) {
-                        (BSubMbType::B_L0_8x8 | BSubMbType::B_L1_8x8 | BSubMbType::B_Bi_8x8, _) => (0, 0),
-                        (BSubMbType::B_L0_8x4 | BSubMbType::B_L1_8x4 | BSubMbType::B_Bi_8x4, 0) => (0, 0),
-                        (BSubMbType::B_L0_8x4 | BSubMbType::B_L1_8x4 | BSubMbType::B_Bi_8x4, 1) => (0, 4),
-                        (BSubMbType::B_L0_4x8 | BSubMbType::B_L1_4x8 | BSubMbType::B_Bi_4x8, 0) => (0, 0),
-                        (BSubMbType::B_L0_4x8 | BSubMbType::B_L1_4x8 | BSubMbType::B_Bi_4x8, 1) => (4, 0),
-                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 0) => (0, 0),
-                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 1) => (4, 0),
-                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 2) => (0, 4),
-                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 3) => (4, 4),
+                        (BSubMbType::B_L0_8x8 | BSubMbType::B_L1_8x8 | BSubMbType::B_Bi_8x8, _) => {
+                            (0, 0)
+                        }
+                        (BSubMbType::B_L0_8x4 | BSubMbType::B_L1_8x4 | BSubMbType::B_Bi_8x4, 0) => {
+                            (0, 0)
+                        }
+                        (BSubMbType::B_L0_8x4 | BSubMbType::B_L1_8x4 | BSubMbType::B_Bi_8x4, 1) => {
+                            (0, 4)
+                        }
+                        (BSubMbType::B_L0_4x8 | BSubMbType::B_L1_4x8 | BSubMbType::B_Bi_4x8, 0) => {
+                            (0, 0)
+                        }
+                        (BSubMbType::B_L0_4x8 | BSubMbType::B_L1_4x8 | BSubMbType::B_Bi_4x8, 1) => {
+                            (4, 0)
+                        }
+                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 0) => {
+                            (0, 0)
+                        }
+                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 1) => {
+                            (4, 0)
+                        }
+                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 2) => {
+                            (0, 4)
+                        }
+                        (BSubMbType::B_L0_4x4 | BSubMbType::B_L1_4x4 | BSubMbType::B_Bi_4x4, 3) => {
+                            (4, 4)
+                        }
                         _ => unreachable!(),
                     };
                     fill_motion_grid_b(
@@ -1554,11 +1569,7 @@ pub fn calculate_motion_b(
 
 // Section 8.4.1.2.2 Spatial direct prediction
 // Derives motion vectors and reference indices for B_Direct_16x16 and B_Skip macroblocks
-fn derive_spatial_direct(
-    slice: &Slice,
-    mb_addr: MbAddr,
-    _current_motion: &MbMotion,
-) -> MbMotion {
+fn derive_spatial_direct(slice: &Slice, mb_addr: MbAddr, _current_motion: &MbMotion) -> MbMotion {
     let mut motion = MbMotion::default();
     let mb_loc = slice.get_mb_location(mb_addr);
     let x = mb_loc.x as i32;
@@ -1636,10 +1647,15 @@ fn derive_spatial_direct(
                 mv_l0 = MotionVector::default();
                 mv_l1 = MotionVector::default();
             } else {
-                let col_zero = get_col_zero_flag(slice, mb_addr, grid_x, grid_y, direct_8x8_inference);
+                let col_zero =
+                    get_col_zero_flag(slice, mb_addr, grid_x, grid_y, direct_8x8_inference);
                 if col_zero {
-                    if ref_idx_l0 == 0 { mv_l0 = MotionVector::default(); }
-                    if ref_idx_l1 == 0 { mv_l1 = MotionVector::default(); }
+                    if ref_idx_l0 == 0 {
+                        mv_l0 = MotionVector::default();
+                    }
+                    if ref_idx_l1 == 0 {
+                        mv_l1 = MotionVector::default();
+                    }
                 }
             }
 
@@ -1788,8 +1804,12 @@ fn derive_spatial_direct_sub(
             } else {
                 let col_zero = get_col_zero_flag(slice, mb_addr, gx, gy, direct_8x8_inference);
                 if col_zero {
-                    if ref_idx_l0 == 0 { mv_l0 = MotionVector::default(); }
-                    if ref_idx_l1 == 0 { mv_l1 = MotionVector::default(); }
+                    if ref_idx_l0 == 0 {
+                        mv_l0 = MotionVector::default();
+                    }
+                    if ref_idx_l1 == 0 {
+                        mv_l1 = MotionVector::default();
+                    }
                 }
             }
 
@@ -1840,7 +1860,12 @@ fn derive_temporal_direct(
             let fill_grid_y = (mb_part_idx / 2) * 2;
             let (col_grid_x, col_grid_y) = col_block_for_direct_8x8(mb_part_idx);
             let info = derive_temporal_direct_partition(
-                slice, mb_addr, col_pic, current_poc, col_grid_x, col_grid_y,
+                slice,
+                mb_addr,
+                col_pic,
+                current_poc,
+                col_grid_x,
+                col_grid_y,
             );
             for dy in 0..2 {
                 for dx in 0..2 {
@@ -1852,7 +1877,12 @@ fn derive_temporal_direct(
         for grid_y in 0..4 {
             for grid_x in 0..4 {
                 let info = derive_temporal_direct_partition(
-                    slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
+                    slice,
+                    mb_addr,
+                    col_pic,
+                    current_poc,
+                    grid_x,
+                    grid_y,
                 );
                 motion.partitions[grid_y][grid_x] = info;
             }
@@ -1881,7 +1911,12 @@ fn derive_temporal_direct_sub(
         let mb_part_idx = (sub_mb_x / 8) as usize + (sub_mb_y / 8) as usize * 2;
         let (col_grid_x, col_grid_y) = col_block_for_direct_8x8(mb_part_idx);
         let info = derive_temporal_direct_partition(
-            slice, mb_addr, col_pic, current_poc, col_grid_x, col_grid_y,
+            slice,
+            mb_addr,
+            col_pic,
+            current_poc,
+            col_grid_x,
+            col_grid_y,
         );
         for dy in 0..2 {
             for dx in 0..2 {
@@ -1894,7 +1929,12 @@ fn derive_temporal_direct_sub(
                 let grid_x = base_grid_x + gx;
                 let grid_y = base_grid_y + gy;
                 let info = derive_temporal_direct_partition(
-                    slice, mb_addr, col_pic, current_poc, grid_x, grid_y,
+                    slice,
+                    mb_addr,
+                    col_pic,
+                    current_poc,
+                    grid_x,
+                    grid_y,
                 );
                 motion.partitions[grid_y][grid_x] = info;
             }
@@ -1933,13 +1973,12 @@ fn derive_temporal_direct_partition(
 
     // Determine mvCol and refIdxCol from the colocated partition
     // Per spec: prefer L0, fallback to L1
-    let (mv_col, ref_idx_col, col_ref_pocs) =
-        if col_part.pred_mode == MbPredictionMode::Pred_L1 {
-            (col_part.mv_l1, col_part.ref_idx_l1, &col_pic.ref_pic_l1_pocs)
-        } else {
-            // Pred_L0, BiPred, or other: use L0
-            (col_part.mv_l0, col_part.ref_idx_l0, &col_pic.ref_pic_l0_pocs)
-        };
+    let (mv_col, ref_idx_col, col_ref_pocs) = if col_part.pred_mode == MbPredictionMode::Pred_L1 {
+        (col_part.mv_l1, col_part.ref_idx_l1, &col_pic.ref_pic_l1_pocs)
+    } else {
+        // Pred_L0, BiPred, or other: use L0
+        (col_part.mv_l0, col_part.ref_idx_l0, &col_pic.ref_pic_l0_pocs)
+    };
 
     // Get the POC of the picture referenced by the colocated partition
     let col_ref_poc = col_ref_pocs.get(ref_idx_col as usize).copied().unwrap_or(col_pic.pic_poc);
@@ -2028,7 +2067,12 @@ pub fn calculate_motion(
             );
             let final_mv =
                 MotionVector { x: mvp.x.wrapping_add(mvd.x), y: mvp.y.wrapping_add(mvd.y) };
-            let info = PartitionInfo { ref_idx_l0: ref_idx, mv_l0: final_mv, mvd_l0: mvd, ..Default::default() };
+            let info = PartitionInfo {
+                ref_idx_l0: ref_idx,
+                mv_l0: final_mv,
+                mvd_l0: mvd,
+                ..Default::default()
+            };
 
             let grid_x_start = (part_x / 4) as usize;
             let grid_y_start = (part_y / 4) as usize;
@@ -2072,7 +2116,12 @@ pub fn calculate_motion(
                 predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0, None)
             };
 
-            let info = PartitionInfo { ref_idx_l0: 0, mv_l0: mv, mvd_l0: MotionVector::default(), ..Default::default() };
+            let info = PartitionInfo {
+                ref_idx_l0: 0,
+                mv_l0: mv,
+                mvd_l0: MotionVector::default(),
+                ..Default::default()
+            };
             for row in motion.partitions.iter_mut() {
                 row.fill(info);
             }
@@ -2401,8 +2450,7 @@ pub fn parse_b_macroblock(
         }
     }
 
-    block.motion =
-        calculate_motion_b(slice, this_mb_addr, mb_type, &partitions, &sub_macroblocks);
+    block.motion = calculate_motion_b(slice, this_mb_addr, mb_type, &partitions, &sub_macroblocks);
 
     let coded_block_pattern_num: u8;
     read_value!(input, coded_block_pattern_num, ue, 8);

@@ -60,10 +60,7 @@ fn main() {
                 }
             }
 
-            info!(
-                "Writing frame #{} {} x {} to y4m",
-                frame_count, display_width, display_height
-            );
+            info!("Writing frame #{} {} x {} to y4m", frame_count, display_width, display_height);
             frame_count += 1;
 
             let mut planes = Vec::<Vec<u8>>::new();
@@ -85,7 +82,8 @@ fn main() {
                 }
 
                 for row in 0..ch {
-                    let src_offset = (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
+                    let src_offset =
+                        (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
                     let dst_offset = row * cw;
                     data[dst_offset..dst_offset + cw]
                         .copy_from_slice(&plane.data[src_offset..src_offset + cw]);

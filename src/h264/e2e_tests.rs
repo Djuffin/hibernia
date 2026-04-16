@@ -54,7 +54,8 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
                 }
 
                 for row in 0..ch {
-                    let src_offset = (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
+                    let src_offset =
+                        (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
                     let dst_offset = row * cw;
                     data[dst_offset..dst_offset + cw]
                         .copy_from_slice(&plane.data[src_offset..src_offset + cw]);
@@ -74,9 +75,9 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
         let mut nal_idx = 0usize;
         for nal_result in nal_parser {
             let nal_data = nal_result.map_err(|e| format!("NAL error: {e:?}"))?;
-            decoder.decode(&nal_data).map_err(|e| {
-                format!("Decoding error at NAL #{nal_idx}: {e:?}")
-            })?;
+            decoder
+                .decode(&nal_data)
+                .map_err(|e| format!("Decoding error at NAL #{nal_idx}: {e:?}"))?;
             nal_idx += 1;
 
             while let Some(pic) = decoder.retrieve_frame() {
@@ -385,7 +386,8 @@ fn test_ffmpeg_main() -> Result<(), String> {
 
 #[test]
 fn test_ffmpeg_multiple_reference_frames() -> Result<(), String> {
-    let test_dir = TestDir::new("target/tmp_ffmpeg_multiple_reference_frames").map_err(|e| e.to_string())?;
+    let test_dir =
+        TestDir::new("target/tmp_ffmpeg_multiple_reference_frames").map_err(|e| e.to_string())?;
 
     let h264_path = test_dir.path().join("test_stream.264");
     let y4m_path = test_dir.path().join("output.y4m");
@@ -435,7 +437,8 @@ fn test_ffmpeg_multiple_reference_frames() -> Result<(), String> {
 
 #[test]
 fn test_ffmpeg_weighted_prediction() -> Result<(), String> {
-    let test_dir = TestDir::new("target/tmp_ffmpeg_weighted_prediction").map_err(|e| e.to_string())?;
+    let test_dir =
+        TestDir::new("target/tmp_ffmpeg_weighted_prediction").map_err(|e| e.to_string())?;
 
     let h264_path = test_dir.path().join("test_stream.264");
     let y4m_path = test_dir.path().join("output.y4m");

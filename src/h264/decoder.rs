@@ -137,14 +137,14 @@ impl DecoderContext {
 /// let _ = decoder.decode(&slice);
 ///
 /// // 3. Retrieve decoded frames (if any are ready)
-/// if let Some(pic) = decoder.retrieve_frame() {
+/// if let Some(pic) = decoder.retrieve_picture() {
 ///     println!("Decoded {}x{} frame", pic.crop.display_width, pic.crop.display_height);
 /// }
 /// ```
 pub struct Decoder {
     context: DecoderContext,
     dpb: DecodedPictureBuffer,
-    output_frames: VecDeque<Picture>,
+    output_pictures: VecDeque<Picture>,
     interpolation_buffer: InterpolationBuffer,
     poc_state: PocState,
 }
@@ -154,7 +154,7 @@ impl std::fmt::Debug for Decoder {
         f.debug_struct("Decoder")
             .field("context", &self.context)
             .field("dpb", &self.dpb)
-            .field("output_frames", &self.output_frames)
+            .field("output_pictures", &self.output_pictures)
             .field("poc_state", &self.poc_state)
             .finish()
     }
@@ -171,7 +171,7 @@ impl Decoder {
         Decoder {
             context: DecoderContext::default(),
             dpb: DecodedPictureBuffer::new(),
-            output_frames: VecDeque::new(),
+            output_pictures: VecDeque::new(),
             interpolation_buffer: InterpolationBuffer::new(),
             poc_state: PocState::new(),
         }
@@ -261,12 +261,12 @@ impl Decoder {
                     &slice.sps,
                     &mut dpb_pic,
                 );
-                self.output_frames.extend(flushed);
+                self.output_pictures.extend(flushed);
                 self.dpb.remove_dead_pictures();
 
                 // --- C.2.4: Store current picture (with bumping if DPB is full) ---
                 let pictures = self.dpb.store_picture(dpb_pic);
-                self.output_frames.extend(pictures);
+                self.output_pictures.extend(pictures);
 
                 self.poc_state.update_mmco5_state(
                     has_mmco5,
@@ -352,18 +352,18 @@ impl Decoder {
 
     /// Retrieves the next available picture from the decoder's output queue.
     /// Returns `Some(Picture)` if a picture is available, or `None` if the queue is empty.
-    pub fn retrieve_frame(&mut self) -> Option<Picture> {
-        self.output_frames.pop_front()
+    pub fn retrieve_picture(&mut self) -> Option<Picture> {
+        self.output_pictures.pop_front()
     }
 
     /// Flushes the decoder, forcing any remaining frames in the DPB to be output.
     /// This is necessary because some frames may be held in the DPB (Decoded Picture Buffer)
     /// for reference or reordering (e.g., B-frames) and won't be output immediately.
     /// This should be called at the end of the stream.
-    /// Call `retrieve_frame` repeatedly after flushing until it returns `None`.
+    /// Call `retrieve_picture` repeatedly after flushing until it returns `None`.
     pub fn flush(&mut self) -> Result<(), DecodingError> {
         let pictures = self.dpb.flush();
-        self.output_frames.extend(pictures.into_iter().map(|p| p.picture));
+        self.output_pictures.extend(pictures.into_iter().map(|p| p.picture));
         Ok(())
     }
 

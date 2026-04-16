@@ -80,13 +80,13 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
                 .map_err(|e| format!("Decoding error at NAL #{nal_idx}: {e:?}"))?;
             nal_idx += 1;
 
-            while let Some(pic) = decoder.retrieve_frame() {
+            while let Some(pic) = decoder.retrieve_picture() {
                 process_frame(pic);
             }
         }
 
         decoder.flush().map_err(|e| format!("Flush error: {e:?}"))?;
-        while let Some(pic) = decoder.retrieve_frame() {
+        while let Some(pic) = decoder.retrieve_picture() {
             process_frame(pic);
         }
     }

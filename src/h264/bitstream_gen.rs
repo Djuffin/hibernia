@@ -327,13 +327,13 @@ mod tests {
         for nal_result in nal_parser {
             let nal_data = nal_result.unwrap();
             decoder.decode(&nal_data).unwrap();
-            while let Some(pic) = decoder.retrieve_frame() {
+            while let Some(pic) = decoder.retrieve_picture() {
                 check_frame(pic.frame);
             }
         }
 
         decoder.flush().unwrap();
-        while let Some(pic) = decoder.retrieve_frame() {
+        while let Some(pic) = decoder.retrieve_picture() {
             check_frame(pic.frame);
         }
 

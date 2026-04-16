@@ -108,13 +108,13 @@ fn main() {
             let nal_data = nal_result.expect("Error parsing NAL");
             decoder.decode(&nal_data).expect("Decoding error");
 
-            while let Some(pic) = decoder.retrieve_frame() {
+            while let Some(pic) = decoder.retrieve_picture() {
                 process_frame(pic);
             }
         }
 
         decoder.flush().expect("Flush error");
-        while let Some(pic) = decoder.retrieve_frame() {
+        while let Some(pic) = decoder.retrieve_picture() {
             process_frame(pic);
         }
     }

@@ -43,12 +43,12 @@ fn bench_decoder(b: &mut criterion::Bencher, encoded_video_buffer: &[u8]) {
         for nal_result in nal_parser {
             let nal = nal_result.unwrap();
             decoder.decode(&nal).unwrap();
-            while let Some(_frame) = decoder.retrieve_frame() {
+            while let Some(_frame) = decoder.retrieve_picture() {
                 // consume frame
             }
         }
         decoder.flush().unwrap();
-        while let Some(_frame) = decoder.retrieve_frame() {
+        while let Some(_frame) = decoder.retrieve_picture() {
             // consume frame
         }
     });

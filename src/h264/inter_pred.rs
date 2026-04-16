@@ -44,6 +44,57 @@ pub fn interpolate_luma(
     }
 }
 
+macro_rules! vert_6tap_clip {
+    ($data:expr, $y:expr, $col:expr) => {{
+        let val = $data[$y][$col] as i32
+            - 5 * $data[$y + 1][$col] as i32
+            + 20 * $data[$y + 2][$col] as i32
+            + 20 * $data[$y + 3][$col] as i32
+            - 5 * $data[$y + 4][$col] as i32
+            + $data[$y + 5][$col] as i32;
+        ((val + 16) >> 5).clamp(0, 255) as u8
+    }};
+}
+
+macro_rules! vert_6tap_j {
+    ($intermediate:expr, $y:expr, $x:expr) => {{
+        let val = $intermediate[$y][$x]
+            - 5 * $intermediate[$y + 1][$x]
+            + 20 * $intermediate[$y + 2][$x]
+            + 20 * $intermediate[$y + 3][$x]
+            - 5 * $intermediate[$y + 4][$x]
+            + $intermediate[$y + 5][$x];
+        ((val + 512) >> 10).clamp(0, 255) as u8
+    }};
+}
+
+macro_rules! clip_i32 {
+    ($val:expr) => {
+        ((($val) + 16) >> 5).clamp(0, 255) as u8
+    };
+}
+
+macro_rules! filter_6tap {
+    ($p:expr) => {{
+        let p = &$p[..6];
+        (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32)
+            + 20 * (p[3] as i32) - 5 * (p[4] as i32) + (p[5] as i32)
+    }};
+}
+
+macro_rules! horiz_6tap_clip {
+    ($row:expr, $x:expr) => {{
+        let val = filter_6tap!(&$row[$x..$x + 6]);
+        ((val + 16) >> 5).clamp(0, 255) as u8
+    }};
+}
+
+macro_rules! avg_u8 {
+    ($a:expr, $b:expr $(,)?) => {
+        (($a as u16 + $b as u16 + 1) >> 1) as u8
+    };
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn interpolate_luma_impl<const W: usize, const H: usize>(
@@ -125,129 +176,189 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
         }
     }
 
-    macro_rules! interpolate {
-        (|$x:ident, $y:ident| $calc:expr) => {
-            for y in 0..H {
-                let $y = y;
-                let d = &mut dst[y * dst_stride..y * dst_stride + W];
-                for x in 0..W {
-                    let $x = x;
-                    d[x] = $calc;
-                }
-            }
-        };
-    }
-
-    // Accessors for integer and half-pel positions
-    let data: &[[u8; 21]; 21] = &buffer.data;
-    // G, H, M are integer samples at different offsets
-    macro_rules! G {
-        ($x:expr, $y:expr) => {
-            data[$y + 2][$x + 2] as u16
-        };
-    }
-    macro_rules! H {
-        ($x:expr, $y:expr) => {
-            data[$y + 2][$x + 3] as u16
-        };
-    }
-    macro_rules! M {
-        ($x:expr, $y:expr) => {
-            data[$y + 3][$x + 2] as u16
-        };
-    }
-
-    // Half-sample interpolation using 6-tap filter (Equation 8-241, 8-243)
-    // b = (E - 5F + 20G + 20H - 5I + J + 16) >> 5
-    macro_rules! b {
-        ($x:expr, $y:expr) => {
-            filter_6tap_and_clip(&data[$y + 2][$x..$x + 6]) as u16
-        };
-    }
-    // s is 'b' but for the next row (vertical shift) - wait, no, s is vertical filtering of M-line?
-    // Actually:
-    // 'b' is horizontal interpolation at y (samples E..J at y)
-    // 'h' is vertical interpolation at x (samples A..U at x)
-    // 's' is horizontal interpolation at y+1 (samples E..J at y+1) -> used for 'p', 'r'
-    // 'm' is vertical interpolation at x+1 (samples A..U at x+1) -> used for 'g', 'k'
-    macro_rules! s {
-        ($x:expr, $y:expr) => {
-            filter_6tap_and_clip(&data[$y + 3][$x..$x + 6]) as u16
-        };
-    }
-
-    // h = (A - 5C + 20G + 20M - 5R + T + 16) >> 5 (Vertical filtering)
-    macro_rules! h {
-        ($x:expr, $y:expr) => {
-            filter_6tap_vertical_and_clip(buffer, $x, $y) as u16
-        };
-    }
-    macro_rules! m {
-        ($x:expr, $y:expr) => {
-            filter_6tap_vertical_and_clip(buffer, $x + 1, $y) as u16
-        };
-    }
-
-    // Averaging for quarter-sample positions (Equation 8-250 to 8-252)
-    macro_rules! avg {
-        ($val1:expr, $val2:expr) => {
-            (($val1 + $val2 + 1) >> 1) as u8
-        };
-    }
+    let data = &buffer.data;
 
     match (x_frac, y_frac) {
-        // Half-pel positions (except j)
-        (2, 0) => interpolate!(|x, y| b!(x, y) as u8), // b
-        (0, 2) => interpolate!(|x, y| h!(x, y) as u8), // h
+        // Half-pel positions (Equations 8-241, 8-243)
+        (2, 0) => {
+            // b: horizontal 6-tap
+            for y in 0..H {
+                let row = &data[y + 2];
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = horiz_6tap_clip!(row, x);
+                }
+            }
+        }
+        (0, 2) => {
+            // h: vertical 6-tap
+            for y in 0..H {
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = vert_6tap_clip!(data, y, x + 2);
+                }
+            }
+        }
 
-        // Quarter-pel positions (Table 8-12)
-        (1, 0) => interpolate!(|x, y| avg!(G!(x, y), b!(x, y))), // a
-        (3, 0) => interpolate!(|x, y| avg!(H!(x, y), b!(x, y))), // c
-        (0, 1) => interpolate!(|x, y| avg!(G!(x, y), h!(x, y))), // d
-        (0, 3) => interpolate!(|x, y| avg!(M!(x, y), h!(x, y))), // n
-        (1, 1) => interpolate!(|x, y| avg!(b!(x, y), h!(x, y))), // e
-        (3, 1) => interpolate!(|x, y| avg!(b!(x, y), m!(x, y))), // g
-        (1, 3) => interpolate!(|x, y| avg!(h!(x, y), s!(x, y))), // p
-        (3, 3) => interpolate!(|x, y| avg!(m!(x, y), s!(x, y))), // r
+        // Quarter-pel positions (Table 8-12, Equations 8-250 to 8-252)
+        (1, 0) => {
+            // a = avg(G, b)
+            for y in 0..H {
+                let row = &data[y + 2];
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(row[x + 2], horiz_6tap_clip!(row, x));
+                }
+            }
+        }
+        (3, 0) => {
+            // c = avg(H, b)
+            for y in 0..H {
+                let row = &data[y + 2];
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(row[x + 3], horiz_6tap_clip!(row, x));
+                }
+            }
+        }
+        (0, 1) => {
+            // d = avg(G, h)
+            for y in 0..H {
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(data[y + 2][x + 2], vert_6tap_clip!(data, y, x + 2));
+                }
+            }
+        }
+        (0, 3) => {
+            // n = avg(M, h)
+            for y in 0..H {
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(data[y + 3][x + 2], vert_6tap_clip!(data, y, x + 2));
+                }
+            }
+        }
+        (1, 1) => {
+            // e = avg(b, h)
+            for y in 0..H {
+                let row = &data[y + 2];
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(
+                        horiz_6tap_clip!(row, x),
+                        vert_6tap_clip!(data, y, x + 2),
+                    );
+                }
+            }
+        }
+        (3, 1) => {
+            // g = avg(b, m)
+            for y in 0..H {
+                let row = &data[y + 2];
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(
+                        horiz_6tap_clip!(row, x),
+                        vert_6tap_clip!(data, y, x + 3),
+                    );
+                }
+            }
+        }
+        (1, 3) => {
+            // p = avg(h, s)
+            for y in 0..H {
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(
+                        vert_6tap_clip!(data, y, x + 2),
+                        horiz_6tap_clip!(data[y + 3], x),
+                    );
+                }
+            }
+        }
+        (3, 3) => {
+            // r = avg(m, s)
+            for y in 0..H {
+                let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                for x in 0..W {
+                    d[x] = avg_u8!(
+                        vert_6tap_clip!(data, y, x + 3),
+                        horiz_6tap_clip!(data[y + 3], x),
+                    );
+                }
+            }
+        }
 
-        // Cases needing j (center half-sample)
-        // j is generated by applying the 6-tap filter vertically to the result
-        // of applying the 6-tap filter horizontally (or vice versa). (Equation 8-247)
+        // Cases needing j (center half-sample, Equation 8-247)
+        // j requires two-pass filtering: horizontal into unclipped intermediate,
+        // then vertical on the intermediate results.
         (2, 2) | (2, 1) | (2, 3) | (1, 2) | (3, 2) => {
             let mut intermediate = [[0i32; 16]; 21];
             for y in 0..buf_h {
-                let row = &buffer.data[y];
-                let int_row = &mut intermediate[y];
                 for x in 0..W {
-                    // Compute horizontal filter first (unclipped)
-                    int_row[x] = filter_6tap(&row[x..x + 6]);
+                    intermediate[y][x] = filter_6tap!(&data[y][x..x + 6]);
                 }
             }
 
-            // Compute j by filtering 'intermediate' vertically.
-            // Also clips 'b' and 's' from 'intermediate' for efficiency.
-            macro_rules! j {
-                ($x:expr, $y:expr) => {
-                    get_j_from_intermediate(&intermediate, $x, $y) as u16
-                };
-            }
-            macro_rules! b_opt {
-                ($x:expr, $y:expr) => {
-                    clip_intermediate(intermediate[$y + 2][$x]) as u16
-                };
-            }
-            macro_rules! s_opt {
-                ($x:expr, $y:expr) => {
-                    clip_intermediate(intermediate[$y + 3][$x]) as u16
-                };
-            }
-
             match (x_frac, y_frac) {
-                (2, 2) => interpolate!(|x, y| j!(x, y) as u8), // j
-                (2, 1) => interpolate!(|x, y| avg!(b_opt!(x, y), j!(x, y))), // f
-                (2, 3) => interpolate!(|x, y| avg!(j!(x, y), s_opt!(x, y))), // q
-                (1, 2) => interpolate!(|x, y| avg!(h!(x, y), j!(x, y))), // i
-                (3, 2) => interpolate!(|x, y| avg!(j!(x, y), m!(x, y))), // k
+                (2, 2) => {
+                    // j: two-pass 6-tap
+                    for y in 0..H {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                        for x in 0..W {
+                            d[x] = vert_6tap_j!(intermediate, y, x);
+                        }
+                    }
+                }
+                (2, 1) => {
+                    // f = avg(b, j)
+                    for y in 0..H {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                        for x in 0..W {
+                            d[x] = avg_u8!(
+                                clip_i32!(intermediate[y + 2][x]),
+                                vert_6tap_j!(intermediate, y, x),
+                            );
+                        }
+                    }
+                }
+                (2, 3) => {
+                    // q = avg(j, s)
+                    for y in 0..H {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                        for x in 0..W {
+                            d[x] = avg_u8!(
+                                vert_6tap_j!(intermediate, y, x),
+                                clip_i32!(intermediate[y + 3][x]),
+                            );
+                        }
+                    }
+                }
+                (1, 2) => {
+                    // i = avg(h, j)
+                    for y in 0..H {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                        for x in 0..W {
+                            d[x] = avg_u8!(
+                                vert_6tap_clip!(data, y, x + 2),
+                                vert_6tap_j!(intermediate, y, x),
+                            );
+                        }
+                    }
+                }
+                (3, 2) => {
+                    // k = avg(j, m)
+                    for y in 0..H {
+                        let d = &mut dst[y * dst_stride..y * dst_stride + W];
+                        for x in 0..W {
+                            d[x] = avg_u8!(
+                                vert_6tap_j!(intermediate, y, x),
+                                vert_6tap_clip!(data, y, x + 3),
+                            );
+                        }
+                    }
+                }
                 _ => unreachable!(),
             }
         }
@@ -371,64 +482,6 @@ pub fn interpolate_chroma(
     }
 }
 
-/// Applies the 6-tap filter specified in Equation 8-246.
-/// Filter coefficients: [1, -5, 20, 20, -5, 1].
-/// This returns the unscaled/unclipped intermediate value.
-#[inline(always)]
-fn filter_6tap(p: &[u8]) -> i32 {
-    let p = &p[..6];
-    (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32) + 20 * (p[3] as i32) - 5 * (p[4] as i32)
-        + (p[5] as i32)
-}
-
-/// Applies the 6-tap filter and clips the result to 8-bit range [0, 255].
-/// Corresponds to Equations 8-243, 8-244, 8-248, 8-249 (final clipping for half-sample values).
-#[inline(always)]
-fn filter_6tap_and_clip(p: &[u8]) -> u8 {
-    let val = filter_6tap(p);
-    ((val + 16) >> 5).clamp(0, 255) as u8
-}
-
-/// Helper to apply vertical 6-tap filter on the interpolation buffer.
-#[inline(always)]
-fn filter_6tap_vertical_and_clip(buffer: &InterpolationBuffer, x: usize, y: usize) -> u8 {
-    let col = x + 2;
-    let p0 = buffer.data[y][col] as i32;
-    let p1 = buffer.data[y + 1][col] as i32;
-    let p2 = buffer.data[y + 2][col] as i32;
-    let p3 = buffer.data[y + 3][col] as i32;
-    let p4 = buffer.data[y + 4][col] as i32;
-    let p5 = buffer.data[y + 5][col] as i32;
-    let val = p0 - 5 * p1 + 20 * p2 + 20 * p3 - 5 * p4 + p5;
-    ((val + 16) >> 5).clamp(0, 255) as u8
-}
-
-/// Computes the 'j' sample (center half-pel) using the intermediate horizontal filter results.
-/// This corresponds to Equation 8-247, but operating on the intermediate values
-/// (which are essentially the result of the first 6-tap filter pass).
-/// Note the shift is >> 10 because it accumulates two >> 5 equivalent scalings (minus one >> 5).
-/// Actually, intermediate is unscaled (sum of 6 taps).
-/// Vertical filter is also sum of 6 taps.
-/// Total weight is 32*32 = 1024. So >> 10 is correct.
-/// Rounding offset is 512 (which is 1024/2).
-#[inline(always)]
-fn get_j_from_intermediate(intermediate: &[[i32; 16]; 21], x: usize, y: usize) -> u8 {
-    let p0 = intermediate[y][x];
-    let p1 = intermediate[y + 1][x];
-    let p2 = intermediate[y + 2][x];
-    let p3 = intermediate[y + 3][x];
-    let p4 = intermediate[y + 4][x];
-    let p5 = intermediate[y + 5][x];
-    let val = p0 - 5 * p1 + 20 * p2 + 20 * p3 - 5 * p4 + p5;
-    ((val + 512) >> 10).clamp(0, 255) as u8
-}
-
-/// Clips an intermediate 6-tap filter result to 8-bit.
-/// Used when we have precomputed horizontal filter results and need 'b' or 's' (horizontal half-pels).
-#[inline(always)]
-fn clip_intermediate(val: i32) -> u8 {
-    ((val + 16) >> 5).clamp(0, 255) as u8
-}
 
 /// Buffer for storing integer pixels with padding for 6-tap filtering.
 /// The size is 21x21 to accommodate a 16x16 block with 2 pixels padding on top/left

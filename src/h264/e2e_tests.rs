@@ -313,3 +313,57 @@ fn test_ffmpeg_baseline() -> Result<(), String> {
 
     Ok(())
 }
+
+#[test]
+fn test_ffmpeg_main() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_main").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    // Generate H.264 main stream using ffmpeg.
+    // -bf 8: Allow up to 8 consecutive B-frames.
+    // -b_strategy 0: Disable adaptive B-frame placement to force the maximum number of B-frames.
+    // -coder 1: Explicitly force CABAC entropy coding.
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "5",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "main",
+        "-pix_fmt",
+        "yuv420p",
+        "-bf",
+        "8",
+        "-b_strategy",
+        "0",
+        "-coder",
+        "1",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    // Generate reference Y4M from the H.264 stream
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+
+    Ok(())
+}

@@ -269,8 +269,8 @@ fn run_ffmpeg(args: &[&str]) -> Result<bool, String> {
 }
 
 #[test]
-fn test_ffmpeg_baseline_testsrc() -> Result<(), String> {
-    let test_dir = TestDir::new("target/tmp_ffmpeg_baseline_testsrc").map_err(|e| e.to_string())?;
+fn test_ffmpeg_baseline() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_baseline").map_err(|e| e.to_string())?;
 
     let h264_path = test_dir.path().join("test_stream.264");
     let y4m_path = test_dir.path().join("output.y4m");
@@ -285,7 +285,9 @@ fn test_ffmpeg_baseline_testsrc() -> Result<(), String> {
         "-f",
         "lavfi",
         "-i",
-        "testsrc=duration=1:size=176x144:rate=15",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "1",
         "-c:v",
         "libx264",
         "-profile:v",

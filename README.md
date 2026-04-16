@@ -4,8 +4,8 @@ A clean-room implementation of an H.264 (AVC) video decoder written in pure Rust
 
 > **🚧 Work in Progress 🚧**
 >
-> This crate is currently in early development. It currently supports **Baseline Profile** only.
-> Advanced features like CABAC, Interlacing, and High Profile tools are not yet implemented.
+> This crate is currently in early development. It currently supports **Baseline** and **Main** (progressive) profiles.
+> Advanced features like Interlacing and High Profile tools are not yet implemented.
 
 ## Features
 
@@ -50,17 +50,17 @@ fn main() {
         // Feed NAL unit to the decoder
         decoder.decode(&nal_data).expect("Decoding error");
 
-        // Retrieve decoded frames (if any are ready)
-        while let Some(frame) = decoder.retrieve_frame() {
-            println!("Decoded frame: {}x{}", frame.planes[0].cfg.width, frame.planes[0].cfg.height);
-            // Process the frame (e.g., save to disk, display, etc.)
+        // Retrieve decoded pictures (if any are ready)
+        while let Some(pic) = decoder.retrieve_picture() {
+            println!("Decoded frame: {}x{}", pic.crop.display_width, pic.crop.display_height);
+            // Process the picture (e.g., save to disk, display, etc.)
         }
     }
     
-    // Flush the decoder to get the remaining frames
+    // Flush the decoder to get the remaining pictures
     decoder.flush().expect("Flush error");
-    while let Some(frame) = decoder.retrieve_frame() {
-        println!("Decoded frame: {}x{}", frame.planes[0].cfg.width, frame.planes[0].cfg.height);
+    while let Some(pic) = decoder.retrieve_picture() {
+        println!("Decoded frame: {}x{}", pic.crop.display_width, pic.crop.display_height);
     }
 }
 ```

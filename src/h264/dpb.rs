@@ -209,18 +209,21 @@ impl DecodedPictureBuffer {
     /// Operations on prior pictures modify the DPB directly; operations that affect the
     /// current picture (IDR marking, MMCO 5/6, short-term default) are applied to `current_pic`.
     ///
-    /// Returns true if MMCO 5 was processed, indicating POC state should be reset.
+    /// Returns a tuple containing:
+    /// - `true` if MMCO 5 was processed (indicating POC state should be reset).
+    /// - A `Vec<Picture>` of any pictures that were flushed and need to be output.
     pub fn mark_prior_references(
         &mut self,
         header: &SliceHeader,
         disposition: ReferenceDisposition,
         sps: &SequenceParameterSet,
         current_pic: &mut DpbPicture,
-    ) -> bool {
+    ) -> (bool, Vec<Picture>) {
         let mut has_mmco5 = false;
+        let mut flushed_pictures = Vec::new();
         match disposition {
             ReferenceDisposition::Idr => {
-                self.mark_idr_prior_references(header, current_pic);
+                flushed_pictures = self.mark_idr_prior_references(header, current_pic);
             }
             ReferenceDisposition::NonIdrReference => {
                 let adaptive_ref_pic_marking_mode_flag = header
@@ -230,7 +233,9 @@ impl DecodedPictureBuffer {
                     .unwrap_or(false);
 
                 if adaptive_ref_pic_marking_mode_flag {
-                    has_mmco5 = self.mark_adaptive_references(header, sps, current_pic);
+                    let (mmco5, flushed) = self.mark_adaptive_references(header, sps, current_pic);
+                    has_mmco5 = mmco5;
+                    flushed_pictures = flushed;
                 } else {
                     self.mark_sliding_window_references(sps);
                 }
@@ -244,16 +249,19 @@ impl DecodedPictureBuffer {
             }
             ReferenceDisposition::NonReference => {}
         }
-        has_mmco5
+        (has_mmco5, flushed_pictures)
     }
 
     /// Section 8.2.5.1 for IDR pictures.
     /// Mark all DPB pictures as unused, optionally flush, and set current_pic marking.
+    /// 
+    /// Returns a `Vec<Picture>` of any pictures that were flushed and need to be output.
     fn mark_idr_prior_references(
         &mut self,
         header: &SliceHeader,
         current_pic: &mut DpbPicture,
-    ) {
+    ) -> Vec<Picture> {
+        let mut output = Vec::new();
         // Mark all pictures currently in the DPB as unused for reference.
         for pic in self.pictures.iter_mut() {
             pic.marking = DpbMarking::UnusedForReference;
@@ -262,6 +270,9 @@ impl DecodedPictureBuffer {
         if let Some(dec_ref_pic_marking) = &header.dec_ref_pic_marking {
             if dec_ref_pic_marking.no_output_of_prior_pics_flag.unwrap_or(false) {
                 // Remove all prior pictures without output.
+                self.pictures.clear();
+            } else {
+                output = self.get_pictures_for_output();
                 self.pictures.clear();
             }
 
@@ -272,25 +283,33 @@ impl DecodedPictureBuffer {
                 current_pic.marking = DpbMarking::UsedForShortTermReference;
                 // max_long_term_frame_idx = -1; (implicit)
             }
+        } else {
+            output = self.get_pictures_for_output();
+            self.pictures.clear();
+            current_pic.marking = DpbMarking::UsedForShortTermReference;
         }
+        output
     }
 
     /// Section 8.2.5.4 Adaptive memory control decoded reference picture marking process.
     ///
-    /// Returns true if MMCO 5 was encountered.
+    /// Returns a tuple containing:
+    /// - `true` if MMCO 5 was encountered.
+    /// - A `Vec<Picture>` of any pictures that were flushed and need to be output.
     fn mark_adaptive_references(
         &mut self,
         header: &SliceHeader,
         sps: &SequenceParameterSet,
         current_pic: &mut DpbPicture,
-    ) -> bool {
+    ) -> (bool, Vec<Picture>) {
         let ops = match &header.dec_ref_pic_marking {
             Some(m) => &m.memory_management_operations,
-            None => return false,
+            None => return (false, vec![]),
         };
 
         let curr_frame_num = header.frame_num as i32;
         let mut has_mmco5 = false;
+        let mut output = Vec::new();
 
         for op in ops {
             match op {
@@ -341,6 +360,8 @@ impl DecodedPictureBuffer {
                     for pic in self.pictures.iter_mut() {
                         pic.marking = DpbMarking::UnusedForReference;
                     }
+                    output.extend(self.get_pictures_for_output());
+                    self.pictures.clear();
                     current_pic.picture.frame_num = 0;
                     current_pic.picture.pic_order_cnt = 0;
                 }
@@ -351,7 +372,7 @@ impl DecodedPictureBuffer {
                 }
             }
         }
-        has_mmco5
+        (has_mmco5, output)
     }
 
     /// Section 8.2.5.3 Sliding window decoded reference picture marking process.
@@ -588,7 +609,7 @@ mod tests {
         header.dec_ref_pic_marking = Some(marking);
 
         let sps = SequenceParameterSet::default();
-        let has_mmco5 = dpb.mark_prior_references(
+        let (has_mmco5, flushed) = dpb.mark_prior_references(
             &header,
             ReferenceDisposition::NonIdrReference,
             &sps,
@@ -596,14 +617,70 @@ mod tests {
         );
 
         assert!(has_mmco5);
-        // All prior pictures should be unused
-        assert!(dpb.pictures[0].marking.is_unused());
-        assert!(dpb.pictures[1].marking.is_unused());
+        assert_eq!(flushed.len(), 2);
+        // All prior pictures should be cleared from DPB
+        assert!(dpb.pictures.is_empty());
 
         // Current should be short-term reference (Section 8.2.5.1 Step 3)
         assert!(current.marking.is_short_term());
         // And reset to 0
         assert_eq!(current.picture.frame_num, 0);
         assert_eq!(current.picture.pic_order_cnt, 0);
+    }
+
+    #[test]
+    fn test_idr_marking_flushes_dpb() {
+        let mut dpb = DecodedPictureBuffer::new();
+        dpb.set_max_size(4);
+
+        dpb.store_picture(create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference));
+        dpb.store_picture(create_dummy_dpb_picture(2, 4, DpbMarking::UsedForLongTermReference(0)));
+        dpb.store_picture(create_dummy_dpb_picture(3, 6, DpbMarking::UnusedForReference)); // Also gets flushed
+
+        let mut current = create_dummy_dpb_picture(4, 8, DpbMarking::UsedForShortTermReference);
+        let mut header = SliceHeader::default();
+        header.frame_num = 4;
+        
+        let sps = SequenceParameterSet::default();
+        let (has_mmco5, flushed) = dpb.mark_prior_references(
+            &header,
+            ReferenceDisposition::Idr,
+            &sps,
+            &mut current,
+        );
+
+        assert!(!has_mmco5);
+        assert_eq!(flushed.len(), 3);
+        assert!(dpb.pictures.is_empty());
+        assert!(current.marking.is_short_term());
+    }
+
+    #[test]
+    fn test_idr_marking_no_output_of_prior_pics() {
+        let mut dpb = DecodedPictureBuffer::new();
+        dpb.set_max_size(4);
+
+        dpb.store_picture(create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference));
+        dpb.store_picture(create_dummy_dpb_picture(2, 4, DpbMarking::UsedForLongTermReference(0)));
+
+        let mut current = create_dummy_dpb_picture(3, 6, DpbMarking::UsedForShortTermReference);
+        let mut header = SliceHeader::default();
+        header.frame_num = 3;
+        let mut marking = DecRefPicMarking::default();
+        marking.no_output_of_prior_pics_flag = Some(true);
+        header.dec_ref_pic_marking = Some(marking);
+        
+        let sps = SequenceParameterSet::default();
+        let (has_mmco5, flushed) = dpb.mark_prior_references(
+            &header,
+            ReferenceDisposition::Idr,
+            &sps,
+            &mut current,
+        );
+
+        assert!(!has_mmco5);
+        assert_eq!(flushed.len(), 0);
+        assert!(dpb.pictures.is_empty());
+        assert!(current.marking.is_short_term());
     }
 }

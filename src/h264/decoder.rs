@@ -246,12 +246,13 @@ impl Decoder {
                 self.save_motion_field(&slice, disposition, &mut dpb_pic);
 
                 // --- C.2.3: Mark references + remove dead pictures (before storage) ---
-                let has_mmco5 = self.dpb.mark_prior_references(
+                let (has_mmco5, flushed) = self.dpb.mark_prior_references(
                     &slice.header,
                     disposition,
                     &slice.sps,
                     &mut dpb_pic,
                 );
+                self.output_frames.extend(flushed.into_iter().map(|p| p.frame));
                 self.dpb.remove_dead_pictures();
 
                 // --- C.2.4: Store current picture (with bumping if DPB is full) ---

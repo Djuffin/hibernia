@@ -261,12 +261,12 @@ impl Decoder {
                     &slice.sps,
                     &mut dpb_pic,
                 );
-                self.output_frames.extend(flushed.into_iter());
+                self.output_frames.extend(flushed);
                 self.dpb.remove_dead_pictures();
 
                 // --- C.2.4: Store current picture (with bumping if DPB is full) ---
                 let pictures = self.dpb.store_picture(dpb_pic);
-                self.output_frames.extend(pictures.into_iter());
+                self.output_frames.extend(pictures);
 
                 self.poc_state.update_mmco5_state(
                     has_mmco5,

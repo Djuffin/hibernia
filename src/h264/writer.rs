@@ -128,12 +128,12 @@ pub fn write_vui_parameters(vui: &VuiParameters, writer: &mut RbspWriter) -> Wri
     }
 
     writer.f(vui.nal_hrd_parameters.is_some())?;
-    if let Some(_) = &vui.nal_hrd_parameters {
+    if vui.nal_hrd_parameters.is_some() {
         todo!("NAL HRD write");
     }
 
     writer.f(vui.vcl_hrd_parameters.is_some())?;
-    if let Some(_) = &vui.vcl_hrd_parameters {
+    if vui.vcl_hrd_parameters.is_some() {
         todo!("VCL HRD write");
     }
 
@@ -498,7 +498,7 @@ pub fn write_slice_header(
         }
     }
 
-    if pps.slice_group.as_ref().map_or(false, |sg| matches!(sg, SliceGroup::Changing { .. })) {
+    if pps.slice_group.as_ref().is_some_and(|sg| matches!(sg, SliceGroup::Changing { .. })) {
         if let Some(SliceGroup::Changing { slice_group_change_rate_minus1, .. }) =
             pps.slice_group.as_ref()
         {

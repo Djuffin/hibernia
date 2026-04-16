@@ -3,6 +3,10 @@
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::needless_late_init)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::large_enum_variant)]
 #![allow(non_snake_case)]
 
 #[macro_use]

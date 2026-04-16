@@ -889,7 +889,7 @@ pub fn parse_slice_header(
         }
     }
 
-    if pps.slice_group.as_ref().map_or(false, |sg| matches!(sg, SliceGroup::Changing { .. })) {
+    if pps.slice_group.as_ref().is_some_and(|sg| matches!(sg, SliceGroup::Changing { .. })) {
         if let Some(SliceGroup::Changing { slice_group_change_rate_minus1, .. }) =
             pps.slice_group.as_ref()
         {
@@ -1585,19 +1585,17 @@ fn derive_spatial_direct(slice: &Slice, mb_addr: MbAddr, _current_motion: &MbMot
     let mut ref_idx_l0: i16 = -1;
     let mut ref_idx_l1: i16 = -1;
 
-    for neighbor in [a, b, c] {
-        if let Some(info) = neighbor {
-            if info.ref_idx_l0 != u8::MAX {
-                let idx = info.ref_idx_l0 as i16;
-                if ref_idx_l0 == -1 || idx < ref_idx_l0 {
-                    ref_idx_l0 = idx;
-                }
+    for info in [a, b, c].into_iter().flatten() {
+        if info.ref_idx_l0 != u8::MAX {
+            let idx = info.ref_idx_l0 as i16;
+            if ref_idx_l0 == -1 || idx < ref_idx_l0 {
+                ref_idx_l0 = idx;
             }
-            if info.ref_idx_l1 != u8::MAX {
-                let idx = info.ref_idx_l1 as i16;
-                if ref_idx_l1 == -1 || idx < ref_idx_l1 {
-                    ref_idx_l1 = idx;
-                }
+        }
+        if info.ref_idx_l1 != u8::MAX {
+            let idx = info.ref_idx_l1 as i16;
+            if ref_idx_l1 == -1 || idx < ref_idx_l1 {
+                ref_idx_l1 = idx;
             }
         }
     }
@@ -1742,19 +1740,17 @@ fn derive_spatial_direct_sub(
     let mut ref_idx_l0: i16 = -1;
     let mut ref_idx_l1: i16 = -1;
 
-    for neighbor in [a, b, c] {
-        if let Some(info) = neighbor {
-            if info.ref_idx_l0 != u8::MAX {
-                let idx = info.ref_idx_l0 as i16;
-                if ref_idx_l0 == -1 || idx < ref_idx_l0 {
-                    ref_idx_l0 = idx;
-                }
+    for info in [a, b, c].into_iter().flatten() {
+        if info.ref_idx_l0 != u8::MAX {
+            let idx = info.ref_idx_l0 as i16;
+            if ref_idx_l0 == -1 || idx < ref_idx_l0 {
+                ref_idx_l0 = idx;
             }
-            if info.ref_idx_l1 != u8::MAX {
-                let idx = info.ref_idx_l1 as i16;
-                if ref_idx_l1 == -1 || idx < ref_idx_l1 {
-                    ref_idx_l1 = idx;
-                }
+        }
+        if info.ref_idx_l1 != u8::MAX {
+            let idx = info.ref_idx_l1 as i16;
+            if ref_idx_l1 == -1 || idx < ref_idx_l1 {
+                ref_idx_l1 = idx;
             }
         }
     }
@@ -1988,8 +1984,8 @@ fn derive_temporal_direct_partition(
     let ref_idx_l0 = map_col_to_list0(slice, col_ref_poc);
 
     // Temporal scaling
-    let td = clip_i32((col_poc - col_ref_poc) as i32, -128, 127);
-    let tb = clip_i32((current_poc - col_ref_poc) as i32, -128, 127);
+    let td = clip_i32(col_poc - col_ref_poc, -128, 127);
+    let tb = clip_i32(current_poc - col_ref_poc, -128, 127);
 
     let (mv_l0, mv_l1) = if td == 0 {
         // No temporal distance in colocated: just copy
@@ -1998,9 +1994,9 @@ fn derive_temporal_direct_partition(
         let tx = (16384 + (td.abs() >> 1)) / td;
         let dist_scale_factor = clip_i32((tb * tx + 32) >> 6, -1024, 1023);
         let mv_l0 = MotionVector {
-            x: clip_i32(((dist_scale_factor as i32) * (mv_col.x as i32) + 128) >> 8, -32768, 32767)
+            x: clip_i32((dist_scale_factor * (mv_col.x as i32) + 128) >> 8, -32768, 32767)
                 as i16,
-            y: clip_i32(((dist_scale_factor as i32) * (mv_col.y as i32) + 128) >> 8, -32768, 32767)
+            y: clip_i32((dist_scale_factor * (mv_col.y as i32) + 128) >> 8, -32768, 32767)
                 as i16,
         };
         let mv_l1 = MotionVector { x: mv_l0.x - mv_col.x, y: mv_l0.y - mv_col.y };
@@ -2323,8 +2319,8 @@ pub fn parse_b_macroblock(
         let mut ref_idx_l0 = [0u8; 4];
         for i in 0..4 {
             let mode = sub_macroblocks[i].sub_mb_type.SubMbPredMode();
-            if mode != MbPredictionMode::Pred_L1 && mode != MbPredictionMode::Direct {
-                if slice.header.num_ref_idx_l0_active_minus1 > 0 {
+            if mode != MbPredictionMode::Pred_L1 && mode != MbPredictionMode::Direct
+                && slice.header.num_ref_idx_l0_active_minus1 > 0 {
                     read_value!(
                         input,
                         ref_idx_l0[i],
@@ -2332,15 +2328,14 @@ pub fn parse_b_macroblock(
                         slice.header.num_ref_idx_l0_active_minus1
                     );
                 }
-            }
         }
 
         // ref_idx_l1 for each 8x8 partition where SubMbPredMode != Pred_L0 and != Direct
         let mut ref_idx_l1 = [0u8; 4];
         for i in 0..4 {
             let mode = sub_macroblocks[i].sub_mb_type.SubMbPredMode();
-            if mode != MbPredictionMode::Pred_L0 && mode != MbPredictionMode::Direct {
-                if slice.header.num_ref_idx_l1_active_minus1 > 0 {
+            if mode != MbPredictionMode::Pred_L0 && mode != MbPredictionMode::Direct
+                && slice.header.num_ref_idx_l1_active_minus1 > 0 {
                     read_value!(
                         input,
                         ref_idx_l1[i],
@@ -2348,7 +2343,6 @@ pub fn parse_b_macroblock(
                         slice.header.num_ref_idx_l1_active_minus1
                     );
                 }
-            }
         }
 
         // mvd_l0 for sub-partitions where mode != Pred_L1 and != Direct
@@ -2398,8 +2392,8 @@ pub fn parse_b_macroblock(
         // ref_idx_l0 for partitions where MbPartPredMode != Pred_L1
         for i in 0..num_mb_part {
             let mode = mb_type.MbPartPredMode(i);
-            if mode != MbPredictionMode::Pred_L1 {
-                if slice.header.num_ref_idx_l0_active_minus1 > 0 {
+            if mode != MbPredictionMode::Pred_L1
+                && slice.header.num_ref_idx_l0_active_minus1 > 0 {
                     read_value!(
                         input,
                         partitions[i].ref_idx_l0,
@@ -2407,14 +2401,13 @@ pub fn parse_b_macroblock(
                         slice.header.num_ref_idx_l0_active_minus1
                     );
                 }
-            }
         }
 
         // ref_idx_l1 for partitions where MbPartPredMode != Pred_L0
         for i in 0..num_mb_part {
             let mode = mb_type.MbPartPredMode(i);
-            if mode != MbPredictionMode::Pred_L0 {
-                if slice.header.num_ref_idx_l1_active_minus1 > 0 {
+            if mode != MbPredictionMode::Pred_L0
+                && slice.header.num_ref_idx_l1_active_minus1 > 0 {
                     read_value!(
                         input,
                         partitions[i].ref_idx_l1,
@@ -2422,7 +2415,6 @@ pub fn parse_b_macroblock(
                         slice.header.num_ref_idx_l1_active_minus1
                     );
                 }
-            }
         }
 
         // mvd_l0 for partitions where MbPartPredMode != Pred_L1

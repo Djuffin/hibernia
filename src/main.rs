@@ -3,6 +3,10 @@
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::needless_late_init)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::large_enum_variant)]
 #![allow(non_snake_case)]
 
 use hibernia::diag;
@@ -30,7 +34,7 @@ fn main() {
     }
 
     let file =
-        fs::File::open(&input_filename).expect(&format!("can't read file: {input_filename}"));
+        fs::File::open(&input_filename).unwrap_or_else(|_| panic!("can't read file: {input_filename}"));
     let reader = BufReader::new(file);
     let nal_parser = NalParser::new(reader);
     let mut decoder = h264::decoder::Decoder::new();

@@ -2,6 +2,7 @@ use std::result;
 
 use log::info;
 use smallvec::SmallVec;
+use wide::i32x4;
 
 use super::{
     macroblock::{self, CodedBlockPattern, MbPredictionMode},
@@ -269,19 +270,44 @@ pub const fn level_scale_4x4(is_inter: bool, m: u8, idx: usize) -> i32 {
 
 // Section 8.5.12.1 Scaling process for residual 4x4 blocks
 pub fn level_scale_4x4_block(block: &mut [i32], is_inter: bool, skip_dc: bool, qp: u8) {
+    debug_assert!(block.len() == 16);
     let m = qp % 6;
-    for (idx, c) in &mut block.iter_mut().enumerate() {
-        let d = if skip_dc && idx == 0 {
-            *c
-        } else if qp >= 24 {
-            // Equation 8-336
-            (*c * level_scale_4x4(is_inter, m, idx)) << (qp / 6 - 4)
-        } else {
-            // Equation 8-337
-            (*c * level_scale_4x4(is_inter, m, idx) + (1 << (3 - qp / 6))) >> (4 - qp / 6)
-        };
-        *c = d;
+
+    let s0 = i32x4::new([level_scale_4x4(is_inter, m, 0), level_scale_4x4(is_inter, m, 1), level_scale_4x4(is_inter, m, 2), level_scale_4x4(is_inter, m, 3)]);
+    let s1 = i32x4::new([level_scale_4x4(is_inter, m, 4), level_scale_4x4(is_inter, m, 5), level_scale_4x4(is_inter, m, 6), level_scale_4x4(is_inter, m, 7)]);
+    let s2 = i32x4::new([level_scale_4x4(is_inter, m, 8), level_scale_4x4(is_inter, m, 9), level_scale_4x4(is_inter, m, 10), level_scale_4x4(is_inter, m, 11)]);
+    let s3 = i32x4::new([level_scale_4x4(is_inter, m, 12), level_scale_4x4(is_inter, m, 13), level_scale_4x4(is_inter, m, 14), level_scale_4x4(is_inter, m, 15)]);
+
+    let mut b0 = i32x4::new(block[0..4].try_into().unwrap());
+    let mut b1 = i32x4::new(block[4..8].try_into().unwrap());
+    let mut b2 = i32x4::new(block[8..12].try_into().unwrap());
+    let mut b3 = i32x4::new(block[12..16].try_into().unwrap());
+
+    let dc_val = block[0];
+
+    if qp >= 24 {
+        let shift = i32x4::splat((qp / 6 - 4) as i32);
+        b0 = (b0 * s0) << shift;
+        b1 = (b1 * s1) << shift;
+        b2 = (b2 * s2) << shift;
+        b3 = (b3 * s3) << shift;
+    } else {
+        let offset = i32x4::splat(1 << (3 - qp / 6));
+        let shift = i32x4::splat((4 - qp / 6) as i32);
+        b0 = (b0 * s0 + offset) >> shift;
+        b1 = (b1 * s1 + offset) >> shift;
+        b2 = (b2 * s2 + offset) >> shift;
+        b3 = (b3 * s3 + offset) >> shift;
     }
+
+    let a0 = b0.to_array();
+    block[0] = if skip_dc { dc_val } else { a0[0] };
+    block[1] = a0[1];
+    block[2] = a0[2];
+    block[3] = a0[3];
+    block[4..8].copy_from_slice(&b1.to_array());
+    block[8..12].copy_from_slice(&b2.to_array());
+    block[12..16].copy_from_slice(&b3.to_array());
 }
 
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16
@@ -400,50 +426,47 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
 pub fn transform_4x4(block: &mut Block4x4) {
     let d = &mut block.samples;
 
-    for i in 0..4 {
-        // (8-338)
-        let e0 = d[i][0] + d[i][2];
-        // (8-339)
-        let e1 = d[i][0] - d[i][2];
-        // (8-340)
-        let e2 = (d[i][1] >> 1) - d[i][3];
-        // (8-341)
-        let e3 = d[i][1] + (d[i][3] >> 1);
+    let row0 = i32x4::new(d[0]);
+    let row1 = i32x4::new(d[1]);
+    let row2 = i32x4::new(d[2]);
+    let row3 = i32x4::new(d[3]);
 
-        // (8-342)
-        d[i][0] = e0 + e3;
-        // (8-343)
-        d[i][1] = e1 + e2;
-        // (8-344)
-        d[i][2] = e1 - e2;
-        // (8-345)
-        d[i][3] = e0 - e3;
-    }
+    let [mut c0, mut c1, mut c2, mut c3] = i32x4::transpose([row0, row1, row2, row3]);
 
-    for j in 0..4 {
-        // (8-346)
-        let g0 = d[0][j] + d[2][j];
-        // (8-347)
-        let g1 = d[0][j] - d[2][j];
-        // (8-348)
-        let g2 = (d[1][j] >> 1) - d[3][j];
-        // (8-349)
-        let g3 = d[1][j] + (d[3][j] >> 1);
+    // First pass (columns are vectors)
+    let e0 = c0 + c2;
+    let e1 = c0 - c2;
+    let e2 = (c1 >> 1) - c3;
+    let e3 = c1 + (c3 >> 1);
 
-        // (8-350)
-        let h0 = g0 + g3;
-        // (8-351)
-        let h1 = g1 + g2;
-        // (8-352)
-        let h2 = g1 - g2;
-        // (8-353)
-        let h3 = g0 - g3;
+    c0 = e0 + e3;
+    c1 = e1 + e2;
+    c2 = e1 - e2;
+    c3 = e0 - e3;
 
-        d[0][j] = (h0 + 32) >> 6;
-        d[1][j] = (h1 + 32) >> 6;
-        d[2][j] = (h2 + 32) >> 6;
-        d[3][j] = (h3 + 32) >> 6;
-    }
+    // Transpose back so columns become rows for the second pass
+    let [r0, r1, r2, r3] = i32x4::transpose([c0, c1, c2, c3]);
+
+    // Second pass (now rows are vectors)
+    let g0 = r0 + r2;
+    let g1 = r0 - r2;
+    let g2 = (r1 >> 1) - r3;
+    let g3 = r1 + (r3 >> 1);
+
+    let h0 = g0 + g3;
+    let h1 = g1 + g2;
+    let h2 = g1 - g2;
+    let h3 = g0 - g3;
+
+    let h0_final: i32x4 = (h0 + i32x4::splat(32)) >> 6;
+    let h1_final: i32x4 = (h1 + i32x4::splat(32)) >> 6;
+    let h2_final: i32x4 = (h2 + i32x4::splat(32)) >> 6;
+    let h3_final: i32x4 = (h3 + i32x4::splat(32)) >> 6;
+
+    d[0] = h0_final.to_array();
+    d[1] = h1_final.to_array();
+    d[2] = h2_final.to_array();
+    d[3] = h3_final.to_array();
 }
 
 #[cfg(test)]

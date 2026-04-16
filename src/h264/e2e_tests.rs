@@ -17,14 +17,17 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
         let mut writer_opt = Some(io::BufWriter::new(&mut decoding_output));
         let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<&mut Vec<u8>>>> = None;
 
-        let mut process_frame = |frame: h264::decoder::VideoFrame| {
+        let mut process_frame = |pic: h264::decoder::Picture| {
+            let frame = pic.frame;
+            let display_width = pic.crop.display_width;
+            let display_height = pic.crop.display_height;
+            let crop_left = pic.crop.crop_left;
+            let crop_top = pic.crop.crop_top;
+
             if encoder_opt.is_none() {
-                let y_plane = &frame.planes[0];
-                let w = y_plane.cfg.width as usize;
-                let h = y_plane.cfg.height as usize;
                 if let Some(writer) = writer_opt.take() {
                     encoder_opt = Some(
-                        y4m::encode(w, h, y4m::Ratio { num: 15, den: 1 })
+                        y4m::encode(display_width, display_height, y4m::Ratio { num: 15, den: 1 })
                             .with_colorspace(y4m::Colorspace::C420)
                             .write_header(writer)
                             .unwrap(),
@@ -38,12 +41,24 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
             }
 
             for (i, plane) in frame.planes.iter().enumerate() {
-                let data_size = plane.cfg.width * plane.cfg.height;
+                let (cw, ch, cx, cy) = if i == 0 {
+                    (display_width, display_height, crop_left, crop_top)
+                } else {
+                    (display_width / 2, display_height / 2, crop_left / 2, crop_top / 2)
+                };
+
+                let data_size = cw * ch;
                 let data: &mut Vec<u8> = &mut planes[i];
                 if data.len() != data_size {
                     data.resize(data_size, 0);
                 }
-                plane.copy_to_raw_u8(data, plane.cfg.width, 1);
+
+                for row in 0..ch {
+                    let src_offset = (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
+                    let dst_offset = row * cw;
+                    data[dst_offset..dst_offset + cw]
+                        .copy_from_slice(&plane.data[src_offset..src_offset + cw]);
+                }
             }
 
             let yuv_frame = y4m::Frame::new(
@@ -64,14 +79,14 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
             })?;
             nal_idx += 1;
 
-            while let Some(frame) = decoder.retrieve_frame() {
-                process_frame(frame);
+            while let Some(pic) = decoder.retrieve_frame() {
+                process_frame(pic);
             }
         }
 
         decoder.flush().map_err(|e| format!("Flush error: {e:?}"))?;
-        while let Some(frame) = decoder.retrieve_frame() {
-            process_frame(frame);
+        while let Some(pic) = decoder.retrieve_frame() {
+            process_frame(pic);
         }
     }
 
@@ -549,6 +564,46 @@ fn test_ffmpeg_dpb_flush_idr() -> Result<(), String> {
         "5",
         "-bf",
         "3",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_cropping() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_cropping").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=100x100:rate=15",
+        "-t",
+        "1",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "main",
+        "-pix_fmt",
+        "yuv420p",
         h264_path_str,
     ])? {
         return Ok(());

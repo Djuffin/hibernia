@@ -183,16 +183,16 @@ fn test_generate_and_decode_video() {
         let nal_data = nal_result.unwrap();
         decoder.decode(&nal_data).unwrap();
 
-        while let Some(frame) = decoder.retrieve_frame() {
+        while let Some(pic) = decoder.retrieve_frame() {
             frames_decoded += 1;
-            check_frame(frame, frames_decoded, false);
+            check_frame(pic.frame, frames_decoded, false);
         }
     }
 
     decoder.flush().unwrap();
-    while let Some(frame) = decoder.retrieve_frame() {
+    while let Some(pic) = decoder.retrieve_frame() {
         frames_decoded += 1;
-        check_frame(frame, frames_decoded, true);
+        check_frame(pic.frame, frames_decoded, true);
     }
 
     assert_eq!(frames_decoded, 5);

@@ -157,6 +157,7 @@ impl DecodedPictureBuffer {
                 frame_num: self.pictures[idx].picture.frame_num,
                 pic_order_cnt: self.pictures[idx].picture.pic_order_cnt,
                 motion_field: None,
+                crop: self.pictures[idx].picture.crop.clone(),
             };
             self.pictures[idx].needed_for_output = false;
             Some(pic)
@@ -460,6 +461,12 @@ mod tests {
             frame_num,
             pic_order_cnt,
             motion_field: None,
+            crop: crate::h264::sps::CropDimensions {
+                display_width: 16,
+                display_height: 16,
+                crop_left: 0,
+                crop_top: 0,
+            },
         }
     }
 

@@ -38,6 +38,7 @@ pub struct Picture {
     /// Per-MB motion field, stored after decoding for use in temporal direct prediction.
     /// Indexed by mb_addr. Only populated for reference pictures.
     pub motion_field: Option<MotionFieldStorage>,
+    pub crop: sps::CropDimensions,
 }
 
 /// Stores motion information from a decoded picture, needed for temporal direct prediction in B slices.
@@ -136,14 +137,14 @@ impl DecoderContext {
 /// let _ = decoder.decode(&slice);
 ///
 /// // 3. Retrieve decoded frames (if any are ready)
-/// if let Some(frame) = decoder.retrieve_frame() {
-///     println!("Decoded {}x{} frame", frame.planes[0].cfg.width, frame.planes[0].cfg.height);
+/// if let Some(pic) = decoder.retrieve_frame() {
+///     println!("Decoded {}x{} frame", pic.crop.display_width, pic.crop.display_height);
 /// }
 /// ```
 pub struct Decoder {
     context: DecoderContext,
     dpb: DecodedPictureBuffer,
-    output_frames: VecDeque<VideoFrame>,
+    output_frames: VecDeque<Picture>,
     interpolation_buffer: InterpolationBuffer,
     poc_state: PocState,
 }
@@ -216,7 +217,15 @@ impl Decoder {
 
                 let pic_order_cnt = self.poc_state.calculate_poc(&slice, disposition);
 
-                let pic = Picture { frame, frame_num: slice.header.frame_num, pic_order_cnt, motion_field: None };
+                let crop_dims = slice.sps.crop_dimensions();
+
+                let pic = Picture {
+                    frame,
+                    frame_num: slice.header.frame_num,
+                    pic_order_cnt,
+                    motion_field: None,
+                    crop: crop_dims,
+                };
                 let mut dpb_pic = DpbPicture {
                     picture: pic,
                     marking: if nal.nal_ref_idc != 0 {
@@ -252,12 +261,12 @@ impl Decoder {
                     &slice.sps,
                     &mut dpb_pic,
                 );
-                self.output_frames.extend(flushed.into_iter().map(|p| p.frame));
+                self.output_frames.extend(flushed.into_iter());
                 self.dpb.remove_dead_pictures();
 
                 // --- C.2.4: Store current picture (with bumping if DPB is full) ---
                 let pictures = self.dpb.store_picture(dpb_pic);
-                self.output_frames.extend(pictures.into_iter().map(|p| p.frame));
+                self.output_frames.extend(pictures.into_iter());
 
                 self.poc_state.update_mmco5_state(
                     has_mmco5,
@@ -341,9 +350,9 @@ impl Decoder {
         Ok(())
     }
 
-    /// Retrieves the next available frame from the decoder's output queue.
-    /// Returns `Some(VideoFrame)` if a frame is available, or `None` if the queue is empty.
-    pub fn retrieve_frame(&mut self) -> Option<VideoFrame> {
+    /// Retrieves the next available picture from the decoder's output queue.
+    /// Returns `Some(Picture)` if a picture is available, or `None` if the queue is empty.
+    pub fn retrieve_frame(&mut self) -> Option<Picture> {
         self.output_frames.pop_front()
     }
 
@@ -354,7 +363,7 @@ impl Decoder {
     /// Call `retrieve_frame` repeatedly after flushing until it returns `None`.
     pub fn flush(&mut self) -> Result<(), DecodingError> {
         let pictures = self.dpb.flush();
-        self.output_frames.extend(pictures.into_iter().map(|p| p.picture.frame));
+        self.output_frames.extend(pictures.into_iter().map(|p| p.picture));
         Ok(())
     }
 

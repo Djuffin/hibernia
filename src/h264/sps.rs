@@ -113,6 +113,14 @@ pub struct SequenceParameterSet {
     pub vui_parameters: Option<VuiParameters>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CropDimensions {
+    pub display_width: usize,
+    pub display_height: usize,
+    pub crop_left: usize,
+    pub crop_top: usize,
+}
+
 #[allow(non_snake_case)]
 impl SequenceParameterSet {
     pub fn bits_in_frame_num(&self) -> u8 {
@@ -148,6 +156,43 @@ impl SequenceParameterSet {
     }
 
     pub fn pic_size_in_mbs(&self) -> usize {
-        self.pic_height_in_mbs() * self.pic_width_in_mbs()
+        self.pic_width_in_mbs() * self.pic_height_in_mbs()
+    }
+
+    /// Returns `CropDimensions`
+    pub fn crop_dimensions(&self) -> CropDimensions {
+        let (crop_left, crop_right, crop_top, crop_bottom) = if let Some(crop) = &self.frame_cropping {
+            let sub_width_c = if self.ChromaArrayType() == ChromaFormat::Monochrome {
+                1
+            } else {
+                1 << self.ChromaArrayType().get_chroma_shift().width
+            };
+            let sub_height_c = if self.ChromaArrayType() == ChromaFormat::Monochrome {
+                1
+            } else {
+                1 << self.ChromaArrayType().get_chroma_shift().height
+            };
+            let crop_unit_x = sub_width_c;
+            let crop_unit_y = sub_height_c * (2 - self.frame_mbs_only_flag as usize);
+
+            (
+                crop.left as usize * crop_unit_x,
+                crop.right as usize * crop_unit_x,
+                crop.top as usize * crop_unit_y,
+                crop.bottom as usize * crop_unit_y,
+            )
+        } else {
+            (0, 0, 0, 0)
+        };
+
+        let display_width = self.pic_width() - crop_left - crop_right;
+        let display_height = self.pic_height() - crop_top - crop_bottom;
+
+        CropDimensions {
+            display_width,
+            display_height,
+            crop_left,
+            crop_top,
+        }
     }
 }

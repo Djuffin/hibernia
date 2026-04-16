@@ -42,14 +42,17 @@ fn main() {
         let mut writer_opt = Some(io::BufWriter::new(&mut decoding_output));
         let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<&mut Vec<u8>>>> = None;
 
-        let mut process_frame = |frame: h264::decoder::VideoFrame| {
+        let mut process_frame = |pic: h264::decoder::Picture| {
+            let frame = pic.frame;
+            let display_width = pic.crop.display_width;
+            let display_height = pic.crop.display_height;
+            let crop_left = pic.crop.crop_left;
+            let crop_top = pic.crop.crop_top;
+
             if encoder_opt.is_none() {
-                let y_plane = &frame.planes[0];
-                let w = y_plane.cfg.width;
-                let h = y_plane.cfg.height;
                 if let Some(writer) = writer_opt.take() {
                     encoder_opt = Some(
-                        y4m::encode(w, h, y4m::Ratio { num: 15, den: 1 })
+                        y4m::encode(display_width, display_height, y4m::Ratio { num: 15, den: 1 })
                             .with_colorspace(y4m::Colorspace::C420)
                             .write_header(writer)
                             .unwrap(),
@@ -59,7 +62,7 @@ fn main() {
 
             info!(
                 "Writing frame #{} {} x {} to y4m",
-                frame_count, frame.planes[0].cfg.width, frame.planes[0].cfg.height
+                frame_count, display_width, display_height
             );
             frame_count += 1;
 
@@ -69,12 +72,24 @@ fn main() {
             }
 
             for (i, plane) in frame.planes.iter().enumerate() {
-                let data_size = plane.cfg.width * plane.cfg.height;
+                let (cw, ch, cx, cy) = if i == 0 {
+                    (display_width, display_height, crop_left, crop_top)
+                } else {
+                    (display_width / 2, display_height / 2, crop_left / 2, crop_top / 2)
+                };
+
+                let data_size = cw * ch;
                 let data = &mut planes[i];
                 if data.len() != data_size {
                     data.resize(data_size, 0);
                 }
-                plane.copy_to_raw_u8(data, plane.cfg.width, 1);
+
+                for row in 0..ch {
+                    let src_offset = (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
+                    let dst_offset = row * cw;
+                    data[dst_offset..dst_offset + cw]
+                        .copy_from_slice(&plane.data[src_offset..src_offset + cw]);
+                }
             }
 
             let yuv_frame = y4m::Frame::new(
@@ -91,14 +106,14 @@ fn main() {
             let nal_data = nal_result.expect("Error parsing NAL");
             decoder.decode(&nal_data).expect("Decoding error");
 
-            while let Some(frame) = decoder.retrieve_frame() {
-                process_frame(frame);
+            while let Some(pic) = decoder.retrieve_frame() {
+                process_frame(pic);
             }
         }
 
         decoder.flush().expect("Flush error");
-        while let Some(frame) = decoder.retrieve_frame() {
-            process_frame(frame);
+        while let Some(pic) = decoder.retrieve_frame() {
+            process_frame(pic);
         }
     }
     fs::write("output.y4m", decoding_output.as_slice()).expect("can't save decoding result");

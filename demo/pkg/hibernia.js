@@ -56,6 +56,34 @@ export class WasmFrame {
     /**
      * @returns {number}
      */
+    crop_left() {
+        const ret = wasm.wasmframe_crop_left(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    crop_top() {
+        const ret = wasm.wasmframe_crop_top(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    display_height() {
+        const ret = wasm.wasmframe_display_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    display_width() {
+        const ret = wasm.wasmframe_display_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
     height() {
         const ret = wasm.wasmframe_height(this.__wbg_ptr);
         return ret >>> 0;

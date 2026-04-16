@@ -244,6 +244,11 @@
         const vLen = wasmFrame.v_len();
         const vStride = wasmFrame.v_stride();
 
+        const cropLeft = wasmFrame.crop_left();
+        const cropTop = wasmFrame.crop_top();
+        const displayWidth = wasmFrame.display_width();
+        const displayHeight = wasmFrame.display_height();
+
         // Need to extract the memory buffer.
         // `wasmFrame` methods return pointers into the WASM linear memory.
         const memory = wasmInstance.memory;
@@ -265,6 +270,14 @@
             codedWidth: width,
             codedHeight: height,
             timestamp: timestamp_us,
+            visibleRect: {
+                x: cropLeft,
+                y: cropTop,
+                width: displayWidth,
+                height: displayHeight
+            },
+            displayWidth: displayWidth,
+            displayHeight: displayHeight,
             layout: [
                 { offset: 0, stride: yStride },
                 { offset: yLen, stride: uStride },

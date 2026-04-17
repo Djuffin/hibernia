@@ -16,6 +16,7 @@ use std::env;
 use std::fmt::Error;
 use std::fs;
 use std::io;
+use std::time::Instant;
 
 use hibernia::h264::nal_parser::NalParser;
 use log::info;
@@ -24,6 +25,7 @@ use v_frame::plane::PlaneOffset;
 
 fn main() {
     diag::init(false);
+    let start = Instant::now();
     let args: Vec<String> = env::args().collect();
     let input_filename: String;
     if args.len() > 1 {
@@ -39,12 +41,12 @@ fn main() {
     let nal_parser = NalParser::new(reader);
     let mut decoder = h264::decoder::Decoder::new();
 
-    let mut decoding_output = Vec::<u8>::new();
     let mut frame_count = 0;
 
     {
-        let mut writer_opt = Some(io::BufWriter::new(&mut decoding_output));
-        let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<&mut Vec<u8>>>> = None;
+        let output_file = fs::File::create("output.y4m").expect("can't create output.y4m");
+        let mut writer_opt = Some(io::BufWriter::new(output_file));
+        let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<fs::File>>> = None;
 
         let mut process_frame = |pic: h264::decoder::Picture| {
             let frame = pic.frame;
@@ -118,5 +120,8 @@ fn main() {
             process_frame(pic);
         }
     }
-    fs::write("output.y4m", decoding_output.as_slice()).expect("can't save decoding result");
+
+    let elapsed = start.elapsed();
+    let fps = frame_count as f64 / elapsed.as_secs_f64();
+    println!("Decoded {frame_count} frames in {elapsed:.3?} ({fps:.2} fps)");
 }

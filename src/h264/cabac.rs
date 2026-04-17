@@ -721,7 +721,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.3.2.3 Bypass decoding process
-    #[inline]
+    #[inline(always)]
     pub fn decode_bypass(&mut self) -> ParseResult<u8> {
         self.offset = (self.offset << 1) | self.read_bits(1)?;
 
@@ -1834,10 +1834,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             return Ok(false);
         }
 
-        // 2. significant_coeff_flag and last_significant_coeff_flag
+        // 2. significant_coeff_flag / last_significant_coeff_flag.
         let mut significant_coeff_flag = [false; 64];
         let mut last_significant_coeff_flag = [false; 64];
         let mut num_coeff = 0;
+        debug_assert!(max_num_coeff <= 16);
+        let mut sig_positions = [0u8; 16];
+        let mut num_coeff: usize = 0;
 
         let sig_props =
             get_syntax_element_properties(SyntaxElement::SignificantCoeffFlag(ctx_block_cat));
@@ -1847,103 +1850,96 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             get_syntax_element_properties(SyntaxElement::LastSignificantCoeffFlag(ctx_block_cat));
         let ctx_idx_offset_last = last_props.ctx_idx_offset as usize;
 
-        let mut last_scan_pos = -1;
-
         for i in 0..max_num_coeff {
             if i == max_num_coeff - 1 {
-                significant_coeff_flag[i] = true;
-                last_scan_pos = i as i32;
+                sig_positions[num_coeff] = i as u8;
                 num_coeff += 1;
                 break;
             }
 
             let ctx_idx_inc_sig = Self::get_ctx_idx_inc_sig_coeff_flag(ctx_block_cat, i);
             let sig = self.decode_bin(ctx_idx_offset_sig + ctx_idx_inc_sig)? == 1;
-            significant_coeff_flag[i] = sig;
             trace!("parse_residual_block_cabac sig_coeff[{}]={}", i, sig);
             if sig {
+                sig_positions[num_coeff] = i as u8;
                 num_coeff += 1;
 
                 let ctx_idx_inc_last = Self::get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat, i);
                 let last = self.decode_bin(ctx_idx_offset_last + ctx_idx_inc_last)? == 1;
-                last_significant_coeff_flag[i] = last;
                 trace!("parse_residual_block_cabac last_sig_coeff[{}]={}", i, last);
                 if last {
-                    last_scan_pos = i as i32;
                     break;
                 }
             }
         }
 
-        // 3. coeff_abs_level_minus1
+        // 3. coeff_abs_level_minus1.
+        //
+        // Resolve the destination slice in `residual` once, then write each
+        // decoded level straight into its scan position. The caller built
+        // `residual` via `Residual::default()`, so positions we don't touch
+        // stay 0 — no scratch buffer, no final `copy_from_slice`.
+        let levels_dest: &mut [i32] = match ctx_block_cat {
+            0 => residual.dc_level16x16.as_mut_slice(),
+            1 => residual.ac_level16x16[blk_idx].as_mut_slice(),
+            2 => residual.luma_level4x4[blk_idx].as_mut_slice(),
+            3 => {
+                if comp_idx == 0 {
+                    residual.chroma_cb_dc_level.as_mut_slice()
+                } else {
+                    residual.chroma_cr_dc_level.as_mut_slice()
+                }
+            }
+            4 => {
+                if comp_idx == 0 {
+                    residual.chroma_cb_ac_level[blk_idx].as_mut_slice()
+                } else {
+                    residual.chroma_cr_ac_level[blk_idx].as_mut_slice()
+                }
+            }
+            _ => return Ok(true),
+        };
+
         let mut num_decod_abs_level_eq1 = 0;
         let mut num_decod_abs_level_gt1 = 0;
-        let mut coeff_level = [0i32; 64];
 
         let abs_props =
             get_syntax_element_properties(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat));
         let ctx_idx_offset_abs = abs_props.ctx_idx_offset as usize;
 
-        // Reverse scan
-        for i in (0..=last_scan_pos as usize).rev() {
-            if significant_coeff_flag[i] {
-                let val_minus1 = self.parse_abs_level_minus1(
-                    ctx_block_cat,
-                    ctx_idx_offset_abs,
-                    num_decod_abs_level_gt1,
-                    num_decod_abs_level_eq1,
-                    &abs_props,
-                )?;
-                let abs_level = (val_minus1 + 1) as i32;
+        for &pos in sig_positions[..num_coeff].iter().rev() {
+            let pos = pos as usize;
+            let val_minus1 = self.parse_abs_level_minus1(
+                ctx_block_cat,
+                ctx_idx_offset_abs,
+                num_decod_abs_level_gt1,
+                num_decod_abs_level_eq1,
+                &abs_props,
+            )?;
+            let abs_level = (val_minus1 + 1) as i32;
 
-                // Update counters
-                if abs_level == 1 {
-                    num_decod_abs_level_eq1 += 1;
-                } else {
-                    num_decod_abs_level_gt1 += 1;
-                }
-
-                // Sign
-                let sign = self.decode_bypass()?;
-                let level = if sign == 1 { -abs_level } else { abs_level };
-                trace!("parse_residual_block_cabac level[{}]={}", i, level);
-                coeff_level[i] = level;
+            if abs_level == 1 {
+                num_decod_abs_level_eq1 += 1;
+            } else {
+                num_decod_abs_level_gt1 += 1;
             }
+
+            let sign = self.decode_bypass()?;
+            let level = if sign == 1 { -abs_level } else { abs_level };
+            trace!("parse_residual_block_cabac level[{}]={}", pos, level);
+            levels_dest[pos] = level;
         }
 
-        // Store coefficients in Residual
+        // Store num_coeff (nC) for categories that track it.
         match ctx_block_cat {
-            0 => {
-                // Luma DC (16 coeffs)
-                residual.dc_level16x16.copy_from_slice(&coeff_level[..16]);
-            }
-            1 => {
-                // Luma AC (15 coeffs)
-                residual.ac_level16x16[blk_idx].copy_from_slice(&coeff_level[0..15]);
-                residual.ac_level16x16_nc[blk_idx] = num_coeff as u8;
-            }
-            2 => {
-                // Luma 4x4 (16 coeffs)
-                residual.luma_level4x4[blk_idx].copy_from_slice(&coeff_level[0..16]);
-                residual.luma_level4x4_nc[blk_idx] = num_coeff as u8;
-            }
-            3 => {
-                // Chroma DC Cb/Cr
-                let levels = residual.get_dc_levels_for(if comp_idx == 0 {
-                    super::ColorPlane::Cb
-                } else {
-                    super::ColorPlane::Cr
-                });
-                levels.copy_from_slice(&coeff_level[0..4]);
-            }
+            1 => residual.ac_level16x16_nc[blk_idx] = num_coeff as u8,
+            2 => residual.luma_level4x4_nc[blk_idx] = num_coeff as u8,
             4 => {
-                // Chroma AC Cb/Cr
-                let (levels, nc) = residual.get_ac_levels_for(
-                    blk_idx as u8,
-                    if comp_idx == 0 { super::ColorPlane::Cb } else { super::ColorPlane::Cr },
-                );
-                levels.copy_from_slice(&coeff_level[0..15]);
-                *nc = num_coeff as u8;
+                if comp_idx == 0 {
+                    residual.chroma_cb_level4x4_nc[blk_idx] = num_coeff as u8;
+                } else {
+                    residual.chroma_cr_level4x4_nc[blk_idx] = num_coeff as u8;
+                }
             }
             _ => {}
         }

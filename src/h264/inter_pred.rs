@@ -412,8 +412,8 @@ pub fn interpolate_chroma(
     let y_int = (mb_y as i32) + (blk_y as i32) + (mv.y >> 3) as i32;
 
     // Fractional part (0..7), representing 1/8th chroma sample intervals
-    let x_frac = (mv.x & 7) as i32;
-    let y_frac = (mv.y & 7) as i32;
+    let x_frac = (mv.x & 7) as i16;
+    let y_frac = (mv.y & 7) as i16;
 
     let plane_width = ref_plane.cfg.width as i32;
     let plane_height = ref_plane.cfg.height as i32;
@@ -422,34 +422,92 @@ pub fn interpolate_chroma(
         && y_int >= 0
         && y_int + (height as i32) < plane_height
     {
-        // Equation 8-270: Bilinear interpolation
-        // The weights (8-xFrac) and xFrac are used for linear interpolation.
-        let w00 = (8 - x_frac) * (8 - y_frac);
-        let w10 = x_frac * (8 - y_frac);
-        let w01 = (8 - x_frac) * y_frac;
-        let w11 = x_frac * y_frac;
+        macro_rules! interpolate_chroma_impl {
+            ($w:expr) => {
+                match (x_frac, y_frac) {
+                    (0, 0) => {
+                        for y in 0..height as usize {
+                            let row = ref_plane.row((y_int + y as i32) as isize);
+                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
+                            let x_start = x_int as usize;
+                            d.copy_from_slice(&row[x_start..x_start + $w]);
+                        }
+                    }
+                    (_, 0) => {
+                        let w00 = 8 - x_frac;
+                        let w10 = x_frac;
+                        let mut row = ref_plane.row(y_int as isize);
+                        for y in 0..height as usize {
+                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
+                            let x_start = x_int as usize;
+                            let mut val_a = row[x_start] as i16;
+                            for x in 0..$w {
+                                let val_b = row[x_start + x + 1] as i16;
+                                d[x] = ((w00 * val_a + w10 * val_b + 4) >> 3) as u8;
+                                val_a = val_b;
+                            }
+                            if y + 1 < height as usize {
+                                row = ref_plane.row((y_int + y as i32 + 1) as isize);
+                            }
+                        }
+                    }
+                    (0, _) => {
+                        let w00 = 8 - y_frac;
+                        let w01 = y_frac;
+                        let mut row = ref_plane.row(y_int as isize);
+                        for y in 0..height as usize {
+                            let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
+                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
+                            let x_start = x_int as usize;
+                            for x in 0..$w {
+                                let val_a = row[x_start + x] as i16;
+                                let val_c = row1[x_start + x] as i16;
+                                d[x] = ((w00 * val_a + w01 * val_c + 4) >> 3) as u8;
+                            }
+                            row = row1;
+                        }
+                    }
+                    _ => {
+                        // Equation 8-270: Bilinear interpolation
+                        // The weights (8-xFrac) and xFrac are used for linear interpolation.
+                        let w00 = (8 - x_frac) * (8 - y_frac);
+                        let w10 = x_frac * (8 - y_frac);
+                        let w01 = (8 - x_frac) * y_frac;
+                        let w11 = x_frac * y_frac;
 
-        for y in 0..height as usize {
-            let row = ref_plane.row((y_int + y as i32) as isize);
-            let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
-            let d = &mut dst[y * dst_stride..y * dst_stride + width as usize];
-            let x_start = x_int as usize;
+                        let mut row = ref_plane.row(y_int as isize);
+                        for y in 0..height as usize {
+                            let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
+                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
+                            let x_start = x_int as usize;
 
-            let mut val_a = row[x_start] as i32;
-            let mut val_c = row1[x_start] as i32;
+                            let mut val_a = row[x_start] as i16;
+                            let mut val_c = row1[x_start] as i16;
 
-            for x in 0..width as usize {
-                let val_b = row[x_start + x + 1] as i32;
-                let val_d = row1[x_start + x + 1] as i32;
+                            for x in 0..$w {
+                                let val_b = row[x_start + x + 1] as i16;
+                                let val_d = row1[x_start + x + 1] as i16;
 
-                // Equation 8-270:
-                // predPartLXC[x, y] = ( (8-xFrac)*(8-yFrac)*A + xFrac*(8-yFrac)*B + ... + 32 ) >> 6
-                let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
-                d[x] = prediction as u8;
+                                // Equation 8-270:
+                                // predPartLXC[x, y] = ( (8-xFrac)*(8-yFrac)*A + xFrac*(8-yFrac)*B + ... + 32 ) >> 6
+                                let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
+                                d[x] = prediction as u8;
 
-                val_a = val_b;
-                val_c = val_d;
-            }
+                                val_a = val_b;
+                                val_c = val_d;
+                            }
+                            row = row1;
+                        }
+                    }
+                }
+            };
+        }
+
+        match width {
+            2 => interpolate_chroma_impl!(2),
+            4 => interpolate_chroma_impl!(4),
+            8 => interpolate_chroma_impl!(8),
+            _ => interpolate_chroma_impl!(width as usize),
         }
     } else {
         // Handle boundary conditions by clamping sample coordinates
@@ -465,14 +523,14 @@ pub fn interpolate_chroma(
             let row1 = ref_plane.row(cy1 as isize);
 
             let cx_start = x_int.clamp(0, plane_width - 1);
-            let mut val_a = row[cx_start as usize] as i32;
-            let mut val_c = row1[cx_start as usize] as i32;
+            let mut val_a = row[cx_start as usize] as i16;
+            let mut val_c = row1[cx_start as usize] as i16;
 
             for x in 0..width as usize {
                 let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
 
-                let val_b = row[cx1 as usize] as i32;
-                let val_d = row1[cx1 as usize] as i32;
+                let val_b = row[cx1 as usize] as i16;
+                let val_d = row1[cx1 as usize] as i16;
 
                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
 

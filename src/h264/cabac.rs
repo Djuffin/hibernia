@@ -635,7 +635,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             return Ok(final_val);
         }
 
-        // Suffix: EGk
+        // Suffix: EGk. The outer unary must be decoded one bin at a time
+        // because we stop on the first 0, but the fixed-length `k`-bit tail
+        // can be decoded in one batched pass through the bypass state
+        // machine.
         let mut suffix_val = 0;
         let mut k = k_val;
         loop {
@@ -644,11 +647,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 suffix_val += 1 << k;
                 k += 1;
             } else {
-                let mut rem = 0;
-                for _ in 0..k {
-                    rem = (rem << 1) | self.decode_bypass()? as u32;
-                }
-                suffix_val += rem;
+                suffix_val += self.decode_bypass_bits(k)?;
                 break;
             }
         }
@@ -723,6 +722,37 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         trace!("decode_bypass bin={}", bin_val);
         Ok(bin_val)
+    }
+
+    // Decode `n` consecutive bypass-coded bins in one call. Returns them
+    // packed MSB-first: bit `n-1` is the first decoded bin, bit `0` the
+    // last. Amortises the bit-buffer read across all `n` bins instead of
+    // paying one `read_bits(1)` per bin. Intended for the fixed-length
+    // suffix in EGk (9.3.2.3).
+    //
+    // Caller must pass n <= 32. n == 0 is a no-op that returns 0.
+    #[inline]
+    fn decode_bypass_bits(&mut self, n: u32) -> ParseResult<u32> {
+        if n == 0 {
+            return Ok(0);
+        }
+        debug_assert!(n <= 32);
+        // Left-justify the `n` stream bits to the top of a u32 so we can
+        // extract the next bin with a constant `>> 31` on each iteration
+        // rather than a variable shift.
+        let mut remaining = self.read_bits(n)? << (32 - n);
+        let mut result = 0u32;
+        for _ in 0..n {
+            let b = remaining >> 31;
+            remaining <<= 1;
+            self.offset = (self.offset << 1) | b;
+            result <<= 1;
+            if self.offset >= self.range {
+                result |= 1;
+                self.offset -= self.range;
+            }
+        }
+        Ok(result)
     }
 
     // 9.3.3.2.4 Decoding process for binary decisions before termination
@@ -3173,6 +3203,44 @@ mod tests {
             got_bits,
             ref_bits[..got_bits.len()],
             "bit buffer decoded a different bit sequence than reader.u(1)*N"
+        );
+    }
+
+    /// `decode_bypass_bits(n)` must produce the same bin sequence as calling
+    /// `decode_bypass()` in a loop `n` times — both the returned bits AND
+    /// the final `offset` state must match.
+    #[test]
+    fn test_decode_bypass_bits_matches_loop() {
+        let data = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
+
+        // Helper to spin up a CabacContext with a primed decoding engine.
+        fn make_ctx<'a, 'b>(
+            reader: &'a mut BitReader<'b>,
+            slice: &Slice,
+        ) -> CabacContext<'a, 'b> {
+            CabacContext::new(reader, slice).expect("init")
+        }
+
+        let slice = make_dummy_slice();
+
+        // Reference: call decode_bypass() n times, packing MSB-first.
+        let mut ref_reader = BitReader::new(&data);
+        let mut ref_ctx = make_ctx(&mut ref_reader, &slice);
+        let n: u32 = 7;
+        let mut ref_packed = 0u32;
+        for _ in 0..n {
+            ref_packed = (ref_packed << 1) | u32::from(ref_ctx.decode_bypass().unwrap());
+        }
+
+        // Under test.
+        let mut test_reader = BitReader::new(&data);
+        let mut test_ctx = make_ctx(&mut test_reader, &slice);
+        let got_packed = test_ctx.decode_bypass_bits(n).unwrap();
+
+        assert_eq!(got_packed, ref_packed, "bins differ");
+        assert_eq!(
+            test_ctx.offset, ref_ctx.offset,
+            "offset state diverged between batched and per-bit bypass"
         );
     }
 }

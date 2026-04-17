@@ -9,6 +9,7 @@ readme = "README.md"
 repository = "https://github.com/Djuffin/hibernia"
 keywords = ["video", "h264", "avc", "decoder"]
 categories = ["multimedia::video"]
+default-run = "hibernia"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

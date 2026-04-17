@@ -567,6 +567,19 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         ctx: CtxIncParams,
     ) -> ParseResult<u32> {
         let props = get_syntax_element_properties(se);
+        self.parse_truncated_unary_bin_with(se, c_max_override, ctx, &props)
+    }
+
+    /// Same as [`parse_truncated_unary_bin`] but takes a prefetched table entry,
+    /// avoiding the per-call lookup. Used by per-coefficient hot paths where the
+    /// caller has already resolved the entry once for the whole block.
+    pub fn parse_truncated_unary_bin_with(
+        &mut self,
+        se: SyntaxElement,
+        c_max_override: Option<u32>,
+        ctx: CtxIncParams,
+        props: &CabacTableEntry,
+    ) -> ParseResult<u32> {
         let max_bin_idx_ctx = props.max_bin_idx_ctx;
         let ctx_idx_offset = props.ctx_idx_offset as usize;
         let c_max = c_max_override.unwrap_or_else(|| {
@@ -597,6 +610,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // 9.3.2.3 Concatenated unary/ k-th order Exp-Golomb (UEGk) binarization process
     pub fn parse_ueg_k(&mut self, se: SyntaxElement, ctx: CtxIncParams) -> ParseResult<i32> {
         let props = get_syntax_element_properties(se);
+        self.parse_ueg_k_with(se, ctx, &props)
+    }
+
+    /// Same as [`parse_ueg_k`] but takes a prefetched table entry, avoiding the
+    /// per-call lookup. Per-coefficient hot path: `parse_residual_block_cabac`
+    /// fetches `CoeffAbsLevelMinus1` props once and reuses for every level.
+    pub fn parse_ueg_k_with(
+        &mut self,
+        se: SyntaxElement,
+        ctx: CtxIncParams,
+        props: &CabacTableEntry,
+    ) -> ParseResult<i32> {
         let (u_coff, k_val, signed_val_flag) =
             if let BinarizationType::UEGk { u_coff, k, signed_val_flag } = props.binarization {
                 (u_coff, k, signed_val_flag)
@@ -605,7 +630,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             };
 
         // Prefix: TU with cMax = uCoff
-        let prefix = self.parse_truncated_unary_bin(se, Some(u_coff), ctx)?;
+        let prefix = self.parse_truncated_unary_bin_with(se, Some(u_coff), ctx, props)?;
 
         if prefix < u_coff {
             let val = prefix as i32;
@@ -1867,6 +1892,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     ctx_idx_offset_abs,
                     num_decod_abs_level_gt1,
                     num_decod_abs_level_eq1,
+                    &abs_props,
                 )?;
                 let abs_level = (val_minus1 + 1) as i32;
 
@@ -1931,10 +1957,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         _ctx_idx_offset_abs: usize,
         num_decod_abs_level_gt1: usize,
         num_decod_abs_level_eq1: usize,
+        abs_props: &CabacTableEntry,
     ) -> ParseResult<u32> {
-        let val = self.parse_ueg_k(
+        let val = self.parse_ueg_k_with(
             SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat),
             CtxIncParams::AbsLevel { gt1: num_decod_abs_level_gt1, eq1: num_decod_abs_level_eq1 },
+            abs_props,
         )?;
         let val_u32 = val as u32;
         trace!("parse_abs_level_minus1 cat={} val={}", ctx_block_cat, val_u32);
@@ -3399,6 +3427,24 @@ pub struct CabacTableEntry {
     pub ctx_idx_offset_suffix: Option<u32>,
 }
 
+/// Per-`ctxBlockCat` ctxIdxOffset for `coded_block_flag`. H.264 Table 9-34 / 9-40.
+/// Indexed by `ctx_block_cat` in 0..=13. Out-of-range cats fall back to 85 in the caller.
+const CBF_OFFSETS: [u32; 14] =
+    [85, 89, 93, 97, 101, 1012, 460, 464, 468, 1016, 472, 476, 480, 1020];
+
+/// Per-`ctxBlockCat` ctxIdxOffset for `significant_coeff_flag`. Table 9-34 / 9-40.
+const SIG_COEFF_OFFSETS: [u32; 14] =
+    [105, 120, 134, 149, 152, 402, 484, 499, 513, 660, 528, 543, 557, 718];
+
+/// Per-`ctxBlockCat` ctxIdxOffset for `last_significant_coeff_flag`. Table 9-34 / 9-40.
+const LAST_SIG_COEFF_OFFSETS: [u32; 14] =
+    [166, 181, 195, 210, 213, 417, 572, 587, 601, 690, 616, 631, 645, 748];
+
+/// Per-`ctxBlockCat` ctxIdxOffset for `coeff_abs_level_minus1`. Table 9-34 / 9-40.
+const COEFF_ABS_OFFSETS: [u32; 14] =
+    [227, 237, 247, 257, 266, 426, 952, 962, 972, 708, 982, 992, 1002, 766];
+
+#[inline]
 pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
     match se {
         SyntaxElement::MbTypeSI => CabacTableEntry {
@@ -3522,160 +3568,34 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
             max_bin_idx_ctx_suffix: Some(1),
             ctx_idx_offset_suffix: Some(77),
         },
-        SyntaxElement::CodedBlockFlag(cat) => {
-            // Table 9-34 and Table 9-40
-            let offset = match cat {
-                0..=4 => {
-                    85 + match cat {
-                        0 => 0,
-                        1 => 4,
-                        2 => 8,
-                        3 => 12,
-                        4 => 16,
-                        _ => unreachable!(),
-                    }
-                }
-                5 => 1012,                       // ctxBlockCat == 5
-                6..=8 => 460 + (cat - 6) * 4,    // 5 < ctxBlockCat < 9
-                9 => 1016,                       // 1012 + 4
-                10..=12 => 472 + (cat - 10) * 4, // 9 < ctxBlockCat < 13
-                13 => 1020,                      // 1012 + 8
-                _ => 85,
-            };
-            CabacTableEntry {
-                binarization: BinarizationType::FL { c_max: 1 },
-                max_bin_idx_ctx: 0,
-                ctx_idx_offset: offset as u32,
-                max_bin_idx_ctx_suffix: None,
-                ctx_idx_offset_suffix: None,
-            }
-        }
-        SyntaxElement::SignificantCoeffFlag(cat) => {
-            // Table 9-34 and Table 9-40
-            let offset = match cat {
-                0..=4 => {
-                    105 + match cat {
-                        0 => 0,
-                        1 => 15,
-                        2 => 29,
-                        3 => 44,
-                        4 => 47,
-                        _ => unreachable!(),
-                    }
-                }
-                5 => 402,
-                6..=8 => {
-                    484 + match cat {
-                        6 => 0,
-                        7 => 15,
-                        8 => 29,
-                        _ => unreachable!(),
-                    }
-                }
-                9 => 660,
-                10..=12 => {
-                    528 + match cat {
-                        10 => 0,
-                        11 => 15,
-                        12 => 29,
-                        _ => unreachable!(),
-                    }
-                }
-                13 => 718,
-                _ => 105,
-            };
-            CabacTableEntry {
-                binarization: BinarizationType::FL { c_max: 1 },
-                max_bin_idx_ctx: 0,
-                ctx_idx_offset: offset as u32,
-                max_bin_idx_ctx_suffix: None,
-                ctx_idx_offset_suffix: None,
-            }
-        }
-        SyntaxElement::LastSignificantCoeffFlag(cat) => {
-            // Table 9-34 and Table 9-40
-            let offset = match cat {
-                0..=4 => {
-                    166 + match cat {
-                        0 => 0,
-                        1 => 15,
-                        2 => 29,
-                        3 => 44,
-                        4 => 47,
-                        _ => unreachable!(),
-                    }
-                }
-                5 => 417,
-                6..=8 => {
-                    572 + match cat {
-                        6 => 0,
-                        7 => 15,
-                        8 => 29,
-                        _ => unreachable!(),
-                    }
-                }
-                9 => 690,
-                10..=12 => {
-                    616 + match cat {
-                        10 => 0,
-                        11 => 15,
-                        12 => 29,
-                        _ => unreachable!(),
-                    }
-                }
-                13 => 748,
-                _ => 166,
-            };
-            CabacTableEntry {
-                binarization: BinarizationType::FL { c_max: 1 },
-                max_bin_idx_ctx: 0,
-                ctx_idx_offset: offset as u32,
-                max_bin_idx_ctx_suffix: None,
-                ctx_idx_offset_suffix: None,
-            }
-        }
-        SyntaxElement::CoeffAbsLevelMinus1(cat) => {
-            // Table 9-34 and Table 9-40
-            let offset = match cat {
-                0..=4 => {
-                    227 + match cat {
-                        0 => 0,
-                        1 => 10,
-                        2 => 20,
-                        3 => 30,
-                        4 => 39,
-                        _ => unreachable!(),
-                    }
-                }
-                5 => 426,
-                6..=8 => {
-                    952 + match cat {
-                        6 => 0,
-                        7 => 10,
-                        8 => 20,
-                        _ => unreachable!(),
-                    }
-                }
-                9 => 708,
-                10..=12 => {
-                    982 + match cat {
-                        10 => 0,
-                        11 => 10,
-                        12 => 20,
-                        _ => unreachable!(),
-                    }
-                }
-                13 => 766,
-                _ => 227,
-            };
-            CabacTableEntry {
-                binarization: BinarizationType::UEGk { k: 0, signed_val_flag: false, u_coff: 14 },
-                max_bin_idx_ctx: 1,
-                ctx_idx_offset: offset as u32,
-                max_bin_idx_ctx_suffix: None,
-                ctx_idx_offset_suffix: None,
-            }
-        }
+        SyntaxElement::CodedBlockFlag(cat) => CabacTableEntry {
+            binarization: BinarizationType::FL { c_max: 1 },
+            max_bin_idx_ctx: 0,
+            ctx_idx_offset: *CBF_OFFSETS.get(cat).unwrap_or(&85),
+            max_bin_idx_ctx_suffix: None,
+            ctx_idx_offset_suffix: None,
+        },
+        SyntaxElement::SignificantCoeffFlag(cat) => CabacTableEntry {
+            binarization: BinarizationType::FL { c_max: 1 },
+            max_bin_idx_ctx: 0,
+            ctx_idx_offset: *SIG_COEFF_OFFSETS.get(cat).unwrap_or(&105),
+            max_bin_idx_ctx_suffix: None,
+            ctx_idx_offset_suffix: None,
+        },
+        SyntaxElement::LastSignificantCoeffFlag(cat) => CabacTableEntry {
+            binarization: BinarizationType::FL { c_max: 1 },
+            max_bin_idx_ctx: 0,
+            ctx_idx_offset: *LAST_SIG_COEFF_OFFSETS.get(cat).unwrap_or(&166),
+            max_bin_idx_ctx_suffix: None,
+            ctx_idx_offset_suffix: None,
+        },
+        SyntaxElement::CoeffAbsLevelMinus1(cat) => CabacTableEntry {
+            binarization: BinarizationType::UEGk { k: 0, signed_val_flag: false, u_coff: 14 },
+            max_bin_idx_ctx: 1,
+            ctx_idx_offset: *COEFF_ABS_OFFSETS.get(cat).unwrap_or(&227),
+            max_bin_idx_ctx_suffix: None,
+            ctx_idx_offset_suffix: None,
+        },
         SyntaxElement::EndOfSliceFlag => CabacTableEntry {
             binarization: BinarizationType::FL { c_max: 1 },
             max_bin_idx_ctx: 0,

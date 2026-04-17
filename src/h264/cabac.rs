@@ -1834,10 +1834,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             return Ok(false);
         }
 
-        // 2. significant_coeff_flag and last_significant_coeff_flag
-        let mut significant_coeff_flag = [false; 64];
-        let mut last_significant_coeff_flag = [false; 64];
-        let mut num_coeff = 0;
+        // 2. significant_coeff_flag / last_significant_coeff_flag.
+        assert!(max_num_coeff <= 16);
+        // Bitmask of significant coefficient positions. Bit `i` is 1 if scanning position `i` is non-zero.
+        let mut sig_map = 0u16;
 
         let sig_props =
             get_syntax_element_properties(SyntaxElement::SignificantCoeffFlag(ctx_block_cat));
@@ -1847,71 +1847,64 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             get_syntax_element_properties(SyntaxElement::LastSignificantCoeffFlag(ctx_block_cat));
         let ctx_idx_offset_last = last_props.ctx_idx_offset as usize;
 
-        let mut last_scan_pos = -1;
-
         for i in 0..max_num_coeff {
             if i == max_num_coeff - 1 {
-                significant_coeff_flag[i] = true;
-                last_scan_pos = i as i32;
-                num_coeff += 1;
+                sig_map |= 1 << i;
                 break;
             }
 
             let ctx_idx_inc_sig = Self::get_ctx_idx_inc_sig_coeff_flag(ctx_block_cat, i);
             let sig = self.decode_bin(ctx_idx_offset_sig + ctx_idx_inc_sig)? == 1;
-            significant_coeff_flag[i] = sig;
             trace!("parse_residual_block_cabac sig_coeff[{}]={}", i, sig);
             if sig {
-                num_coeff += 1;
+                sig_map |= 1 << i;
 
                 let ctx_idx_inc_last = Self::get_ctx_idx_inc_last_sig_coeff_flag(ctx_block_cat, i);
                 let last = self.decode_bin(ctx_idx_offset_last + ctx_idx_inc_last)? == 1;
-                last_significant_coeff_flag[i] = last;
                 trace!("parse_residual_block_cabac last_sig_coeff[{}]={}", i, last);
                 if last {
-                    last_scan_pos = i as i32;
                     break;
                 }
             }
         }
 
-        // 3. coeff_abs_level_minus1
+        // 3. coeff_abs_level_minus1.
+        let num_coeff = sig_map.count_ones() as u8;
         let mut num_decod_abs_level_eq1 = 0;
         let mut num_decod_abs_level_gt1 = 0;
-        let mut coeff_level = [0i32; 64];
+        let mut coeff_level = [0i32; 16];
 
         let abs_props =
             get_syntax_element_properties(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat));
         let ctx_idx_offset_abs = abs_props.ctx_idx_offset as usize;
 
-        // Reverse scan
-        for i in (0..=last_scan_pos as usize).rev() {
-            if significant_coeff_flag[i] {
-                let val_minus1 = self.parse_abs_level_minus1(
-                    ctx_block_cat,
-                    ctx_idx_offset_abs,
-                    num_decod_abs_level_gt1,
-                    num_decod_abs_level_eq1,
-                    &abs_props,
-                )?;
-                let abs_level = (val_minus1 + 1) as i32;
+        let mut remaining_sig = sig_map;
+        while remaining_sig != 0 {
+            let pos = 15 - remaining_sig.leading_zeros();
+            remaining_sig ^= 1 << pos;
 
-                // Update counters
-                if abs_level == 1 {
-                    num_decod_abs_level_eq1 += 1;
-                } else {
-                    num_decod_abs_level_gt1 += 1;
-                }
+            let val_minus1 = self.parse_abs_level_minus1(
+                ctx_block_cat,
+                ctx_idx_offset_abs,
+                num_decod_abs_level_gt1,
+                num_decod_abs_level_eq1,
+                &abs_props,
+            )?;
+            let abs_level = (val_minus1 + 1) as i32;
 
-                // Sign
-                let sign = self.decode_bypass()?;
-                let level = if sign == 1 { -abs_level } else { abs_level };
-                trace!("parse_residual_block_cabac level[{}]={}", i, level);
-                coeff_level[i] = level;
+            if abs_level == 1 {
+                num_decod_abs_level_eq1 += 1;
+            } else {
+                num_decod_abs_level_gt1 += 1;
             }
+
+            let sign = self.decode_bypass()?;
+            let level = if sign == 1 { -abs_level } else { abs_level };
+            // Mask with 15 to completely guarantee to LLVM that no bounds check is needed
+            coeff_level[(pos as usize) & 15] = level;
         }
 
-        // Store coefficients in Residual
+        // 4. Store coefficients in Residual
         match ctx_block_cat {
             0 => {
                 // Luma DC (16 coeffs)
@@ -1920,12 +1913,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             1 => {
                 // Luma AC (15 coeffs)
                 residual.ac_level16x16[blk_idx].copy_from_slice(&coeff_level[0..15]);
-                residual.ac_level16x16_nc[blk_idx] = num_coeff as u8;
+                residual.ac_level16x16_nc[blk_idx] = num_coeff;
             }
             2 => {
                 // Luma 4x4 (16 coeffs)
                 residual.luma_level4x4[blk_idx].copy_from_slice(&coeff_level[0..16]);
-                residual.luma_level4x4_nc[blk_idx] = num_coeff as u8;
+                residual.luma_level4x4_nc[blk_idx] = num_coeff;
             }
             3 => {
                 // Chroma DC Cb/Cr
@@ -1943,7 +1936,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     if comp_idx == 0 { super::ColorPlane::Cb } else { super::ColorPlane::Cr },
                 );
                 levels.copy_from_slice(&coeff_level[0..15]);
-                *nc = num_coeff as u8;
+                *nc = num_coeff;
             }
             _ => {}
         }

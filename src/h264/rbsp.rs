@@ -114,6 +114,16 @@ impl<'a> RbspReader<'a> {
         self.reader.skip(bits).map_err(map_io_error)
     }
 
+    /// Rewind the reader by `bits` bit positions. Used by CABAC to sync
+    /// the underlying reader back to the logically-consumed position after
+    /// pre-fetching bits into an internal buffer.
+    pub fn rewind(&mut self, bits: u32) -> ParseResult<()> {
+        self.reader
+            .seek_bits(SeekFrom::Current(-(bits as i64)))
+            .map_err(map_io_error)?;
+        Ok(())
+    }
+
     pub fn read_till_one(&mut self) -> ParseResult<u32> {
         self.reader.read_unary1().map_err(map_io_error)
     }

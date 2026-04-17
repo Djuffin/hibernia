@@ -367,6 +367,22 @@ pub struct CabacContext<'a, 'b> {
     reader: &'a mut BitReader<'b>,
     range: u32,  // codIRange
     offset: u32, // codIOffset
+    // Pre-fetched bits from the underlying reader. Valid bits occupy the
+    // highest `n_bits` positions of `bit_buf`; lower bits are zero. This
+    // removes the per-call `bitstream_io` overhead from the CABAC hot path:
+    // `renorm` and `decode_bypass` drain bits from here and the buffer is
+    // refilled 32 bits at a time. Pre-fetched bits not yet consumed by CABAC
+    // must be pushed back to the reader before any direct reader access
+    // (see `sync_reader_position`, used by the I_PCM path).
+    bit_buf: u64,
+    n_bits: u32,
+    // Bits still available in the underlying reader (not yet pulled into
+    // `bit_buf`). We track this ourselves because `bitstream_io::BitReader`
+    // consumes partial bits and poisons itself when a read request exceeds
+    // what is available, which would otherwise eat the tail of the stream.
+    // Refill paths consult this counter before each call to guarantee the
+    // read will succeed.
+    reader_remaining: u64,
     // Context models: (pStateIdx, valMPS)
     // 1024 context models as per spec (max ctxIdx is 1023)
     // Stored as u8: bit 0 is valMPS, bits 1-7 are pStateIdx
@@ -396,7 +412,15 @@ pub enum CtxIncParams {
 
 impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn new(reader: &'a mut BitReader<'b>, slice: &Slice) -> ParseResult<Self> {
-        let mut ctx = CabacContext { reader, range: 510, offset: 0, ctx_table: [0; 1024] };
+        let mut ctx = CabacContext {
+            reader,
+            range: 510,
+            offset: 0,
+            bit_buf: 0,
+            n_bits: 0,
+            reader_remaining: 0,
+            ctx_table: [0; 1024],
+        };
 
         ctx.init_context_variables(slice);
         ctx.reader.align();
@@ -431,7 +455,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // 9.3.1.2 Initialization process for the arithmetic decoding engine
     fn init_decoding_engine(&mut self) -> ParseResult<()> {
         self.range = 510;
-        self.offset = self.reader.u(9)?;
+        // Re-sync the remaining-bits counter against the reader's actual
+        // position. Required when this is called after I_PCM raw reads
+        // advanced the reader outside our tracking; harmless on first init.
+        self.reader_remaining = self.reader.remaining();
+        self.offset = self.read_bits(9)?;
 
         if self.offset == 510 || self.offset == 511 {
             // "The bitstream shall not contain data that result in a value of codIOffset being equal to 510 or 511."
@@ -439,6 +467,86 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         Ok(())
+    }
+
+    // Pull bits from the underlying reader into `bit_buf`. The fast path does
+    // one 32-bit read to amortise `bitstream_io` call overhead over many
+    // CABAC bins; the cold path walks byte-by-byte (and then bit-by-bit)
+    // near EOF. We only ask the reader for N bits when we know N bits are
+    // available — `bitstream_io` poisons the reader on a failed read, which
+    // would otherwise swallow any leftover bits.
+    #[inline]
+    fn refill_bits(&mut self) -> ParseResult<()> {
+        // Refuse to refill once the buffer already holds > 32 bits, otherwise
+        // the 32-bit fast path would shift new bits past position 0.
+        if self.n_bits > 32 {
+            return Ok(());
+        }
+        if self.reader_remaining >= 32 {
+            let bits = self.reader.u(32)?;
+            self.reader_remaining -= 32;
+            // Place new 32 bits immediately below the existing valid region.
+            self.bit_buf |= (bits as u64) << (32 - self.n_bits);
+            self.n_bits += 32;
+            return Ok(());
+        }
+        self.refill_slow()
+    }
+
+    // Cold-path refill for end-of-stream. Pulls remaining whole bytes, then
+    // any sub-byte tail bit-by-bit, stopping when either the reader is
+    // exhausted or the buffer is full.
+    #[cold]
+    #[inline(never)]
+    fn refill_slow(&mut self) -> ParseResult<()> {
+        while self.reader_remaining >= 8 && self.n_bits <= 56 {
+            let byte = self.reader.u(8)?;
+            self.reader_remaining -= 8;
+            self.bit_buf |= (byte as u64) << (56 - self.n_bits);
+            self.n_bits += 8;
+        }
+        while self.reader_remaining > 0 && self.n_bits <= 63 {
+            let bit = self.reader.u(1)?;
+            self.reader_remaining -= 1;
+            self.bit_buf |= (bit as u64) << (63 - self.n_bits);
+            self.n_bits += 1;
+        }
+        Ok(())
+    }
+
+    // Rewind the underlying reader so that any bits still held in the
+    // CABAC pre-fetch buffer are "unread". Call this before switching from
+    // CABAC-driven reads to direct byte-aligned reads (I_PCM payload).
+    // After the direct reads finish, `init_decoding_engine` re-primes the
+    // buffer.
+    fn sync_reader_position(&mut self) -> ParseResult<()> {
+        if self.n_bits > 0 {
+            self.reader.rewind(self.n_bits)?;
+            self.reader_remaining += self.n_bits as u64;
+            self.bit_buf = 0;
+            self.n_bits = 0;
+        }
+        Ok(())
+    }
+
+    // Take `n` bits off the top of the buffer, refilling from the reader
+    // when necessary. Callers must pass 1 <= n <= 32.
+    #[inline(always)]
+    fn read_bits(&mut self, n: u32) -> ParseResult<u32> {
+        debug_assert!(n >= 1 && n <= 32);
+        if self.n_bits < n {
+            self.refill_bits()?;
+            if self.n_bits < n {
+                return Err(format!(
+                    "CABAC: needed {} bits, only {} available",
+                    n, self.n_bits
+                ));
+            }
+        }
+        let bits = (self.bit_buf >> (64 - n)) as u32;
+        self.bit_buf <<= n;
+        self.n_bits -= n;
+        Ok(bits)
     }
 
     // 9.3.2.1 Unary (U) binarization process
@@ -601,8 +709,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.3.2.3 Bypass decoding process
+    #[inline]
     pub fn decode_bypass(&mut self) -> ParseResult<u8> {
-        self.offset = (self.offset << 1) | self.reader.u(1)?;
+        self.offset = (self.offset << 1) | self.read_bits(1)?;
 
         let bin_val;
         if self.offset >= self.range {
@@ -2264,6 +2373,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         match mb_type {
             CabacMbType::I(i_type) => {
                 if i_type == super::macroblock::IMbType::I_PCM {
+                    // PCM payload is read directly from the underlying reader;
+                    // push back any CABAC pre-fetched bits first so reader
+                    // position matches what CABAC has logically consumed.
+                    self.sync_reader_position()?;
                     self.reader.align();
 
                     let mut pcm_mb = PcmMb { qp: 0, ..PcmMb::default() };
@@ -2954,7 +3067,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if self.range < 256 {
             let shift = self.range.leading_zeros() - 23;
             self.range <<= shift;
-            let bits = self.reader.u(shift as u8)?;
+            let bits = self.read_bits(shift)?;
             self.offset = (self.offset << shift) | bits;
         }
         Ok(())
@@ -3002,6 +3115,65 @@ mod tests {
 
         let ctx = CabacContext::new(&mut reader, &slice);
         assert!(ctx.is_ok());
+    }
+
+    /// Verify CabacContext's bit buffer returns the same bits in the same
+    /// order as a plain `reader.u(1)` stream.
+    #[test]
+    fn test_bit_buffer_matches_reader() {
+        // Mix of byte boundaries and varied bit patterns.
+        let data = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xFE, 0xDC];
+
+        // Reference: read 1 bit at a time from the underlying reader.
+        let mut ref_reader = BitReader::new(&data);
+        let mut ref_bits: Vec<u32> = Vec::new();
+        for _ in 0..(data.len() * 8) {
+            ref_bits.push(ref_reader.u(1).unwrap());
+        }
+
+        // Under test: read through CabacContext's bit buffer, mixing read
+        // sizes (9 then 1s then 7 then 3, covering boundary cases).
+        let mut reader = BitReader::new(&data);
+        let slice = make_dummy_slice();
+        let mut ctx = CabacContext {
+            reader: &mut reader,
+            range: 510,
+            offset: 0,
+            bit_buf: 0,
+            n_bits: 0,
+            reader_remaining: 0,
+            ctx_table: [0; 1024],
+        };
+        ctx.init_context_variables(&slice);
+        ctx.reader.align();
+        ctx.reader_remaining = ctx.reader.remaining();
+
+        let mut got_bits: Vec<u32> = Vec::new();
+        let sizes = [9u32, 1, 1, 1, 7, 3, 1, 8];
+        for &n in &sizes {
+            let v = ctx.read_bits(n).expect("read_bits failed on opening reads");
+            for i in (0..n).rev() {
+                got_bits.push((v >> i) & 1);
+            }
+        }
+        while got_bits.len() < 70 {
+            let before_n = ctx.n_bits;
+            let v = ctx.read_bits(1).unwrap_or_else(|e| {
+                panic!(
+                    "read_bits(1) failed at got_bits.len={}, n_bits_before={}: {}",
+                    got_bits.len(),
+                    before_n,
+                    e,
+                );
+            });
+            got_bits.push(v);
+        }
+
+        assert_eq!(
+            got_bits,
+            ref_bits[..got_bits.len()],
+            "bit buffer decoded a different bit sequence than reader.u(1)*N"
+        );
     }
 }
 

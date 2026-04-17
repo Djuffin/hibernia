@@ -17,6 +17,77 @@ struct CurrentMbInfo {
     cbf: CbfInfo,
 }
 
+/// MB-level snapshot of one neighbor (A or B) used by the CBF context derivation
+/// in `parse_residual_block_cabac`. The same neighbor MB is consulted for all 27
+/// possible cbf decodes within the current MB, so we precompute everything that
+/// doesn't depend on `blk_idx` once and avoid repeated `slice.get_mb_neighbor`
+/// lookups and per-block match arms.
+#[derive(Default, Clone, Copy)]
+struct CachedNeighborMb {
+    available: bool,
+    is_pcm: bool,
+    is_skipped: bool,
+    is_intra_16x16: bool,
+    transform_size_8x8_flag: bool,
+    cbp: CodedBlockPattern,
+    cbf: CbfInfo,
+}
+
+struct ResidualNeighborCache {
+    a: CachedNeighborMb,
+    b: CachedNeighborMb,
+}
+
+impl ResidualNeighborCache {
+    fn build(slice: &Slice, mb_addr: MbAddr) -> Self {
+        ResidualNeighborCache {
+            a: snapshot_neighbor_mb(slice, mb_addr, MbNeighborName::A),
+            b: snapshot_neighbor_mb(slice, mb_addr, MbNeighborName::B),
+        }
+    }
+
+    #[inline]
+    fn get(&self, dir: MbNeighborName) -> &CachedNeighborMb {
+        match dir {
+            MbNeighborName::A => &self.a,
+            MbNeighborName::B => &self.b,
+            // CBF context derivation only consults A and B.
+            _ => unreachable!("ResidualNeighborCache only stores A and B"),
+        }
+    }
+}
+
+fn snapshot_neighbor_mb(
+    slice: &Slice,
+    mb_addr: MbAddr,
+    dir: MbNeighborName,
+) -> CachedNeighborMb {
+    let mb = match slice.get_mb_neighbor(mb_addr, dir) {
+        Some(m) => m,
+        None => return CachedNeighborMb::default(),
+    };
+    let (transform_size_8x8_flag, is_intra_16x16, is_pcm) = match mb {
+        super::macroblock::Macroblock::I(m) => (
+            m.transform_size_8x8_flag,
+            m.mb_type != super::macroblock::IMbType::I_NxN
+                && m.mb_type != super::macroblock::IMbType::I_PCM,
+            false,
+        ),
+        super::macroblock::Macroblock::P(m) => (m.transform_size_8x8_flag, false, false),
+        super::macroblock::Macroblock::B(m) => (m.transform_size_8x8_flag, false, false),
+        super::macroblock::Macroblock::PCM(_) => (false, false, true),
+    };
+    CachedNeighborMb {
+        available: true,
+        is_pcm,
+        is_skipped: mb.is_skipped(),
+        is_intra_16x16,
+        transform_size_8x8_flag,
+        cbp: mb.get_coded_block_pattern(),
+        cbf: mb.get_cbf_info(),
+    }
+}
+
 struct NeighborAccessor<'a> {
     slice: &'a Slice,
     mb_addr: MbAddr,
@@ -110,31 +181,6 @@ impl<'a> NeighborAccessor<'a> {
         match mb_neighbor {
             None => true, // In current MB
             Some(nb_name) => self.slice.has_mb_neighbor(self.mb_addr, nb_name),
-        }
-    }
-
-    fn is_intra_16x16(&self, blk_idx: u8, neighbor_name: MbNeighborName) -> bool {
-        let (neighbor_blk_idx, mb_neighbor) =
-            super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name);
-
-        match mb_neighbor {
-            None => match self.curr_mb.mb_type {
-                CabacMbType::I(t) => {
-                    t != super::macroblock::IMbType::I_NxN && t != super::macroblock::IMbType::I_PCM
-                }
-                _ => false,
-            },
-            Some(nb_name) => self
-                .slice
-                .get_mb_neighbor(self.mb_addr, nb_name)
-                .map(|mb| match mb {
-                    super::macroblock::Macroblock::I(m) => {
-                        m.mb_type != super::macroblock::IMbType::I_NxN
-                            && m.mb_type != super::macroblock::IMbType::I_PCM
-                    }
-                    _ => false,
-                })
-                .unwrap_or(false),
         }
     }
 
@@ -282,64 +328,6 @@ impl<'a> NeighborAccessor<'a> {
                 .get_mb_neighbor(self.mb_addr, nb_name)
                 .map(|mb| matches!(mb, super::macroblock::Macroblock::PCM(_)))
                 .unwrap_or(false),
-        }
-    }
-
-    fn get_cbf(
-        &self,
-        blk_idx: u8,
-        neighbor_name: MbNeighborName,
-        ctx_block_cat: usize,
-        comp_idx: usize,
-    ) -> Option<bool> {
-        let (neighbor_blk_idx, mb_neighbor) = if ctx_block_cat == 3 || ctx_block_cat == 4 {
-            super::macroblock::get_4x4chroma_block_neighbor(blk_idx, neighbor_name)
-        } else {
-            super::macroblock::get_4x4luma_block_neighbor(blk_idx, neighbor_name)
-        };
-
-        match mb_neighbor {
-            None => match ctx_block_cat {
-                0 => Some(self.curr_mb.cbf.luma_dc),
-                1 | 2 | 5 => Some((self.curr_mb.cbf.luma_ac >> neighbor_blk_idx) & 1 != 0),
-                3 => {
-                    if comp_idx == 0 {
-                        Some(self.curr_mb.cbf.cb_dc)
-                    } else {
-                        Some(self.curr_mb.cbf.cr_dc)
-                    }
-                }
-                4 => {
-                    if comp_idx == 0 {
-                        Some((self.curr_mb.cbf.cb_ac >> neighbor_blk_idx) & 1 != 0)
-                    } else {
-                        Some((self.curr_mb.cbf.cr_ac >> neighbor_blk_idx) & 1 != 0)
-                    }
-                }
-                _ => Some(false),
-            },
-            Some(nb_name) => self.slice.get_mb_neighbor(self.mb_addr, nb_name).map(|mb| {
-                let cbf_info = mb.get_cbf_info();
-                match ctx_block_cat {
-                    0 => cbf_info.luma_dc,
-                    1 | 2 | 5 => (cbf_info.luma_ac >> neighbor_blk_idx) & 1 != 0,
-                    3 => {
-                        if comp_idx == 0 {
-                            cbf_info.cb_dc
-                        } else {
-                            cbf_info.cr_dc
-                        }
-                    }
-                    4 => {
-                        if comp_idx == 0 {
-                            (cbf_info.cb_ac >> neighbor_blk_idx) & 1 != 0
-                        } else {
-                            (cbf_info.cr_ac >> neighbor_blk_idx) & 1 != 0
-                        }
-                    }
-                    _ => false,
-                }
-            }),
         }
     }
 
@@ -1242,103 +1230,166 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
     // 9.3.3.1.3 Assignment process of ctxIdxInc for syntax elements significant_coeff_flag, last_significant_coeff_flag, and coeff_abs_level_minus1
     // And 9.3.3.1.1.9 for coded_block_flag
-    fn get_ctx_idx_inc_coded_block_flag(
-        accessor: &NeighborAccessor,
+    /// Cached variant of `get_ctx_idx_inc_coded_block_flag`. Reads neighbor
+    /// MB-level state from a `ResidualNeighborCache` precomputed at the start of
+    /// `parse_residual_cabac` instead of re-walking `slice.get_mb_neighbor` and
+    /// pattern-matching the neighbor `Macroblock` on every cbf decode (28× per
+    /// MB in the worst case). Behavior must match `get_ctx_idx_inc_coded_block_flag`.
+    fn get_ctx_idx_inc_coded_block_flag_cached(
+        cache: &ResidualNeighborCache,
+        curr_mb: &CurrentMbInfo,
         ctx_block_cat: usize,
         blk_idx: usize,
         comp_idx: usize,
     ) -> usize {
-        let check_neighbor = |nb: MbNeighborName| -> usize {
-            if !accessor.is_available(blk_idx as u8, nb) {
-                let is_current_intra = match accessor.curr_mb.mb_type {
-                    CabacMbType::I(_) => true,
-                    CabacMbType::P(_) | CabacMbType::B(_) => false,
-                };
-                if is_current_intra {
-                    return 1;
-                } else {
-                    return 0;
+        #[inline]
+        fn cbf_bit(
+            cbf: &CbfInfo,
+            ctx_block_cat: usize,
+            comp_idx: usize,
+            neighbor_blk_idx: u8,
+        ) -> bool {
+            match ctx_block_cat {
+                0 => cbf.luma_dc,
+                1 | 2 | 5 => (cbf.luma_ac >> neighbor_blk_idx) & 1 != 0,
+                3 => {
+                    if comp_idx == 0 {
+                        cbf.cb_dc
+                    } else {
+                        cbf.cr_dc
+                    }
                 }
+                4 => {
+                    if comp_idx == 0 {
+                        (cbf.cb_ac >> neighbor_blk_idx) & 1 != 0
+                    } else {
+                        (cbf.cr_ac >> neighbor_blk_idx) & 1 != 0
+                    }
+                }
+                _ => false,
+            }
+        }
+
+        let check_neighbor = |dir: MbNeighborName| -> usize {
+            let (neighbor_blk_idx, mb_neighbor) = if ctx_block_cat == 3 || ctx_block_cat == 4 {
+                super::macroblock::get_4x4chroma_block_neighbor(blk_idx as u8, dir)
+            } else {
+                super::macroblock::get_4x4luma_block_neighbor(blk_idx as u8, dir)
+            };
+            let internal = mb_neighbor.is_none();
+            let nb = cache.get(dir);
+
+            // is_available
+            if !internal && !nb.available {
+                let is_current_intra = matches!(curr_mb.mb_type, CabacMbType::I(_));
+                return if is_current_intra { 1 } else { 0 };
             }
 
-            if accessor.is_pcm(blk_idx as u8, nb) {
+            // is_pcm
+            let is_pcm = if internal {
+                matches!(
+                    curr_mb.mb_type,
+                    CabacMbType::I(super::macroblock::IMbType::I_PCM)
+                )
+            } else {
+                nb.is_pcm
+            };
+            if is_pcm {
                 return 1;
             }
 
-            if accessor.get_mb_type_is_skipped(blk_idx as u8, nb) {
+            // is_skipped
+            let is_skipped = if internal {
+                matches!(
+                    curr_mb.mb_type,
+                    CabacMbType::P(super::macroblock::PMbType::P_Skip)
+                        | CabacMbType::B(super::macroblock::BMbType::B_Skip)
+                )
+            } else {
+                nb.is_skipped
+            };
+            if is_skipped {
                 return 0;
             }
 
-            if let Some(cbp) = accessor.get_cbp(blk_idx as u8, nb) {
-                let (neighbor_blk_idx, _) = if ctx_block_cat == 3 || ctx_block_cat == 4 {
-                    super::macroblock::get_4x4chroma_block_neighbor(blk_idx as u8, nb)
-                } else {
-                    super::macroblock::get_4x4luma_block_neighbor(blk_idx as u8, nb)
-                };
-
-                match ctx_block_cat {
-                    0 | 6 | 10 => {
-                        // Intra16x16 DC
-                        if accessor.is_intra_16x16(blk_idx as u8, nb) {
-                            accessor.get_cbf(blk_idx as u8, nb, ctx_block_cat, 0).unwrap_or(false)
-                                as usize
-                        } else {
-                            0
-                        }
-                    }
-                    1 | 2 => {
-                        // Luma AC / 4x4
-                        let bit_idx = neighbor_blk_idx / 4;
-                        if (cbp.luma() >> bit_idx) & 1 == 0 {
-                            return 0;
-                        }
-                        let is_8x8 = accessor.get_transform_size_8x8_flag(blk_idx as u8, nb);
-                        if is_8x8 {
-                            accessor.get_cbf(blk_idx as u8, nb, 5, 0).unwrap_or(false) as usize
-                        } else {
-                            accessor.get_cbf(blk_idx as u8, nb, ctx_block_cat, 0).unwrap_or(false)
-                                as usize
-                        }
-                    }
-                    3 => {
-                        // Chroma DC
-                        if cbp.chroma() == 0 {
-                            return 0;
-                        }
-                        accessor.get_cbf(blk_idx as u8, nb, 3, comp_idx).unwrap_or(false) as usize
-                    }
-                    4 => {
-                        // Chroma AC
-                        if cbp.chroma() != 2 {
-                            return 0;
-                        }
-                        accessor.get_cbf(blk_idx as u8, nb, 4, comp_idx).unwrap_or(false) as usize
-                    }
-                    5 => {
-                        // Luma 8x8
-                        let bit_idx = neighbor_blk_idx / 4;
-                        if (cbp.luma() >> bit_idx) & 1 == 0 {
-                            return 0;
-                        }
-                        let is_8x8 = accessor.get_transform_size_8x8_flag(blk_idx as u8, nb);
-                        if !is_8x8 {
-                            return 0;
-                        }
-                        accessor.get_cbf(blk_idx as u8, nb, 5, 0).unwrap_or(false) as usize
-                    }
-                    6..=13 => {
-                        unimplemented!("Coded block flag context derivation for categories 6-13 (ChromaArrayType 3)");
-                    }
-                    _ => 0,
-                }
+            // get_cbp — for the internal case the caller-side branch in the
+            // original used Some(curr_mb.coded_block_pattern), so cbp is always
+            // available once we reach this point.
+            let cbp = if internal {
+                curr_mb.coded_block_pattern
             } else {
-                0
+                nb.cbp
+            };
+            let cbf_src = if internal { &curr_mb.cbf } else { &nb.cbf };
+
+            match ctx_block_cat {
+                0 | 6 | 10 => {
+                    // Intra16x16 DC
+                    let is_intra_16x16 = if internal {
+                        matches!(
+                            curr_mb.mb_type,
+                            CabacMbType::I(t)
+                                if t != super::macroblock::IMbType::I_NxN
+                                    && t != super::macroblock::IMbType::I_PCM
+                        )
+                    } else {
+                        nb.is_intra_16x16
+                    };
+                    if is_intra_16x16 {
+                        cbf_bit(cbf_src, ctx_block_cat, 0, neighbor_blk_idx) as usize
+                    } else {
+                        0
+                    }
+                }
+                1 | 2 => {
+                    let bit_idx = neighbor_blk_idx / 4;
+                    if (cbp.luma() >> bit_idx) & 1 == 0 {
+                        return 0;
+                    }
+                    let is_8x8 = if internal {
+                        curr_mb.transform_size_8x8_flag
+                    } else {
+                        nb.transform_size_8x8_flag
+                    };
+                    let cat = if is_8x8 { 5 } else { ctx_block_cat };
+                    cbf_bit(cbf_src, cat, 0, neighbor_blk_idx) as usize
+                }
+                3 => {
+                    if cbp.chroma() == 0 {
+                        return 0;
+                    }
+                    cbf_bit(cbf_src, 3, comp_idx, neighbor_blk_idx) as usize
+                }
+                4 => {
+                    if cbp.chroma() != 2 {
+                        return 0;
+                    }
+                    cbf_bit(cbf_src, 4, comp_idx, neighbor_blk_idx) as usize
+                }
+                5 => {
+                    let bit_idx = neighbor_blk_idx / 4;
+                    if (cbp.luma() >> bit_idx) & 1 == 0 {
+                        return 0;
+                    }
+                    let is_8x8 = if internal {
+                        curr_mb.transform_size_8x8_flag
+                    } else {
+                        nb.transform_size_8x8_flag
+                    };
+                    if !is_8x8 {
+                        return 0;
+                    }
+                    cbf_bit(cbf_src, 5, 0, neighbor_blk_idx) as usize
+                }
+                6..=13 => {
+                    unimplemented!("Coded block flag context derivation for categories 6-13 (ChromaArrayType 3)");
+                }
+                _ => 0,
             }
         };
 
         let cond_term_flag_a = check_neighbor(MbNeighborName::A);
         let cond_term_flag_b = check_neighbor(MbNeighborName::B);
-
         cond_term_flag_a + 2 * cond_term_flag_b
     }
 
@@ -1566,10 +1617,23 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         };
         residual.coded_block_pattern = curr_mb.coded_block_pattern;
 
+        // Snapshot A/B neighbor MBs once for all cbf-context decodes in this MB.
+        let neighbor_cache = ResidualNeighborCache::build(slice, mb_addr);
+
         // 1. Luma DC (if Intra 16x16)
         if residual.prediction_mode == super::macroblock::MbPredictionMode::Intra_16x16 {
             // ctxBlockCat = 0
-            self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 0, 0, 0, 16)?;
+            self.parse_residual_block_cabac(
+                slice,
+                mb_addr,
+                curr_mb,
+                &neighbor_cache,
+                residual,
+                0,
+                0,
+                0,
+                16,
+            )?;
         }
 
         // 2. Luma AC (if Intra 16x16) or Luma 4x4 (others)
@@ -1586,6 +1650,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     slice,
                     mb_addr,
                     curr_mb,
+                    &neighbor_cache,
                     residual,
                     ctx_block_cat,
                     i,
@@ -1603,9 +1668,29 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 return Err("YUV422 chroma DC residual parsing is not supported".into());
             }
             // Cb DC: Cat 3, comp_idx 0
-            self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 3, 0, 0, 4)?;
+            self.parse_residual_block_cabac(
+                slice,
+                mb_addr,
+                curr_mb,
+                &neighbor_cache,
+                residual,
+                3,
+                0,
+                0,
+                4,
+            )?;
             // Cr DC: Cat 3, comp_idx 1
-            self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 3, 0, 1, 4)?;
+            self.parse_residual_block_cabac(
+                slice,
+                mb_addr,
+                curr_mb,
+                &neighbor_cache,
+                residual,
+                3,
+                0,
+                1,
+                4,
+            )?;
         } else if slice.sps.ChromaArrayType() == super::ChromaFormat::YUV444 {
             return Err("YUV444 chroma residual parsing is not supported".into());
         }
@@ -1616,11 +1701,31 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         {
             for i in 0..4 {
                 // Cb AC: Cat 4, comp_idx 0
-                self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 4, i, 0, 15)?;
+                self.parse_residual_block_cabac(
+                    slice,
+                    mb_addr,
+                    curr_mb,
+                    &neighbor_cache,
+                    residual,
+                    4,
+                    i,
+                    0,
+                    15,
+                )?;
             }
             for i in 0..4 {
                 // Cr AC: Cat 4, comp_idx 1
-                self.parse_residual_block_cabac(slice, mb_addr, curr_mb, residual, 4, i, 1, 15)?;
+                self.parse_residual_block_cabac(
+                    slice,
+                    mb_addr,
+                    curr_mb,
+                    &neighbor_cache,
+                    residual,
+                    4,
+                    i,
+                    1,
+                    15,
+                )?;
             }
         }
 
@@ -1637,6 +1742,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         slice: &Slice,
         mb_addr: MbAddr,
         curr_mb: &mut CurrentMbInfo,
+        neighbor_cache: &ResidualNeighborCache,
         residual: &mut super::residual::Residual,
         ctx_block_cat: usize,
         blk_idx: usize,
@@ -1659,11 +1765,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let cbf = if max_num_coeff != 64
             || slice.sps.ChromaArrayType() == super::ChromaFormat::YUV444
         {
-            let accessor = NeighborAccessor::new(slice, mb_addr, curr_mb);
-            let ctx_idx_inc =
-                Self::get_ctx_idx_inc_coded_block_flag(&accessor, ctx_block_cat, blk_idx, comp_idx);
-
-
+            let ctx_idx_inc = Self::get_ctx_idx_inc_coded_block_flag_cached(
+                neighbor_cache,
+                curr_mb,
+                ctx_block_cat,
+                blk_idx,
+                comp_idx,
+            );
             self.decode_bin(ctx_idx_offset_cbf + ctx_idx_inc)? == 1
         } else {
             true

@@ -458,6 +458,46 @@ fn compute_bs_arrays(
     (bs_vert, bs_horz)
 }
 
+#[inline(always)]
+fn get_residual<'a>(mb: &'a Macroblock) -> Option<&'a super::residual::Residual> {
+    match mb {
+        Macroblock::I(m) => m.residual.as_deref(),
+        Macroblock::P(m) => m.residual.as_deref(),
+        Macroblock::B(m) => m.residual.as_deref(),
+        Macroblock::PCM(_) => None,
+    }
+}
+
+#[inline(always)]
+fn is_intra_16x16(mb: &Macroblock) -> bool {
+    match mb {
+        Macroblock::I(m) => m.MbPartPredMode(0) == MbPredictionMode::Intra_16x16,
+        _ => false,
+    }
+}
+
+#[inline(always)]
+fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
+    if let Some(res) = get_residual(mb) {
+        if is_intra_16x16(mb) {
+            res.ac_level16x16_nc[blk_idx] != 0 || res.dc_level16x16[blk_idx] != 0
+        } else {
+            res.luma_level4x4_nc[blk_idx] != 0
+        }
+    } else {
+        false
+    }
+}
+
+#[inline(always)]
+fn get_partition(mb: &Macroblock, y: usize, x: usize) -> Option<super::macroblock::PartitionInfo> {
+    match mb {
+        Macroblock::P(m) => Some(m.motion.partitions[y][x]),
+        Macroblock::B(m) => Some(m.motion.partitions[y][x]),
+        _ => None,
+    }
+}
+
 fn get_bs(
     slice: &Slice,
     mb_q: &Macroblock,
@@ -467,68 +507,65 @@ fn get_bs(
     block_idx: usize,
     is_vertical: bool,
 ) -> u8 {
-    // Section 8.7.2.1 Derivation process for the luma content dependent boundary filtering strength
-    // p samples are in mb_p, q samples are in mb_q
-
-    // Determine 4x4 block indices for p and q.
-    // Luma 4x4 blocks are indexed 0..15.
-
-    let (blk_q_idx, blk_p_idx) = if is_vertical {
-        // Vertical edge
-        let y_blk = block_idx;
-        let q_blk_x = edge_idx;
-        let q_idx = super::residual::scan_4x4(y_blk, q_blk_x);
-
-        if edge_idx == 0 {
-            // p is in MB P, rightmost column (x=3)
-            let p_idx = super::residual::scan_4x4(y_blk, 3);
-            (q_idx, p_idx)
-        } else {
-            // p is in MB Q (internal)
-            let p_idx = super::residual::scan_4x4(y_blk, edge_idx - 1);
-            (q_idx, p_idx)
-        }
+    let (q_y, q_x, p_y, p_x) = if is_vertical {
+        if edge_idx == 0 { (block_idx, edge_idx, block_idx, 3) }
+        else { (block_idx, edge_idx, block_idx, edge_idx - 1) }
     } else {
-        // Horizontal edge
-        let x_blk = block_idx;
-        let q_blk_y = edge_idx;
-        let q_idx = super::residual::scan_4x4(q_blk_y, x_blk);
-
-        if edge_idx == 0 {
-            // p is in MB P, bottom row (y=3)
-            let p_idx = super::residual::scan_4x4(3, x_blk);
-            (q_idx, p_idx)
-        } else {
-            let p_idx = super::residual::scan_4x4(edge_idx - 1, x_blk);
-            (q_idx, p_idx)
-        }
+        if edge_idx == 0 { (edge_idx, block_idx, 3, block_idx) }
+        else { (edge_idx, block_idx, edge_idx - 1, block_idx) }
     };
 
-    // Section 8.7.2.1: mixedModeEdgeFlag derivation (MBAFF not yet supported)
-    let mixed_mode_edge_flag = false;
-
-    // Condition 1: Intra coding
     if mb_p.is_intra() || mb_q.is_intra() {
-        // If edge is a macroblock edge ...
-        if edge_idx == 0 {
-            return BS_STRONG;
-        }
+        if edge_idx == 0 { return BS_STRONG; }
         return BS_INTRA;
     }
 
-    // Condition 2: Non-zero transform coefficients
-    // Clause 8.7.2.1: check if the 4x4 luma transform block contains non-zero transform coefficient levels.
+    let blk_q_idx = super::residual::scan_4x4(q_y, q_x);
+    let blk_p_idx = super::residual::scan_4x4(p_y, p_x);
 
-    if has_nonzero_coeffs(mb_p, blk_p_idx as u8) || has_nonzero_coeffs(mb_q, blk_q_idx as u8) {
+    if has_nonzero_coeffs(mb_p, blk_p_idx) || has_nonzero_coeffs(mb_q, blk_q_idx) {
         return BS_CODED;
     }
 
-    // Condition 3: Motion vectors / Reference frames
-    if mixed_mode_edge_flag || check_motion_discontinuity(slice, mb_p, blk_p_idx, mb_q, blk_q_idx) {
-        return BS_MOTION;
-    }
+    let p_part = get_partition(mb_p, p_y, p_x);
+    let q_part = get_partition(mb_q, q_y, q_x);
 
-    BS_NONE
+    match (p_part, q_part) {
+        (Some(pp), Some(qq)) => {
+            if slice.ref_pic_list1.is_empty() {
+                let ref_p_l0 = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize).copied();
+                let ref_q_l0 = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize).copied();
+                if ref_p_l0 != ref_q_l0 { return BS_MOTION; }
+                let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
+                let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
+                if mv_diff_x >= 4 || mv_diff_y >= 4 { return BS_MOTION; }
+                return BS_NONE;
+            }
+
+            let ref_p_l0 = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize).copied();
+            let ref_q_l0 = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize).copied();
+            let ref_p_l1 = slice.ref_pic_list1.get(pp.ref_idx_l1 as usize).copied();
+            let ref_q_l1 = slice.ref_pic_list1.get(qq.ref_idx_l1 as usize).copied();
+
+            let direct_match = ref_p_l0 == ref_q_l0
+                && ref_p_l1 == ref_q_l1
+                && (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs() < 4
+                && (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs() < 4
+                && (pp.mv_l1.x as i32 - qq.mv_l1.x as i32).abs() < 4
+                && (pp.mv_l1.y as i32 - qq.mv_l1.y as i32).abs() < 4;
+
+            let swap_match = ref_p_l0 == ref_q_l1
+                && ref_p_l1 == ref_q_l0
+                && (pp.mv_l0.x as i32 - qq.mv_l1.x as i32).abs() < 4
+                && (pp.mv_l0.y as i32 - qq.mv_l1.y as i32).abs() < 4
+                && (pp.mv_l1.x as i32 - qq.mv_l0.x as i32).abs() < 4
+                && (pp.mv_l1.y as i32 - qq.mv_l0.y as i32).abs() < 4;
+
+            if direct_match || swap_match { BS_NONE } else { BS_MOTION }
+        }
+        (Some(_), None) | (None, Some(_)) => BS_MOTION,
+        (None, None) => BS_NONE,
+    }
 }
 
 fn get_qp(mb: &Macroblock) -> u8 {
@@ -540,95 +577,4 @@ fn get_qp(mb: &Macroblock) -> u8 {
     }
 }
 
-/// Clause 8.7.2.1 — "the 4x4 luma transform block … contains non-zero transform coefficient levels."
-/// Uses precomputed non-zero coefficient counts (_nc fields) instead of iterating arrays.
-fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: u8) -> bool {
-    use super::residual::Residual;
 
-    fn check_residual(res: Option<&Residual>, blk_idx: usize, is_intra_16x16: bool) -> bool {
-        match res {
-            Some(res) if is_intra_16x16 => {
-                res.ac_level16x16_nc[blk_idx] != 0 || res.dc_level16x16[blk_idx] != 0
-            }
-            Some(res) => res.luma_level4x4_nc[blk_idx] != 0,
-            None => false,
-        }
-    }
-
-    let idx = blk_idx as usize;
-    match mb {
-        Macroblock::I(m) => {
-            let is_16x16 = m.MbPartPredMode(0) == MbPredictionMode::Intra_16x16;
-            check_residual(m.residual.as_deref(), idx, is_16x16)
-        }
-        Macroblock::P(m) => check_residual(m.residual.as_deref(), idx, false),
-        Macroblock::B(m) => check_residual(m.residual.as_deref(), idx, false),
-        _ => false,
-    }
-}
-
-/// Section 8.7.2.1, condition 3 — motion vector / reference frame discontinuity check.
-fn check_motion_discontinuity(
-    slice: &Slice,
-    mb_p: &Macroblock,
-    blk_p_idx: usize,
-    mb_q: &Macroblock,
-    blk_q_idx: usize,
-) -> bool {
-    let get_part = |mb: &Macroblock, idx: usize| -> Option<super::macroblock::PartitionInfo> {
-        let motion = match mb {
-            Macroblock::P(pmb) => &pmb.motion,
-            Macroblock::B(bmb) => &bmb.motion,
-            _ => return None, // Intra/PCM have no motion
-        };
-        let (y, x) = super::residual::unscan_4x4(idx);
-        Some(motion.partitions[y][x])
-    };
-
-    let p_part = get_part(mb_p, blk_p_idx);
-    let q_part = get_part(mb_q, blk_q_idx);
-
-    match (p_part, q_part) {
-        (Some(pp), Some(qq)) => {
-            // §8.7.2.1: For B slices, check both L0 and L1 references and MVs
-            let ref_p_l0 = slice.ref_pic_list0.get(pp.ref_idx_l0 as usize).copied();
-            let ref_q_l0 = slice.ref_pic_list0.get(qq.ref_idx_l0 as usize).copied();
-            let ref_p_l1 = slice.ref_pic_list1.get(pp.ref_idx_l1 as usize).copied();
-            let ref_q_l1 = slice.ref_pic_list1.get(qq.ref_idx_l1 as usize).copied();
-
-            let uses_bipred = !slice.ref_pic_list1.is_empty();
-
-            if !uses_bipred {
-                // P-slice or B-slice with only L0: simple check
-                if ref_p_l0 != ref_q_l0 {
-                    return true;
-                }
-                let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
-                let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
-                return mv_diff_x >= 4 || mv_diff_y >= 4;
-            }
-
-            // B-slice: check if refs and MVs match in either direct or swapped order
-            let mv_close =
-                |a: super::macroblock::MotionVector, b: super::macroblock::MotionVector| -> bool {
-                    (a.x as i32 - b.x as i32).abs() < 4 && (a.y as i32 - b.y as i32).abs() < 4
-                };
-
-            // Direct order: L0p==L0q && L1p==L1q && MVs close
-            let direct_match = ref_p_l0 == ref_q_l0
-                && ref_p_l1 == ref_q_l1
-                && mv_close(pp.mv_l0, qq.mv_l0)
-                && mv_close(pp.mv_l1, qq.mv_l1);
-
-            // Swapped order: L0p==L1q && L1p==L0q && MVs close (swapped)
-            let swap_match = ref_p_l0 == ref_q_l1
-                && ref_p_l1 == ref_q_l0
-                && mv_close(pp.mv_l0, qq.mv_l1)
-                && mv_close(pp.mv_l1, qq.mv_l0);
-
-            !(direct_match || swap_match)
-        }
-        (Some(_), None) | (None, Some(_)) => true,
-        (None, None) => false,
-    }
-}

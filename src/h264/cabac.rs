@@ -562,38 +562,39 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     // 9.3.3.2 Arithmetic decoding process
+    #[inline(always)]
     pub fn decode_bin(&mut self, ctx_idx: usize) -> ParseResult<u8> {
         let ctx_state = self.ctx_table[ctx_idx];
-        let mut p_state_idx = (ctx_state >> 1) as usize;
+        // Mask with 0x3F tells the optimizer p_state_idx < 64, eliminating
+        // bounds checks on the fixed-size state/range tables below.
+        let mut p_state_idx = ((ctx_state >> 1) & 0x3F) as usize;
         let mut val_mps = ctx_state & 1;
 
-        let q_cod_i_range_idx = (self.range >> 6) & 3;
-        let cod_i_range_lps = RANGE_TAB_LPS[p_state_idx][q_cod_i_range_idx as usize] as u32;
+        let q_cod_i_range_idx = ((self.range >> 6) & 3) as usize;
+        let cod_i_range_lps = RANGE_TAB_LPS[p_state_idx][q_cod_i_range_idx] as u32;
 
         self.range -= cod_i_range_lps;
 
+        // Fuse the MPS/LPS decision with the 9.3.3.2.1.1 state transition so
+        // each path only runs its own table lookup.
         let bin_val;
         if self.offset >= self.range {
+            // LPS path
             bin_val = 1 - val_mps;
             self.offset -= self.range;
             self.range = cod_i_range_lps;
-        } else {
-            bin_val = val_mps;
-        }
-
-        // 9.3.3.2.1.1 State transition process
-        if bin_val == val_mps {
-            p_state_idx = TRANS_IDX_MPS[p_state_idx] as usize;
-        } else {
             if p_state_idx == 0 {
                 val_mps = 1 - val_mps;
             }
             p_state_idx = TRANS_IDX_LPS[p_state_idx] as usize;
+        } else {
+            // MPS path
+            bin_val = val_mps;
+            p_state_idx = TRANS_IDX_MPS[p_state_idx] as usize;
         }
 
         self.ctx_table[ctx_idx] = (p_state_idx as u8) << 1 | val_mps;
 
-        // 9.3.3.2.2 Renormalization process
         self.renorm()?;
         trace!("decode_bin ctxIdx={} bin={}", ctx_idx, bin_val);
         Ok(bin_val)
@@ -998,7 +999,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         for i in 0..4 {
             let accessor = NeighborAccessor::new(slice, mb_addr, curr_mb);
             let ctx_idx_inc = Self::get_ctx_idx_inc_cbp_luma(&accessor, i);
-            
+
 
             let bin = self.decode_bin(ctx_idx_offset + ctx_idx_inc)?;
             cbp_luma |= (bin as u8) << i;
@@ -1014,13 +1015,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
             let accessor = NeighborAccessor::new(slice, mb_addr, curr_mb);
             let ctx_idx_inc_0 = Self::get_ctx_idx_inc_cbp_chroma(&accessor, 0);
-            
+
 
             let bit0 = self.decode_bin(ctx_idx_offset_chroma + ctx_idx_inc_0)?; // bin 0
             if bit0 == 1 {
                 let accessor = NeighborAccessor::new(slice, mb_addr, curr_mb);
                 let ctx_idx_inc_1 = Self::get_ctx_idx_inc_cbp_chroma(&accessor, 1);
-                
+
 
                 let bit1 = self.decode_bin(ctx_idx_offset_chroma + ctx_idx_inc_1)?; // bin 1
                 if bit1 == 1 {
@@ -1522,7 +1523,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             let accessor = NeighborAccessor::new(slice, mb_addr, curr_mb);
             let ctx_idx_inc =
                 Self::get_ctx_idx_inc_coded_block_flag(&accessor, ctx_block_cat, blk_idx, comp_idx);
-            
+
 
             self.decode_bin(ctx_idx_offset_cbf + ctx_idx_inc)? == 1
         } else {
@@ -2312,7 +2313,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     if slice.pps.transform_8x8_mode_flag {
                         let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                         let ctx_idx_inc = Self::get_ctx_idx_inc_transform_size_8x8_flag(&accessor);
-                        
+
 
                         let props =
                             get_syntax_element_properties(SyntaxElement::TransformSize8x8Flag);
@@ -2414,7 +2415,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 num_ref_idx_l0_active_minus1,
                                 i,
                             )?;
-                            
+
 
                             sub_mbs[i].partitions[0].ref_idx_l0 = ref_idx;
                             sub_mbs[i].partitions[1].ref_idx_l0 = ref_idx;
@@ -2470,7 +2471,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let mvd_x = self.parse_mvd_cabac(&accessor, 0, 0, blk_idx)?;
                             let mvd_y = self.parse_mvd_cabac(&accessor, 0, 1, blk_idx)?;
-                            
+
 
                             let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                             sub_mbs[i].partitions[j].mvd_l0 = mvd_vec;
@@ -2508,7 +2509,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 num_ref_idx_l0_active_minus1,
                                 i,
                             )?;
-                            
+
                             partitions[i].ref_idx_l0 = ref_idx;
 
                             // Update curr_mb.motion
@@ -2545,7 +2546,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                         let mvd_x = self.parse_mvd_cabac(&accessor, 0, 0, blk_idx)?;
                         let mvd_y = self.parse_mvd_cabac(&accessor, 0, 1, blk_idx)?;
-                        
+
                         let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                         partitions[i].mvd_l0 = mvd_vec;
 
@@ -2645,7 +2646,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let ref_idx =
                                 self.parse_ref_idx_cabac(&accessor, 0, num_ref_idx_l0, i)?;
-                            
+
 
                             for j in 0..4 {
                                 sub_mbs[i].partitions[j].ref_idx_l0 = ref_idx;
@@ -2678,7 +2679,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let ref_idx =
                                 self.parse_ref_idx_cabac(&accessor, 1, num_ref_idx_l1, i)?;
-                            
+
 
                             for j in 0..4 {
                                 sub_mbs[i].partitions[j].ref_idx_l1 = ref_idx;
@@ -2722,7 +2723,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                                 let mvd_x = self.parse_mvd_cabac(&accessor, 0, 0, blk_idx)?;
                                 let mvd_y = self.parse_mvd_cabac(&accessor, 0, 1, blk_idx)?;
-                                
+
 
                                 let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                                 sub_mbs[i].partitions[j].mvd_l0 = mvd_vec;
@@ -2762,7 +2763,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                                 let mvd_x = self.parse_mvd_cabac(&accessor, 1, 0, blk_idx)?;
                                 let mvd_y = self.parse_mvd_cabac(&accessor, 1, 1, blk_idx)?;
-                                
+
 
                                 let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                                 sub_mbs[i].partitions[j].mvd_l1 = mvd_vec;
@@ -2810,7 +2811,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let ref_idx =
                                 self.parse_ref_idx_cabac(&accessor, 0, num_ref_idx_l0, i)?;
-                            
+
                             partitions[i].ref_idx_l0 = ref_idx;
 
                             let (w, h) = Self::get_mb_part_grid_size_b(b_type);
@@ -2836,7 +2837,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let ref_idx =
                                 self.parse_ref_idx_cabac(&accessor, 1, num_ref_idx_l1, i)?;
-                            
+
                             partitions[i].ref_idx_l1 = ref_idx;
 
                             let (w, h) = Self::get_mb_part_grid_size_b(b_type);
@@ -2862,7 +2863,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let mvd_x = self.parse_mvd_cabac(&accessor, 0, 0, blk_idx)?;
                             let mvd_y = self.parse_mvd_cabac(&accessor, 0, 1, blk_idx)?;
-                            
+
                             let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                             partitions[i].mvd_l0 = mvd_vec;
 
@@ -2887,7 +2888,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                             let mvd_x = self.parse_mvd_cabac(&accessor, 1, 0, blk_idx)?;
                             let mvd_y = self.parse_mvd_cabac(&accessor, 1, 1, blk_idx)?;
-                            
+
                             let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                             partitions[i].mvd_l1 = mvd_vec;
 
@@ -2943,10 +2944,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
     }
 
+    // 9.3.3.2.2 Renormalization process
+    // Instead of looping one bit at a time, compute how many shifts are needed
+    // and read that many bits in a single call. `self.range` is always non-zero
+    // and < 512 at this point, so `leading_zeros()` is in [23, 31] and the
+    // resulting shift is in [0, 8].
+    #[inline(always)]
     fn renorm(&mut self) -> ParseResult<()> {
-        while self.range < 256 {
-            self.range <<= 1;
-            self.offset = (self.offset << 1) | self.reader.u(1)?;
+        if self.range < 256 {
+            let shift = self.range.leading_zeros() - 23;
+            self.range <<= shift;
+            let bits = self.reader.u(shift as u8)?;
+            self.offset = (self.offset << shift) | bits;
         }
         Ok(())
     }

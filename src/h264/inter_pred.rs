@@ -58,53 +58,36 @@ pub fn interpolate_luma(
     }
 }
 
-macro_rules! vert_6tap_clip {
-    ($data:expr, $y:expr, $col:expr) => {{
-        let val = $data[$y][$col] as i32 - 5 * $data[$y + 1][$col] as i32
-            + 20 * $data[$y + 2][$col] as i32
-            + 20 * $data[$y + 3][$col] as i32
-            - 5 * $data[$y + 4][$col] as i32
-            + $data[$y + 5][$col] as i32;
-        ((val + 16) >> 5).clamp(0, 255) as u8
-    }};
-}
-
-macro_rules! vert_6tap_j {
-    ($intermediate:expr, $y:expr, $x:expr) => {{
-        let val = $intermediate[$y][$x] - 5 * $intermediate[$y + 1][$x]
-            + 20 * $intermediate[$y + 2][$x]
-            + 20 * $intermediate[$y + 3][$x]
-            - 5 * $intermediate[$y + 4][$x]
-            + $intermediate[$y + 5][$x];
-        ((val + 512) >> 10).clamp(0, 255) as u8
-    }};
-}
-
-macro_rules! clip_i32 {
-    ($val:expr) => {
-        ((($val) + 16) >> 5).clamp(0, 255) as u8
+macro_rules! horiz_6tap_val {
+    ($row:expr, $x:expr) => {
+        ($row[$x] as i32) - 5 * ($row[$x + 1] as i32) + 20 * ($row[$x + 2] as i32)
+            + 20 * ($row[$x + 3] as i32) - 5 * ($row[$x + 4] as i32) + ($row[$x + 5] as i32)
     };
 }
 
-macro_rules! filter_6tap {
-    ($p:expr) => {{
-        let p = &$p[..6];
-        (p[0] as i32) - 5 * (p[1] as i32) + 20 * (p[2] as i32) + 20 * (p[3] as i32)
-            - 5 * (p[4] as i32)
-            + (p[5] as i32)
-    }};
-}
-
-macro_rules! horiz_6tap_clip {
-    ($row:expr, $x:expr) => {{
-        let val = filter_6tap!(&$row[$x..$x + 6]);
-        ((val + 16) >> 5).clamp(0, 255) as u8
-    }};
+macro_rules! vert_6tap_val {
+    ($r0:expr, $r1:expr, $r2:expr, $r3:expr, $r4:expr, $r5:expr, $x:expr) => {
+        ($r0[$x] as i32) - 5 * ($r1[$x] as i32) + 20 * ($r2[$x] as i32)
+            + 20 * ($r3[$x] as i32) - 5 * ($r4[$x] as i32) + ($r5[$x] as i32)
+    };
 }
 
 macro_rules! avg_u8 {
     ($a:expr, $b:expr $(,)?) => {
         (($a as u16 + $b as u16 + 1) >> 1) as u8
+    };
+}
+
+macro_rules! load_6_rows {
+    ($data:expr, $y:expr, $W:expr) => {
+        (
+            &$data[$y][..$W + 5],
+            &$data[$y + 1][..$W + 5],
+            &$data[$y + 2][..$W + 5],
+            &$data[$y + 3][..$W + 5],
+            &$data[$y + 4][..$W + 5],
+            &$data[$y + 5][..$W + 5],
+        )
     };
 }
 
@@ -182,9 +165,10 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
         for y in 0..buf_h {
             let cy = (y_int + (y as i32) - 2).clamp(0, plane_height - 1);
             let row = ref_plane.row(cy as isize);
+            let b = &mut buffer.data[y][..buf_w];
             for x in 0..buf_w {
                 let cx = (x_int + (x as i32) - 2).clamp(0, plane_width - 1);
-                buffer.data[y][x] = row[cx as usize];
+                b[x] = row[cx as usize];
             }
         }
     }
@@ -196,111 +180,126 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
         (2, 0) => {
             // b: horizontal 6-tap
             for y in 0..H {
-                let row = &data[y + 2];
+                let row = &data[y + 2][..W + 5];
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = horiz_6tap_clip!(row, x);
+                    d[x] = ((horiz_6tap_val!(row, x) + 16) >> 5).clamp(0, 255) as u8;
                 }
             }
         }
         (0, 2) => {
             // h: vertical 6-tap
             for y in 0..H {
+                let (r0, r1, r2, r3, r4, r5) = load_6_rows!(data, y, W);
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = vert_6tap_clip!(data, y, x + 2);
+                    d[x] = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x + 2) + 16) >> 5).clamp(0, 255) as u8;
                 }
             }
         }
-
         // Quarter-pel positions (Table 8-12, Equations 8-250 to 8-252)
         (1, 0) => {
             // a = avg(G, b)
             for y in 0..H {
-                let row = &data[y + 2];
+                let row = &data[y + 2][..W + 5];
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(row[x + 2], horiz_6tap_clip!(row, x));
+                    let b_val = ((horiz_6tap_val!(row, x) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(row[x + 2], b_val);
                 }
             }
         }
         (3, 0) => {
             // c = avg(H, b)
             for y in 0..H {
-                let row = &data[y + 2];
+                let row = &data[y + 2][..W + 5];
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(row[x + 3], horiz_6tap_clip!(row, x));
+                    let b_val = ((horiz_6tap_val!(row, x) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(row[x + 3], b_val);
                 }
             }
         }
         (0, 1) => {
             // d = avg(G, h)
             for y in 0..H {
+                let (r0, r1, r2, r3, r4, r5) = load_6_rows!(data, y, W);
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(data[y + 2][x + 2], vert_6tap_clip!(data, y, x + 2));
+                    let h_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x + 2) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(r2[x + 2], h_val);
                 }
             }
         }
         (0, 3) => {
             // n = avg(M, h)
             for y in 0..H {
+                let (r0, r1, r2, r3, r4, r5) = load_6_rows!(data, y, W);
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(data[y + 3][x + 2], vert_6tap_clip!(data, y, x + 2));
+                    let h_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x + 2) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(r3[x + 2], h_val);
                 }
             }
         }
         (1, 1) => {
             // e = avg(b, h)
             for y in 0..H {
-                let row = &data[y + 2];
+                let (r0, r1, r2, r3, r4, r5) = load_6_rows!(data, y, W);
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(horiz_6tap_clip!(row, x), vert_6tap_clip!(data, y, x + 2),);
+                    let b_val = ((horiz_6tap_val!(r2, x) + 16) >> 5).clamp(0, 255) as u8;
+                    let h_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x + 2) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(b_val, h_val);
                 }
             }
         }
         (3, 1) => {
             // g = avg(b, m)
             for y in 0..H {
-                let row = &data[y + 2];
+                let (r0, r1, r2, r3, r4, r5) = load_6_rows!(data, y, W);
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] = avg_u8!(horiz_6tap_clip!(row, x), vert_6tap_clip!(data, y, x + 3),);
+                    let b_val = ((horiz_6tap_val!(r2, x) + 16) >> 5).clamp(0, 255) as u8;
+                    let m_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x + 3) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(b_val, m_val);
                 }
             }
         }
         (1, 3) => {
             // p = avg(h, s)
             for y in 0..H {
+                let (r0, r1, r2, r3, r4, r5) = load_6_rows!(data, y, W);
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] =
-                        avg_u8!(vert_6tap_clip!(data, y, x + 2), horiz_6tap_clip!(data[y + 3], x),);
+                    let h_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x + 2) + 16) >> 5).clamp(0, 255) as u8;
+                    let s_val = ((horiz_6tap_val!(r3, x) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(h_val, s_val);
                 }
             }
         }
         (3, 3) => {
             // r = avg(m, s)
             for y in 0..H {
+                let (r0, r1, r2, r3, r4, r5) = load_6_rows!(data, y, W);
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
                 for x in 0..W {
-                    d[x] =
-                        avg_u8!(vert_6tap_clip!(data, y, x + 3), horiz_6tap_clip!(data[y + 3], x),);
+                    let m_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x + 3) + 16) >> 5).clamp(0, 255) as u8;
+                    let s_val = ((horiz_6tap_val!(r3, x) + 16) >> 5).clamp(0, 255) as u8;
+                    d[x] = avg_u8!(m_val, s_val);
                 }
             }
         }
-
         // Cases needing j (center half-sample, Equation 8-247)
         // j requires two-pass filtering: horizontal into unclipped intermediate,
         // then vertical on the intermediate results.
         (2, 2) | (2, 1) | (2, 3) | (1, 2) | (3, 2) => {
             let mut intermediate = [[0i32; 16]; 21];
             for y in 0..buf_h {
+                let r = &data[y][..W + 5];
+                let out = &mut intermediate[y][..W];
                 for x in 0..W {
-                    intermediate[y][x] = filter_6tap!(&data[y][x..x + 6]);
+                    out[x] = horiz_6tap_val!(r, x);
                 }
             }
 
@@ -308,57 +307,60 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
                 (2, 2) => {
                     // j: two-pass 6-tap
                     for y in 0..H {
+                        let (r0, r1, r2, r3, r4, r5) = load_6_rows!(intermediate, y, W);
                         let d = &mut dst[y * dst_stride..y * dst_stride + W];
                         for x in 0..W {
-                            d[x] = vert_6tap_j!(intermediate, y, x);
+                            d[x] = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x) + 512) >> 10).clamp(0, 255) as u8;
                         }
                     }
                 }
                 (2, 1) => {
                     // f = avg(b, j)
                     for y in 0..H {
+                        let (r0, r1, r2, r3, r4, r5) = load_6_rows!(intermediate, y, W);
                         let d = &mut dst[y * dst_stride..y * dst_stride + W];
                         for x in 0..W {
-                            d[x] = avg_u8!(
-                                clip_i32!(intermediate[y + 2][x]),
-                                vert_6tap_j!(intermediate, y, x),
-                            );
+                            let j_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x) + 512) >> 10).clamp(0, 255) as u8;
+                            let b_val = ((r2[x] + 16) >> 5).clamp(0, 255) as u8;
+                            d[x] = avg_u8!(b_val, j_val);
                         }
                     }
                 }
                 (2, 3) => {
                     // q = avg(j, s)
                     for y in 0..H {
+                        let (r0, r1, r2, r3, r4, r5) = load_6_rows!(intermediate, y, W);
                         let d = &mut dst[y * dst_stride..y * dst_stride + W];
                         for x in 0..W {
-                            d[x] = avg_u8!(
-                                vert_6tap_j!(intermediate, y, x),
-                                clip_i32!(intermediate[y + 3][x]),
-                            );
+                            let j_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x) + 512) >> 10).clamp(0, 255) as u8;
+                            let s_val = ((r3[x] + 16) >> 5).clamp(0, 255) as u8;
+                            d[x] = avg_u8!(j_val, s_val);
                         }
                     }
                 }
                 (1, 2) => {
                     // i = avg(h, j)
                     for y in 0..H {
+                        let (d0, d1, d2, d3, d4, d5) = load_6_rows!(data, y, W);
+                        let (r0, r1, r2, r3, r4, r5) = load_6_rows!(intermediate, y, W);
                         let d = &mut dst[y * dst_stride..y * dst_stride + W];
                         for x in 0..W {
-                            d[x] = avg_u8!(
-                                vert_6tap_clip!(data, y, x + 2),
-                                vert_6tap_j!(intermediate, y, x),
-                            );
+                            let h_val = ((vert_6tap_val!(d0, d1, d2, d3, d4, d5, x + 2) + 16) >> 5).clamp(0, 255) as u8;
+                            let j_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x) + 512) >> 10).clamp(0, 255) as u8;
+                            d[x] = avg_u8!(h_val, j_val);
                         }
                     }
                 }
                 (3, 2) => {
                     // k = avg(j, m)
                     for y in 0..H {
+                        let (d0, d1, d2, d3, d4, d5) = load_6_rows!(data, y, W);
+                        let (r0, r1, r2, r3, r4, r5) = load_6_rows!(intermediate, y, W);
                         let d = &mut dst[y * dst_stride..y * dst_stride + W];
                         for x in 0..W {
-                            d[x] = avg_u8!(
-                                vert_6tap_j!(intermediate, y, x),
-                                vert_6tap_clip!(data, y, x + 3),
-                            );
+                            let m_val = ((vert_6tap_val!(d0, d1, d2, d3, d4, d5, x + 3) + 16) >> 5).clamp(0, 255) as u8;
+                            let j_val = ((vert_6tap_val!(r0, r1, r2, r3, r4, r5, x) + 512) >> 10).clamp(0, 255) as u8;
+                            d[x] = avg_u8!(j_val, m_val);
                         }
                     }
                 }
@@ -440,11 +442,12 @@ pub fn interpolate_chroma(
                         for y in 0..height as usize {
                             let d = &mut dst[y * dst_stride..y * dst_stride + $w];
                             let x_start = x_int as usize;
-                            let mut val_a = row[x_start] as i16;
+                            let src = &row[x_start..x_start + $w + 1];
+                            let dest = &mut d[..$w];
                             for x in 0..$w {
-                                let val_b = row[x_start + x + 1] as i16;
-                                d[x] = ((w00 * val_a + w10 * val_b + 4) >> 3) as u8;
-                                val_a = val_b;
+                                let val_a = src[x] as i16;
+                                let val_b = src[x + 1] as i16;
+                                dest[x] = ((w00 * val_a + w10 * val_b + 4) >> 3) as u8;
                             }
                             if y + 1 < height as usize {
                                 row = ref_plane.row((y_int + y as i32 + 1) as isize);
@@ -459,10 +462,13 @@ pub fn interpolate_chroma(
                             let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
                             let d = &mut dst[y * dst_stride..y * dst_stride + $w];
                             let x_start = x_int as usize;
+                            let src0 = &row[x_start..x_start + $w];
+                            let src1 = &row1[x_start..x_start + $w];
+                            let dest = &mut d[..$w];
                             for x in 0..$w {
-                                let val_a = row[x_start + x] as i16;
-                                let val_c = row1[x_start + x] as i16;
-                                d[x] = ((w00 * val_a + w01 * val_c + 4) >> 3) as u8;
+                                let val_a = src0[x] as i16;
+                                let val_c = src1[x] as i16;
+                                dest[x] = ((w00 * val_a + w01 * val_c + 4) >> 3) as u8;
                             }
                             row = row1;
                         }
@@ -481,20 +487,20 @@ pub fn interpolate_chroma(
                             let d = &mut dst[y * dst_stride..y * dst_stride + $w];
                             let x_start = x_int as usize;
 
-                            let mut val_a = row[x_start] as i16;
-                            let mut val_c = row1[x_start] as i16;
+                            let src0 = &row[x_start..x_start + $w + 1];
+                            let src1 = &row1[x_start..x_start + $w + 1];
+                            let dest = &mut d[..$w];
 
                             for x in 0..$w {
-                                let val_b = row[x_start + x + 1] as i16;
-                                let val_d = row1[x_start + x + 1] as i16;
+                                let val_a = src0[x] as i16;
+                                let val_b = src0[x + 1] as i16;
+                                let val_c = src1[x] as i16;
+                                let val_d = src1[x + 1] as i16;
 
                                 // Equation 8-270:
                                 // predPartLXC[x, y] = ( (8-xFrac)*(8-yFrac)*A + xFrac*(8-yFrac)*B + ... + 32 ) >> 6
                                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
-                                d[x] = prediction as u8;
-
-                                val_a = val_b;
-                                val_c = val_d;
+                                dest[x] = prediction as u8;
                             }
                             row = row1;
                         }

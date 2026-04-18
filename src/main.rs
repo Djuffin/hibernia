@@ -28,10 +28,12 @@ fn main() {
     let start = Instant::now();
     let args: Vec<String> = env::args().collect();
     let input_filename: String;
+    let output_filename: Option<String>;
     if args.len() > 1 {
         input_filename = args[1].clone();
+        output_filename = if args.len() > 2 { Some(args[2].clone()) } else { None };
     } else {
-        print!("No input file");
+        println!("Usage: hibernia <input.h264> [output.y4m]");
         return;
     }
 
@@ -44,8 +46,7 @@ fn main() {
     let mut frame_count = 0;
 
     {
-        let output_file = fs::File::create("output.y4m").expect("can't create output.y4m");
-        let mut writer_opt = Some(io::BufWriter::new(output_file));
+        let mut writer_opt = output_filename.map(|f| io::BufWriter::new(fs::File::create(&f).unwrap_or_else(|_| panic!("can't create {f}"))));
         let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<fs::File>>> = None;
 
         let mut process_frame = |pic: h264::decoder::Picture| {
@@ -54,6 +55,12 @@ fn main() {
             let display_height = pic.crop.display_height;
             let crop_left = pic.crop.crop_left;
             let crop_top = pic.crop.crop_top;
+
+            if writer_opt.is_none() && encoder_opt.is_none() {
+                info!("Decoded frame #{} {} x {}", frame_count, display_width, display_height);
+                frame_count += 1;
+                return;
+            }
 
             if encoder_opt.is_none() {
                 if let Some(writer) = writer_opt.take() {

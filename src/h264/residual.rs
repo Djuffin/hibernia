@@ -372,34 +372,36 @@ pub fn transform_dc(block: &Block4x4) -> Block4x4 {
         [ 1 -1  1 -1 ]   [ b30 b31 b32 b33 ]   [ 1 -1  1 -1 ]
     */
 
-    // This is a temporary storage for the intermediate matrix after first multiplication
-    let mut f = [[0i32; 4]; 4];
+    let row0 = i32x4::new(b[0]);
+    let row1 = i32x4::new(b[1]);
+    let row2 = i32x4::new(b[2]);
+    let row3 = i32x4::new(b[3]);
 
-    // Calculate the result of the first multiplication using only +/-.
-    for j in 0..4 {
-        let b0 = b[0][j];
-        let b1 = b[1][j];
-        let b2 = b[2][j];
-        let b3 = b[3][j];
+    let [mut c0, mut c1, mut c2, mut c3] = i32x4::transpose([row0, row1, row2, row3]);
 
-        f[0][j] = b0 + b1 + b2 + b3;
-        f[1][j] = b0 + b1 - b2 - b3;
-        f[2][j] = b0 - b1 - b2 + b3;
-        f[3][j] = b0 - b1 + b2 - b3;
-    }
+    // First pass: 1D transform on the columns.
+    let f0 = c0 + c1 + c2 + c3;
+    let f1 = c0 + c1 - c2 - c3;
+    let f2 = c0 - c1 - c2 + c3;
+    let f3 = c0 - c1 + c2 - c3;
 
-    // Calculate the final result using the intermediate 'f' matrix.
-    for i in 0..4 {
-        let f0 = f[i][0];
-        let f1 = f[i][1];
-        let f2 = f[i][2];
-        let f3 = f[i][3];
+    c0 = f0;
+    c1 = f1;
+    c2 = f2;
+    c3 = f3;
 
-        r[i][0] = f0 + f1 + f2 + f3;
-        r[i][1] = f0 + f1 - f2 - f3;
-        r[i][2] = f0 - f1 - f2 + f3;
-        r[i][3] = f0 - f1 + f2 - f3;
-    }
+    let [r0, r1, r2, r3] = i32x4::transpose([c0, c1, c2, c3]);
+
+    // Second pass: 1D transform on the rows.
+    let h0 = r0 + r1 + r2 + r3;
+    let h1 = r0 + r1 - r2 - r3;
+    let h2 = r0 - r1 - r2 + r3;
+    let h3 = r0 - r1 + r2 - r3;
+
+    r[0] = h0.to_array();
+    r[1] = h1.to_array();
+    r[2] = h2.to_array();
+    r[3] = h3.to_array();
 
     result
 }

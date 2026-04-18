@@ -11,6 +11,18 @@ keywords = ["video", "h264", "avc", "decoder"]
 categories = ["multimedia::video"]
 default-run = "hibernia"
 
+exclude = [
+    "data/",
+    "spec/",
+    "demo/",
+    "trace.log",
+    "GEMINI.md",
+    "wasm.md",
+    ".github/",
+    ".vscode/",
+    ".cargo/"
+]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

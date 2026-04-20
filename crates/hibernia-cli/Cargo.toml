@@ -1,0 +1,19 @@
+[package]
+name = "hibernia-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for the Hibernia H.264 decoder"
+publish = false
+
+[[bin]]
+name = "hibernia"
+path = "src/main.rs"
+
+[dependencies]
+hibernia = { workspace = true }
+log = { workspace = true }
+v_frame = { workspace = true }
+y4m = { workspace = true }

@@ -12,7 +12,7 @@
                 "args": [
                     "build",
                     "--bin=hibernia",
-                    "--package=hibernia"
+                    "--package=hibernia-cli"
                 ],
                 "filter": {
                     "name": "hibernia",
@@ -31,7 +31,7 @@
                     "test",
                     "--no-run",
                     "--bin=hibernia",
-                    "--package=hibernia"
+                    "--package=hibernia-cli"
                 ],
                 "filter": {
                     "name": "hibernia",

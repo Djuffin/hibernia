@@ -1,11 +1,15 @@
 use std::fs;
 use std::io::{self, Cursor};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::h264;
 use crate::h264::nal_parser::NalParser;
 use crate::y4m_cmp::compare_y4m_buffers;
+
+fn workspace_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap()
+}
 
 fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
     let cursor = Cursor::new(encoded_video_buffer);
@@ -101,8 +105,8 @@ fn test_decoding_against_gold(
     fn stringify(e: io::Error) -> String {
         format!("IO error: {e}")
     }
-    let expected_y4m_buffer = fs::read(gold_y4m_filename).map_err(stringify)?;
-    let encoded_video_buffer = fs::read(encoded_file_name).map_err(stringify)?;
+    let expected_y4m_buffer = fs::read(workspace_root().join(gold_y4m_filename)).map_err(stringify)?;
+    let encoded_video_buffer = fs::read(workspace_root().join(encoded_file_name)).map_err(stringify)?;
 
     let decoding_output = decode_to_y4m(&encoded_video_buffer)?;
 
@@ -251,7 +255,7 @@ struct TestDir {
 
 impl TestDir {
     fn new(path: &str) -> io::Result<Self> {
-        let path = PathBuf::from(path);
+        let path = workspace_root().join(path);
         fs::create_dir_all(&path)?;
         Ok(Self { path })
     }

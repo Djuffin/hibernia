@@ -1,5 +1,5 @@
-use crate::h264::decoder::{Decoder, Picture};
-use crate::h264::nal_parser::NalParser;
+use hibernia::h264::decoder::{Decoder, Picture};
+use hibernia::h264::nal_parser::NalParser;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 

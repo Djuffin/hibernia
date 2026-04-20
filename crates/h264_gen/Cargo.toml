@@ -1,0 +1,14 @@
+[package]
+name = "h264_gen"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "H.264 test bitstream generator"
+publish = false
+
+[dependencies]
+hibernia = { workspace = true }
+schemars = { workspace = true }
+serde_json = { workspace = true }

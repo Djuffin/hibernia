@@ -23,9 +23,9 @@ This guide explains how to set up, build, and run the Hibernia WebAssembly (WASM
 
 The demo HTML page expects the compiled WebAssembly and JS bindings to be located in the `demo/pkg` directory.
 
-1. Build the WASM module for the web, targeting the `demo/pkg` output directory:
+1. Build the WASM module for the web, targeting the `demo/pkg` output directory. `--out-name hibernia` keeps the JS/WASM filenames stable regardless of the crate name, so `demo/index.html` can import `./pkg/hibernia.js` unchanged:
    ```
-   wasm-pack build --target web --out-dir demo/pkg
+   wasm-pack build crates/hibernia-wasm --target web --out-dir ../../demo/pkg --out-name hibernia
    ```
 
 2. Ensure the test video file is in the `demo/` directory. For example, you can copy one of the test assets:

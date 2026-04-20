@@ -1,0 +1,13 @@
+[package]
+name = "hplay"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GUI H.264 player built on the Hibernia decoder"
+publish = false
+
+[dependencies]
+hibernia = { workspace = true }
+iced = { workspace = true }

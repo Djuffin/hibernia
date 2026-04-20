@@ -1,0 +1,17 @@
+[package]
+name = "hibernia-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebAssembly bindings for the Hibernia H.264 decoder"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hibernia = { workspace = true }
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"

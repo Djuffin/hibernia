@@ -318,11 +318,6 @@ impl Decoder {
             NalUnitType::PicParameterSet => {
                 let pps = parser::parse_pps(&mut input).map_err(parse_error_handler)?;
                 info!("PPS: {:#?}", pps);
-                if pps.transform_8x8_mode_flag {
-                    return Err(DecodingError::FeatureNotSupported(
-                        "8x8 transform is not supported".into(),
-                    ));
-                }
                 if pps.slice_group.is_some() {
                     return Err(DecodingError::FeatureNotSupported(
                         "slice groups are not supported".into(),
@@ -448,9 +443,12 @@ impl Decoder {
                                 );
                             }
                             MbPredictionMode::Intra_8x8 => {
-                                return Err(DecodingError::FeatureNotSupported(
-                                    "Intra_8x8 prediction is not supported".into(),
-                                ));
+                                // Intra_8x8 sample prediction and the 8x8 inverse transform
+                                // are not implemented yet. Bitstream parsing is complete at
+                                // this point (CAVLC residual_luma de-interleaved into
+                                // residual.luma_level8x8). Skip reconstruction to let the
+                                // rest of the stream be parsed; decoded pixels for this
+                                // macroblock are left untouched.
                             }
                             MbPredictionMode::Intra_16x16 => {
                                 render_luma_16x16_intra_prediction(

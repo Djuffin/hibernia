@@ -16,7 +16,8 @@ use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, BMb, BMbType,
-    BSubMacroblock, BSubMbType, IMb, IMbType, Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode,
+    BSubMacroblock, BSubMbType, IMb, IMbType, Intra_4x4_SamplePredMode, Intra_8x8_SamplePredMode,
+    Intra_Chroma_Pred_Mode,
     Macroblock, MbAddr, MbMotion, MbNeighborName, MbPredictionMode, MotionVector, PMb, PMbType,
     PartitionInfo, PcmMb, SubMacroblock, SubMbType,
 };
@@ -906,6 +907,19 @@ pub fn parse_slice_header(
     }
 
     Ok(Slice::new(sps.clone(), pps.clone(), header))
+}
+
+// Section 8.3.1.1 Derivation process for Intra8x8PredMode.
+// Parsing-only stub: returns the default (DC) mode without consulting neighbors.
+// The resolved mode is not consumed anywhere outside the IMb struct — prediction
+// rendering and CABAC context derivation still reject Intra_8x8 downstream.
+pub fn calc_prev_intra8x8_pred_mode(
+    _slice: &Slice,
+    _mb: &IMb,
+    _mb_addr: MbAddr,
+    _blk_idx: usize,
+) -> Intra_8x8_SamplePredMode {
+    Intra_8x8_SamplePredMode::DC
 }
 
 // Section 8.3.1.1 Derivation process for Intra4x4PredMode

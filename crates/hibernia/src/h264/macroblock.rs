@@ -553,6 +553,36 @@ impl TryFrom<u32> for Intra_4x4_SamplePredMode {
     }
 }
 
+// Section 8.3.2 Intra_8x8 sample prediction — same mode numbering as Intra_4x4.
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive, PartialOrd, Ord)]
+pub enum Intra_8x8_SamplePredMode {
+    Vertical = 0,
+    Horizontal = 1,
+    #[default]
+    DC = 2,
+    Diagonal_Down_Left = 3,
+    Diagonal_Down_Right = 4,
+    Vertical_Right = 5,
+    Horizontal_Down = 6,
+    Vertical_Left = 7,
+    Horizontal_Up = 8,
+}
+
+impl Intra_8x8_SamplePredMode {
+    pub fn max_mode() -> Intra_8x8_SamplePredMode {
+        Intra_8x8_SamplePredMode::Horizontal_Up
+    }
+}
+
+impl TryFrom<u32> for Intra_8x8_SamplePredMode {
+    type Error = String;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        FromPrimitive::from_u32(value)
+            .ok_or_else(|| format!("Unknown 8x8 sample prediction mode: {value}"))
+    }
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum Intra_16x16_SamplePredMode {
@@ -649,6 +679,7 @@ pub struct IMb {
     pub mb_type: IMbType,
     pub transform_size_8x8_flag: bool,
     pub rem_intra4x4_pred_mode: [Intra_4x4_SamplePredMode; 16],
+    pub rem_intra8x8_pred_mode: [Intra_8x8_SamplePredMode; 4],
     pub intra_chroma_pred_mode: Intra_Chroma_Pred_Mode,
     pub coded_block_pattern: CodedBlockPattern,
     pub mb_qp_delta: i32,

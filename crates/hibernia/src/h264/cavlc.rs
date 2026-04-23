@@ -1,11 +1,12 @@
 use super::macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, BMb, BMbType, BSubMacroblock,
-    BSubMbType, IMb, IMbType, Intra_4x4_SamplePredMode, Macroblock, MbNeighborName,
-    MbPredictionMode, MotionVector, PMb, PMbType, PartitionInfo, PcmMb, SubMacroblock, SubMbType,
+    BSubMbType, IMb, IMbType, Intra_4x4_SamplePredMode, Intra_8x8_SamplePredMode, Macroblock,
+    MbNeighborName, MbPredictionMode, MotionVector, PMb, PMbType, PartitionInfo, PcmMb,
+    SubMacroblock, SubMbType,
 };
 use super::parser::{
-    calc_prev_intra4x4_pred_mode, calculate_motion, calculate_motion_b, more_rbsp_data, BitReader,
-    ParseResult,
+    calc_prev_intra4x4_pred_mode, calc_prev_intra8x8_pred_mode, calculate_motion,
+    calculate_motion_b, more_rbsp_data, BitReader, ParseResult,
 };
 use super::residual::Residual;
 use super::slice::{Slice, SliceType};
@@ -370,15 +371,31 @@ fn parse_residual_luma(
         let levels = residual.get_dc_levels_for(ColorPlane::Y);
         parse_residual_block(input, levels, nc)?;
     }
+    // Clause 7.3.5.3.1 residual_luma. CAVLC always uses four 4x4 sub-block calls per
+    // 8x8 region; the 8x8 transform just changes storage and interleaves the parsed
+    // coefficients into level8x8[i8x8][4*i + i4x4] before the inverse transform.
+    let transform_8x8 = pred_mode == MbPredictionMode::Intra_8x8;
     for i8x8 in 0..4 {
         if coded_block_pattern.luma() & (1 << i8x8) != 0 {
             for i4x4 in 0..4 {
                 let blk_idx = i8x8 * 4 + i4x4;
-                trace!(" luma BK {}", blk_idx);
-                let nc = calculate_nc(slice, blk_idx, residual, ColorPlane::Y);
-                let (levels_ref, total_coeff_ref) =
-                    residual.get_ac_levels_for(blk_idx, ColorPlane::Y);
-                *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
+                trace!(" luma BK {} (8x8 transform: {})", blk_idx, transform_8x8);
+                let nc = calculate_nc(slice, blk_idx as u8, residual, ColorPlane::Y);
+                if transform_8x8 {
+                    let mut tmp = [0i32; 16];
+                    let total_coeff = parse_residual_block(input, &mut tmp, nc)?;
+                    residual.luma_level4x4_nc[blk_idx] = total_coeff;
+                    // De-interleave the 4x4 sub-section into the 8x8 block per spec:
+                    // level8x8[i8x8][4*i + i4x4] = level4x4[i8x8*4 + i4x4][i]
+                    let target = &mut residual.luma_level8x8[i8x8].0;
+                    for i in 0..16 {
+                        target[4 * i + i4x4] = tmp[i];
+                    }
+                } else {
+                    let (levels_ref, total_coeff_ref) =
+                        residual.get_ac_levels_for(blk_idx as u8, ColorPlane::Y);
+                    *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
+                }
             }
         }
     }
@@ -543,6 +560,24 @@ pub fn parse_p_macroblock(
     block.coded_block_pattern =
         tables::code_num_to_inter_coded_block_pattern(coded_block_pattern_num)
             .ok_or("Invalid coded_block_pattern")?;
+
+    // Spec 7.3.5 macroblock_layer: transform_size_8x8_flag is parsed for non-I_NxN
+    // macroblocks when CodedBlockPatternLuma > 0, the PPS allows it, and every
+    // sub-macroblock partition is at least 8x8. For P macroblocks the only case
+    // where sub-partitions can go below 8x8 is when mb_type is P_8x8 or P_8x8ref0
+    // and some sub_mb_type has NumSubMbPart > 1.
+    let no_sub_mb_part_size_less_than_8x8 =
+        if mb_type == PMbType::P_8x8 || mb_type == PMbType::P_8x8ref0 {
+            sub_macroblocks.iter().all(|sm| sm.sub_mb_type.NumSubMbPart() == 1)
+        } else {
+            true
+        };
+    if slice.pps.transform_8x8_mode_flag
+        && block.coded_block_pattern.luma() != 0
+        && no_sub_mb_part_size_less_than_8x8
+    {
+        read_value!(input, block.transform_size_8x8_flag, f);
+    }
 
     if !block.coded_block_pattern.is_zero() {
         read_value!(input, block.mb_qp_delta, se);
@@ -714,6 +749,28 @@ pub fn parse_b_macroblock(
         tables::code_num_to_inter_coded_block_pattern(coded_block_pattern_num)
             .ok_or("Invalid coded_block_pattern")?;
 
+    // Spec 7.3.5 macroblock_layer: transform_size_8x8_flag is parsed for B macroblocks
+    // when CodedBlockPatternLuma > 0, PPS allows it, every sub-partition is at least
+    // 8x8, and (for B_Direct_16x16) direct_8x8_inference_flag is set.
+    let no_sub_mb_part_size_less_than_8x8 = if mb_type == BMbType::B_8x8 {
+        sub_macroblocks.iter().all(|sm| {
+            if sm.sub_mb_type == BSubMbType::B_Direct_8x8 {
+                slice.sps.direct_8x8_inference_flag
+            } else {
+                sm.sub_mb_type.NumSubMbPart() == 1
+            }
+        })
+    } else {
+        true
+    };
+    if slice.pps.transform_8x8_mode_flag
+        && block.coded_block_pattern.luma() != 0
+        && no_sub_mb_part_size_less_than_8x8
+        && (mb_type != BMbType::B_Direct_16x16 || slice.sps.direct_8x8_inference_flag)
+    {
+        read_value!(input, block.transform_size_8x8_flag, f);
+    }
+
     if !block.coded_block_pattern.is_zero() {
         read_value!(input, block.mb_qp_delta, se);
         let mut residual = Box::<Residual>::default();
@@ -782,8 +839,33 @@ pub fn parse_i_macroblock(
                     trace!("  blk:{blk_idx} prev: {prev_pred_mode} actual: {}", *mode);
                 }
             }
+            MbPredictionMode::Intra_8x8 => {
+                trace!("8x8 luma predictions");
+                for blk_idx in 0..block.rem_intra8x8_pred_mode.len() {
+                    let prev_pred_mode =
+                        calc_prev_intra8x8_pred_mode(slice, &block, this_mb_addr, blk_idx);
+
+                    let prev_intra8x8_pred_mode_flag: bool;
+                    read_value!(input, prev_intra8x8_pred_mode_flag, f);
+                    let mode = &mut block.rem_intra8x8_pred_mode[blk_idx];
+                    if prev_intra8x8_pred_mode_flag {
+                        *mode = prev_pred_mode
+                    } else {
+                        let rem_intra8x8_pred_mode: Intra_8x8_SamplePredMode;
+                        read_value!(input, rem_intra8x8_pred_mode, u, 3);
+                        if rem_intra8x8_pred_mode < prev_pred_mode {
+                            *mode = rem_intra8x8_pred_mode;
+                        } else {
+                            *mode = ((rem_intra8x8_pred_mode as u32) + 1)
+                                .try_into()
+                                .map_err(|_e| "rem_intra8x8_pred_mode is too large".to_string())?;
+                        }
+                    }
+                    trace!("  blk:{blk_idx} prev: {:?} actual: {:?}", prev_pred_mode, *mode);
+                }
+            }
             MbPredictionMode::Intra_16x16 => {}
-            _ => return Err("Intra_8x8 prediction is not supported".into()),
+            _ => return Err("Unexpected I-macroblock prediction mode".into()),
         };
         if slice.sps.ChromaArrayType().is_chroma_subsampled() {
             read_value!(input, block.intra_chroma_pred_mode, ue, 2);

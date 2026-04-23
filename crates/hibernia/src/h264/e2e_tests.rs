@@ -682,7 +682,7 @@ fn test_ffmpeg_all_intra() -> Result<(), String> {
 }
 
 #[test]
-#[ignore = "decoder does not yet support the 8x8 transform (transform_8x8_mode_flag)"]
+#[ignore = "CAVLC 8x8 parse works; 8x8 inverse transform and Intra_8x8 sample prediction are not implemented yet, so reconstructed pixels won't match"]
 fn test_ffmpeg_high_cavlc_8x8() -> Result<(), String> {
     let test_dir = TestDir::new("target/tmp_ffmpeg_high_cavlc_8x8").map_err(|e| e.to_string())?;
 

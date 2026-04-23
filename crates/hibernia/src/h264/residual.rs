@@ -19,6 +19,17 @@ pub struct Block2x2 {
     pub samples: [[i32; 2]; 2],
 }
 
+// 64 zig-zag-order coefficients for a single 8x8 luma residual block.
+// Wrapped in a struct because arrays larger than 32 do not auto-derive Default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LumaLevel8x8(pub [i32; 64]);
+
+impl Default for LumaLevel8x8 {
+    fn default() -> Self {
+        LumaLevel8x8([0; 64])
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Residual {
     pub prediction_mode: MbPredictionMode,
@@ -30,6 +41,10 @@ pub struct Residual {
     pub ac_level16x16_nc: [u8; 16],
     pub luma_level4x4: [[i32; 16]; 16],
     pub luma_level4x4_nc: [u8; 16],
+    // CAVLC 8x8 residual (Clause 7.3.5.3.1): four 8x8 blocks, each holding
+    // 64 coefficients in 8x8 scan order. In CAVLC, these are decoded as four
+    // 4x4 subsections and de-interleaved here via level8x8[i8x8][4*i + i4x4].
+    pub luma_level8x8: [LumaLevel8x8; 4],
 
     pub chroma_cb_dc_level: [i32; 4],
     pub chroma_cr_dc_level: [i32; 4],
@@ -90,12 +105,12 @@ impl Residual {
             ColorPlane::Y => match self.prediction_mode {
                 MbPredictionMode::Intra_16x16 => self.ac_level16x16_nc[blk_idx],
                 MbPredictionMode::Intra_4x4
+                | MbPredictionMode::Intra_8x8
                 | MbPredictionMode::Pred_L0
                 | MbPredictionMode::Pred_L1
                 | MbPredictionMode::BiPred
                 | MbPredictionMode::Direct
                 | MbPredictionMode::None => self.luma_level4x4_nc[blk_idx],
-                MbPredictionMode::Intra_8x8 => panic!("Intra_8x8 should be rejected by decoder"),
             },
 
             ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx],

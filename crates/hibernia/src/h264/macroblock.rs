@@ -104,6 +104,41 @@ pub const fn get_4x4luma_block_location(idx: u8) -> Point {
     LOCATIONS[idx as usize]
 }
 
+// Section 6.4.5 Inverse 8x8 luma block scanning process.
+// Four 8x8 blocks in raster order within a macroblock.
+pub const fn get_8x8luma_block_location(idx: u8) -> Point {
+    const LOCATIONS: [Point; 4] =
+        [Point { x: 0, y: 0 }, Point { x: 8, y: 0 }, Point { x: 0, y: 8 }, Point { x: 8, y: 8 }];
+    LOCATIONS[idx as usize]
+}
+
+// Section 6.4.13.3 Derivation process for 8x8 luma block indices
+fn get_8x8luma_block_index(p: Point) -> u8 {
+    let idx = 2 * (p.y / 8) + (p.x / 8);
+    idx as u8
+}
+
+// Section 6.4.11.2 Derivation process for neighboring 8x8 luma blocks
+pub fn get_8x8luma_block_neighbor(idx: u8, n: MbNeighborName) -> (u8, Option<MbNeighborName>) {
+    let p = get_8x8luma_block_location(idx);
+    let (x, y) = match n {
+        MbNeighborName::A => (p.x as i8 - 1, p.y as i8),
+        MbNeighborName::B => (p.x as i8, p.y as i8 - 1),
+        MbNeighborName::C => (p.x as i8 + 8, p.y as i8),
+        MbNeighborName::D => (p.x as i8 - 1, p.y as i8 - 1),
+    };
+    let (w, h) = (MB_WIDTH as i8, MB_HEIGHT as i8);
+    let (xn, yn) = ((x + w) % w, (y + h) % h);
+    let p = Point { x: x as u32, y: y as u32 };
+    let np = Point { x: xn as u32, y: yn as u32 };
+    let idx = get_8x8luma_block_index(np);
+    if p == np {
+        (idx, None)
+    } else {
+        (idx, Some(n))
+    }
+}
+
 // Section 6.4.7 Inverse 4x4 chroma block scanning process
 pub const fn get_4x4chroma_block_location(idx: u8) -> Point {
     const LOCATIONS: [Point; 4] =

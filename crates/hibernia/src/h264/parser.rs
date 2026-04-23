@@ -16,8 +16,8 @@ use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, BMb, BMbType,
-    BSubMacroblock, BSubMbType, IMb, IMbType, Intra_4x4_SamplePredMode, Intra_8x8_SamplePredMode,
-    Intra_Chroma_Pred_Mode,
+    get_8x8luma_block_neighbor, BSubMacroblock, BSubMbType, IMb, IMbType,
+    Intra_4x4_SamplePredMode, Intra_8x8_SamplePredMode, Intra_Chroma_Pred_Mode,
     Macroblock, MbAddr, MbMotion, MbNeighborName, MbPredictionMode, MotionVector, PMb, PMbType,
     PartitionInfo, PcmMb, SubMacroblock, SubMbType,
 };
@@ -909,17 +909,51 @@ pub fn parse_slice_header(
     Ok(Slice::new(sps.clone(), pps.clone(), header))
 }
 
-// Section 8.3.1.1 Derivation process for Intra8x8PredMode.
-// Parsing-only stub: returns the default (DC) mode without consulting neighbors.
-// The resolved mode is not consumed anywhere outside the IMb struct — prediction
-// rendering and CABAC context derivation still reject Intra_8x8 downstream.
+// Section 8.3.2.1 Derivation process for Intra8x8PredMode.
+// Returns predIntra8x8PredMode = min(intra8x8PredModeA, intra8x8PredModeB).
+// Per Clause 8.3.2.1, if either neighbor macroblock is unavailable, both are set
+// to DC (the min is DC); otherwise the neighbor's contribution is its own 8x8 mode,
+// or — if the neighbor is Intra_4x4 — the mode of the 4x4 block adjacent to the
+// 8x8 boundary (Eq. 8-72). Intra_4x4 and Intra_8x8 share the same 0..8 mode
+// numbering, so the 4x4→8x8 conversion is a direct u32 round-trip.
 pub fn calc_prev_intra8x8_pred_mode(
-    _slice: &Slice,
-    _mb: &IMb,
-    _mb_addr: MbAddr,
-    _blk_idx: usize,
+    slice: &Slice,
+    mb: &IMb,
+    mb_addr: MbAddr,
+    blk_idx: usize,
 ) -> Intra_8x8_SamplePredMode {
-    Intra_8x8_SamplePredMode::DC
+    let mut result = Intra_8x8_SamplePredMode::max_mode();
+    let default_mode = Intra_8x8_SamplePredMode::DC;
+    let blk_idx_u8 = blk_idx as u8;
+    for neighbor in [MbNeighborName::A, MbNeighborName::B] {
+        let (neighbor_8x8_idx, mb_neighbor) = get_8x8luma_block_neighbor(blk_idx_u8, neighbor);
+        let mode = if let Some(mb_neighbor_dir) = mb_neighbor {
+            if let Some(neighbor_mb) = slice.get_mb_neighbor(mb_addr, mb_neighbor_dir) {
+                if let Macroblock::I(imb) = neighbor_mb {
+                    match imb.MbPartPredMode(0) {
+                        MbPredictionMode::Intra_8x8 => {
+                            imb.rem_intra8x8_pred_mode[neighbor_8x8_idx as usize]
+                        }
+                        MbPredictionMode::Intra_4x4 => {
+                            let (adj_4x4, _) =
+                                get_4x4luma_block_neighbor(blk_idx_u8 * 4, neighbor);
+                            let m = imb.rem_intra4x4_pred_mode[adj_4x4 as usize] as u32;
+                            m.try_into().unwrap_or(default_mode)
+                        }
+                        _ => default_mode,
+                    }
+                } else {
+                    default_mode
+                }
+            } else {
+                return default_mode;
+            }
+        } else {
+            mb.rem_intra8x8_pred_mode[neighbor_8x8_idx as usize]
+        };
+        result = std::cmp::min(result, mode);
+    }
+    result
 }
 
 // Section 8.3.1.1 Derivation process for Intra4x4PredMode

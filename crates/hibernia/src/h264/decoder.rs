@@ -13,7 +13,7 @@ use super::inter_pred::{
 };
 use super::intra_pred::{
     point_to_plane_offset, render_chroma_intra_prediction, render_luma_16x16_intra_prediction,
-    render_luma_4x4_intra_prediction,
+    render_luma_4x4_intra_prediction, render_luma_8x8_intra_prediction,
 };
 use super::macroblock::{
     self, get_4x4chroma_block_neighbor, get_4x4luma_block_location, get_4x4luma_block_neighbor,
@@ -443,12 +443,14 @@ impl Decoder {
                                 );
                             }
                             MbPredictionMode::Intra_8x8 => {
-                                // Intra_8x8 sample prediction and the 8x8 inverse transform
-                                // are not implemented yet. Bitstream parsing is complete at
-                                // this point (CAVLC residual_luma de-interleaved into
-                                // residual.luma_level8x8). Skip reconstruction to let the
-                                // rest of the stream be parsed; decoded pixels for this
-                                // macroblock are left untouched.
+                                // Clause 8.3.2 prediction. 8x8 inverse transform (Clause
+                                // 8.5.13) is still TODO — residuals passed here come from
+                                // luma_level4x4 via Residual::restore and are all-zero for
+                                // Intra_8x8 macroblocks until the 8x8 transform lands, so
+                                // reconstructed samples currently equal predicted samples.
+                                render_luma_8x8_intra_prediction(
+                                    slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
+                                );
                             }
                             MbPredictionMode::Intra_16x16 => {
                                 render_luma_16x16_intra_prediction(

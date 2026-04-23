@@ -1,5 +1,16 @@
-use super::parser::{BitReader, ParseResult};
+use super::macroblock::{
+    get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, BMb, BMbType, BSubMacroblock,
+    BSubMbType, IMb, IMbType, Intra_4x4_SamplePredMode, Macroblock, MbNeighborName,
+    MbPredictionMode, MotionVector, PMb, PMbType, PartitionInfo, PcmMb, SubMacroblock, SubMbType,
+};
+use super::parser::{
+    calc_prev_intra4x4_pred_mode, calculate_motion, calculate_motion_b, more_rbsp_data, BitReader,
+    ParseResult,
+};
+use super::residual::Residual;
+use super::slice::{Slice, SliceType};
 use super::tables;
+use super::ColorPlane;
 use crate::{cast_or_error, read_value};
 use log::trace;
 
@@ -316,6 +327,565 @@ pub fn parse_residual_block(
     }
     trace!("coeff_level: {:?}", coeff_level);
     Ok(coeff_token.total_coeffs)
+}
+
+fn calculate_nc(slice: &Slice, blk_idx: u8, residual: &Residual, plane: ColorPlane) -> i32 {
+    let get_block_neighbor =
+        if plane.is_luma() { get_4x4luma_block_neighbor } else { get_4x4chroma_block_neighbor };
+
+    let mut total_nc = 0;
+    let mut nc_counted = 0;
+    let this_mb_addr = slice.get_next_mb_addr();
+    for neighbor in [MbNeighborName::A, MbNeighborName::B] {
+        let (block_neighbor_idx, mb_neighbor) = get_block_neighbor(blk_idx, neighbor);
+        if let Some(mb_neighbor) = mb_neighbor {
+            if let Some(mb) = slice.get_mb_neighbor(this_mb_addr, mb_neighbor) {
+                let nc = mb.get_nc(block_neighbor_idx, plane) as i32;
+                total_nc += nc;
+                nc_counted += 1;
+            }
+        } else {
+            let nc = residual.get_nc(block_neighbor_idx, plane) as i32;
+            total_nc += nc;
+            nc_counted += 1;
+        }
+    }
+    if nc_counted == 2 {
+        total_nc = (total_nc + 1) / 2;
+    }
+    total_nc
+}
+
+fn parse_residual_luma(
+    input: &mut BitReader,
+    slice: &Slice,
+    residual: &mut Residual,
+) -> ParseResult<()> {
+    trace!("parse_residual_luma");
+    let pred_mode = residual.prediction_mode;
+    let coded_block_pattern = residual.coded_block_pattern;
+    if pred_mode == MbPredictionMode::Intra_16x16 {
+        trace!(" luma DC");
+        let nc = calculate_nc(slice, 0, residual, ColorPlane::Y);
+        let levels = residual.get_dc_levels_for(ColorPlane::Y);
+        parse_residual_block(input, levels, nc)?;
+    }
+    for i8x8 in 0..4 {
+        if coded_block_pattern.luma() & (1 << i8x8) != 0 {
+            for i4x4 in 0..4 {
+                let blk_idx = i8x8 * 4 + i4x4;
+                trace!(" luma BK {}", blk_idx);
+                let nc = calculate_nc(slice, blk_idx, residual, ColorPlane::Y);
+                let (levels_ref, total_coeff_ref) =
+                    residual.get_ac_levels_for(blk_idx, ColorPlane::Y);
+                *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn parse_residual(
+    input: &mut BitReader,
+    slice: &Slice,
+    residual: &mut Residual,
+) -> ParseResult<()> {
+    trace!("parse_residual");
+    let pred_mode = residual.prediction_mode;
+    let coded_block_pattern = residual.coded_block_pattern;
+    parse_residual_luma(input, slice, residual)?;
+    if slice.sps.ChromaArrayType().is_chroma_subsampled() {
+        if coded_block_pattern.chroma() & 3 != 0 {
+            for plane in [ColorPlane::Cb, ColorPlane::Cr] {
+                let levels = residual.get_dc_levels_for(plane);
+                trace!(" chroma {:?} DC", plane);
+                let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
+                parse_residual_block(input, levels, nc)?;
+            }
+        }
+
+        for plane in [ColorPlane::Cb, ColorPlane::Cr] {
+            if coded_block_pattern.chroma() & 2 != 0 {
+                for blk_idx in 0..4 {
+                    let nc = calculate_nc(slice, blk_idx, residual, plane);
+                    let (levels_ref, total_coeff_ref) = residual.get_ac_levels_for(blk_idx, plane);
+
+                    trace!(" chroma {:?} BK {}", plane, blk_idx);
+                    *total_coeff_ref = parse_residual_block(input, levels_ref, nc)?;
+                }
+            }
+        }
+    } else {
+        return Err("YUV 4:4:4 residual parsing is not supported".into());
+    }
+    Ok(())
+}
+
+// Section 7.3.5 Macroblock layer syntax
+pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
+    let mb_type_val: u32;
+    read_value!(input, mb_type_val, ue);
+
+    if matches!(slice.header.slice_type, SliceType::I | SliceType::SI) {
+        let mb_type = IMbType::try_from(mb_type_val)?;
+        parse_i_macroblock(input, slice, mb_type)
+    } else if slice.header.slice_type == SliceType::B {
+        // Table 7-14: B slice mb_type 0-22 are B types, 23-48 are I types (subtract 23)
+        if mb_type_val >= 23 {
+            let mb_type = IMbType::try_from(mb_type_val - 23)?;
+            parse_i_macroblock(input, slice, mb_type)
+        } else {
+            let mb_type = BMbType::try_from(mb_type_val)?;
+            parse_b_macroblock(input, slice, mb_type)
+        }
+    } else if mb_type_val >= 5 {
+        // The macroblock types for P and SP slices are specified in Tables 7-13 and 7-11.
+        // mb_type values 0 to 4 are specified in Table 7-13 and mb_type values 5 to 30 are
+        // specified in Table 7-11, indexed by subtracting 5 from the value of mb_type.
+        let mb_type = IMbType::try_from(mb_type_val - 5)?;
+        parse_i_macroblock(input, slice, mb_type)
+    } else {
+        let mb_type = PMbType::try_from(mb_type_val)?;
+        parse_p_macroblock(input, slice, mb_type)
+    }
+}
+
+pub fn parse_p_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    mb_type: PMbType,
+) -> ParseResult<Macroblock> {
+    let mut block = PMb { mb_type, transform_size_8x8_flag: false, qp: 0, ..PMb::default() };
+    let this_mb_addr = slice.get_next_mb_addr();
+    let num_mb_part = block.NumMbPart();
+    let mb_part_pred_mode = block.MbPartPredMode(0);
+
+    let mut partitions = [PartitionInfo::default(); 4];
+    let mut sub_macroblocks = [SubMacroblock::default(); 4];
+
+    if mb_part_pred_mode != MbPredictionMode::None {
+        // P_L0_16x16, P_L0_L0_16x8, P_L0_L0_8x16
+        assert!(num_mb_part <= partitions.len());
+
+        if mb_part_pred_mode != MbPredictionMode::Pred_L1 {
+            if slice.header.num_ref_idx_l0_active_minus1 > 0 {
+                for i in 0..num_mb_part {
+                    read_value!(
+                        input,
+                        partitions[i].ref_idx_l0,
+                        te,
+                        slice.header.num_ref_idx_l0_active_minus1
+                    );
+                }
+            }
+
+            for i in 0..num_mb_part {
+                let mvd_x: i32;
+                let mvd_y: i32;
+                read_value!(input, mvd_x, se);
+                read_value!(input, mvd_y, se);
+                partitions[i].mvd_l0 = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+            }
+        }
+    } else {
+        // P_8x8 or P_8x8ref0
+        for i in 0..sub_macroblocks.len() {
+            // 4 sub-macroblocks
+            let sub_mb_type_val: u32;
+            read_value!(input, sub_mb_type_val, ue);
+            let sub_mb_type = SubMbType::try_from(sub_mb_type_val)?;
+            sub_macroblocks[i].sub_mb_type = sub_mb_type;
+        }
+
+        let mut ref_idx_l0 = [0u8; 4];
+        if slice.header.num_ref_idx_l0_active_minus1 > 0 {
+            for i in 0..4 {
+                if mb_type == PMbType::P_8x8ref0 {
+                    ref_idx_l0[i] = 0;
+                } else {
+                    read_value!(
+                        input,
+                        ref_idx_l0[i],
+                        te,
+                        slice.header.num_ref_idx_l0_active_minus1
+                    );
+                }
+            }
+        }
+
+        let mut mvd_l0 = [[MotionVector::default(); 4]; 4]; // For each sub-mb, for each partition
+        for i in 0..sub_macroblocks.len() {
+            // sub-macroblock index
+            let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
+            for j in 0..num_sub_mb_part {
+                // sub-macroblock partition index
+                let mvd_x: i32;
+                let mvd_y: i32;
+                read_value!(input, mvd_x, se);
+                read_value!(input, mvd_y, se);
+                mvd_l0[i][j] = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+            }
+        }
+
+        for i in 0..sub_macroblocks.len() {
+            let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
+            for j in 0..num_sub_mb_part {
+                sub_macroblocks[i].partitions[j].ref_idx_l0 = ref_idx_l0[i];
+                sub_macroblocks[i].partitions[j].mvd_l0 = mvd_l0[i][j];
+            }
+        }
+    }
+
+    block.motion = calculate_motion(slice, this_mb_addr, mb_type, &partitions, &sub_macroblocks);
+
+    let coded_block_pattern_num: u8;
+    read_value!(input, coded_block_pattern_num, ue, 8);
+    block.coded_block_pattern =
+        tables::code_num_to_inter_coded_block_pattern(coded_block_pattern_num)
+            .ok_or("Invalid coded_block_pattern")?;
+
+    if !block.coded_block_pattern.is_zero() {
+        read_value!(input, block.mb_qp_delta, se);
+        let mut residual = Box::<Residual>::default();
+        residual.coded_block_pattern = block.coded_block_pattern;
+        residual.prediction_mode = block.MbPartPredMode(0);
+        parse_residual(input, slice, &mut residual)?;
+        block.residual = Some(residual);
+    }
+
+    Ok(Macroblock::P(block))
+}
+
+pub fn parse_b_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    mb_type: BMbType,
+) -> ParseResult<Macroblock> {
+    let mut block = BMb { mb_type, ..BMb::default() };
+    let this_mb_addr = slice.get_next_mb_addr();
+    let num_mb_part = mb_type.NumMbPart();
+
+    let mut partitions = [PartitionInfo::default(); 4];
+    let mut sub_macroblocks = [BSubMacroblock::default(); 4];
+
+    if mb_type == BMbType::B_Direct_16x16 {
+        // No ref_idx or mvd parsed — motion derived via direct prediction
+    } else if mb_type == BMbType::B_8x8 {
+        // Section 7.3.5.1: sub_mb_pred for B_8x8
+        // Parse 4 sub-macroblock types
+        for i in 0..4 {
+            let sub_mb_type_val: u32;
+            read_value!(input, sub_mb_type_val, ue);
+            sub_macroblocks[i].sub_mb_type = BSubMbType::try_from(sub_mb_type_val)?;
+        }
+
+        // ref_idx_l0 for each 8x8 partition where SubMbPredMode != Pred_L1 and != Direct
+        let mut ref_idx_l0 = [0u8; 4];
+        for i in 0..4 {
+            let mode = sub_macroblocks[i].sub_mb_type.SubMbPredMode();
+            if mode != MbPredictionMode::Pred_L1 && mode != MbPredictionMode::Direct
+                && slice.header.num_ref_idx_l0_active_minus1 > 0 {
+                    read_value!(
+                        input,
+                        ref_idx_l0[i],
+                        te,
+                        slice.header.num_ref_idx_l0_active_minus1
+                    );
+                }
+        }
+
+        // ref_idx_l1 for each 8x8 partition where SubMbPredMode != Pred_L0 and != Direct
+        let mut ref_idx_l1 = [0u8; 4];
+        for i in 0..4 {
+            let mode = sub_macroblocks[i].sub_mb_type.SubMbPredMode();
+            if mode != MbPredictionMode::Pred_L0 && mode != MbPredictionMode::Direct
+                && slice.header.num_ref_idx_l1_active_minus1 > 0 {
+                    read_value!(
+                        input,
+                        ref_idx_l1[i],
+                        te,
+                        slice.header.num_ref_idx_l1_active_minus1
+                    );
+                }
+        }
+
+        // mvd_l0 for sub-partitions where mode != Pred_L1 and != Direct
+        let mut mvd_l0 = [[MotionVector::default(); 4]; 4];
+        for i in 0..4 {
+            let mode = sub_macroblocks[i].sub_mb_type.SubMbPredMode();
+            if mode != MbPredictionMode::Pred_L1 && mode != MbPredictionMode::Direct {
+                let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
+                for j in 0..num_sub_mb_part {
+                    let mvd_x: i32;
+                    let mvd_y: i32;
+                    read_value!(input, mvd_x, se);
+                    read_value!(input, mvd_y, se);
+                    mvd_l0[i][j] = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+                }
+            }
+        }
+
+        // mvd_l1 for sub-partitions where mode != Pred_L0 and != Direct
+        let mut mvd_l1 = [[MotionVector::default(); 4]; 4];
+        for i in 0..4 {
+            let mode = sub_macroblocks[i].sub_mb_type.SubMbPredMode();
+            if mode != MbPredictionMode::Pred_L0 && mode != MbPredictionMode::Direct {
+                let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
+                for j in 0..num_sub_mb_part {
+                    let mvd_x: i32;
+                    let mvd_y: i32;
+                    read_value!(input, mvd_x, se);
+                    read_value!(input, mvd_y, se);
+                    mvd_l1[i][j] = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+                }
+            }
+        }
+
+        // Fill sub-macroblock partition info
+        for i in 0..4 {
+            let num_sub_mb_part = sub_macroblocks[i].sub_mb_type.NumSubMbPart();
+            for j in 0..num_sub_mb_part {
+                sub_macroblocks[i].partitions[j].ref_idx_l0 = ref_idx_l0[i];
+                sub_macroblocks[i].partitions[j].mvd_l0 = mvd_l0[i][j];
+                sub_macroblocks[i].partitions[j].ref_idx_l1 = ref_idx_l1[i];
+                sub_macroblocks[i].partitions[j].mvd_l1 = mvd_l1[i][j];
+            }
+        }
+    } else {
+        // Non-direct, non-8x8: 16x16, 16x8, 8x16
+        // ref_idx_l0 for partitions where MbPartPredMode != Pred_L1
+        for i in 0..num_mb_part {
+            let mode = mb_type.MbPartPredMode(i);
+            if mode != MbPredictionMode::Pred_L1
+                && slice.header.num_ref_idx_l0_active_minus1 > 0 {
+                    read_value!(
+                        input,
+                        partitions[i].ref_idx_l0,
+                        te,
+                        slice.header.num_ref_idx_l0_active_minus1
+                    );
+                }
+        }
+
+        // ref_idx_l1 for partitions where MbPartPredMode != Pred_L0
+        for i in 0..num_mb_part {
+            let mode = mb_type.MbPartPredMode(i);
+            if mode != MbPredictionMode::Pred_L0
+                && slice.header.num_ref_idx_l1_active_minus1 > 0 {
+                    read_value!(
+                        input,
+                        partitions[i].ref_idx_l1,
+                        te,
+                        slice.header.num_ref_idx_l1_active_minus1
+                    );
+                }
+        }
+
+        // mvd_l0 for partitions where MbPartPredMode != Pred_L1
+        for i in 0..num_mb_part {
+            let mode = mb_type.MbPartPredMode(i);
+            if mode != MbPredictionMode::Pred_L1 {
+                let mvd_x: i32;
+                let mvd_y: i32;
+                read_value!(input, mvd_x, se);
+                read_value!(input, mvd_y, se);
+                partitions[i].mvd_l0 = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+            }
+        }
+
+        // mvd_l1 for partitions where MbPartPredMode != Pred_L0
+        for i in 0..num_mb_part {
+            let mode = mb_type.MbPartPredMode(i);
+            if mode != MbPredictionMode::Pred_L0 {
+                let mvd_x: i32;
+                let mvd_y: i32;
+                read_value!(input, mvd_x, se);
+                read_value!(input, mvd_y, se);
+                partitions[i].mvd_l1 = MotionVector { x: mvd_x as i16, y: mvd_y as i16 };
+            }
+        }
+    }
+
+    block.motion = calculate_motion_b(slice, this_mb_addr, mb_type, &partitions, &sub_macroblocks);
+
+    let coded_block_pattern_num: u8;
+    read_value!(input, coded_block_pattern_num, ue, 8);
+    block.coded_block_pattern =
+        tables::code_num_to_inter_coded_block_pattern(coded_block_pattern_num)
+            .ok_or("Invalid coded_block_pattern")?;
+
+    if !block.coded_block_pattern.is_zero() {
+        read_value!(input, block.mb_qp_delta, se);
+        let mut residual = Box::<Residual>::default();
+        residual.coded_block_pattern = block.coded_block_pattern;
+        residual.prediction_mode = block.mb_type.MbPartPredMode(0);
+        parse_residual(input, slice, &mut residual)?;
+        block.residual = Some(residual);
+    }
+
+    Ok(Macroblock::B(block))
+}
+
+pub fn parse_i_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    mb_type: IMbType,
+) -> ParseResult<Macroblock> {
+    if mb_type == IMbType::I_PCM {
+        let mut block = PcmMb { qp: 0, ..PcmMb::default() };
+        input.align();
+
+        let luma_samples =
+            tables::MB_WIDTH * tables::MB_HEIGHT * tables::BIT_DEPTH / (u8::BITS as usize);
+        let chroma_samples = luma_samples >> 2; // assuming i420
+        block.pcm_sample_luma.reserve(luma_samples);
+        for _ in 0..luma_samples {
+            block.pcm_sample_luma.push(input.u(8)? as u8);
+        }
+        block.pcm_sample_chroma_cb.reserve(chroma_samples);
+        for _ in 0..chroma_samples {
+            block.pcm_sample_chroma_cb.push(input.u(8)? as u8);
+        }
+        for _ in 0..chroma_samples {
+            block.pcm_sample_chroma_cr.push(input.u(8)? as u8);
+        }
+        Ok(Macroblock::PCM(block))
+    } else {
+        let mut block = IMb { mb_type, qp: 0, ..IMb::default() };
+        let this_mb_addr = slice.get_next_mb_addr();
+        if slice.pps.transform_8x8_mode_flag && block.mb_type == IMbType::I_NxN {
+            read_value!(input, block.transform_size_8x8_flag, f);
+        }
+        match block.MbPartPredMode(0) {
+            MbPredictionMode::Intra_4x4 => {
+                trace!("4x4 luma predictions");
+                for blk_idx in 0..block.rem_intra4x4_pred_mode.len() {
+                    let prev_pred_mode =
+                        calc_prev_intra4x4_pred_mode(slice, &block, this_mb_addr, blk_idx);
+
+                    let prev_intra4x4_pred_mode_flag: bool;
+                    read_value!(input, prev_intra4x4_pred_mode_flag, f);
+                    let mode = &mut block.rem_intra4x4_pred_mode[blk_idx];
+                    if prev_intra4x4_pred_mode_flag {
+                        *mode = prev_pred_mode
+                    } else {
+                        let rem_intra4x4_pred_mode: Intra_4x4_SamplePredMode;
+                        read_value!(input, rem_intra4x4_pred_mode, u, 3);
+                        if rem_intra4x4_pred_mode < prev_pred_mode {
+                            *mode = rem_intra4x4_pred_mode;
+                        } else {
+                            *mode = ((rem_intra4x4_pred_mode as u32) + 1)
+                                .try_into()
+                                .map_err(|e| "rem_intra4x4_pred_mode is too large".to_string())?;
+                        }
+                    }
+                    trace!("  blk:{blk_idx} prev: {prev_pred_mode} actual: {}", *mode);
+                }
+            }
+            MbPredictionMode::Intra_16x16 => {}
+            _ => return Err("Intra_8x8 prediction is not supported".into()),
+        };
+        if slice.sps.ChromaArrayType().is_chroma_subsampled() {
+            read_value!(input, block.intra_chroma_pred_mode, ue, 2);
+        }
+        if block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16 {
+            block.coded_block_pattern = tables::mb_type_to_coded_block_pattern(block.mb_type)
+                .ok_or("Invalid coded_block_pattern")?;
+        } else {
+            let coded_block_pattern_num: u8;
+            read_value!(input, coded_block_pattern_num, ue, 8);
+            block.coded_block_pattern =
+                tables::code_num_to_intra_coded_block_pattern(coded_block_pattern_num)
+                    .ok_or("Invalid coded_block_pattern")?;
+        }
+
+        let mut result;
+        if !block.coded_block_pattern.is_zero()
+            || block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16
+        {
+            read_value!(input, block.mb_qp_delta, se);
+            let mut residual = Box::<Residual>::default();
+            residual.coded_block_pattern = block.coded_block_pattern;
+            residual.prediction_mode = block.MbPartPredMode(0);
+            parse_residual(input, slice, &mut residual)?;
+            result = Macroblock::I(block);
+            result.set_residual(Some(residual));
+        } else {
+            result = Macroblock::I(block);
+        }
+
+        Ok(result)
+    }
+}
+
+pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
+    loop {
+        let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
+        if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
+            let mb_skip_run: usize;
+            read_value!(input, mb_skip_run, ue);
+            let blocks_left = pic_size_in_mbs - slice.get_next_mb_addr() as usize;
+            if mb_skip_run > blocks_left {
+                return Err(format!(
+                    "Trying to skip {mb_skip_run} blocks, only {blocks_left} blocks left"
+                ));
+            }
+            for _ in 0..mb_skip_run {
+                let curr_mb_addr = slice.get_next_mb_addr();
+                if slice.header.slice_type == SliceType::B {
+                    let default_partitions = [PartitionInfo::default(); 4];
+                    let default_sub_mbs = [BSubMacroblock::default(); 4];
+                    let motion = calculate_motion_b(
+                        slice,
+                        curr_mb_addr,
+                        BMbType::B_Skip,
+                        &default_partitions,
+                        &default_sub_mbs,
+                    );
+                    let block = Macroblock::B(BMb {
+                        mb_type: BMbType::B_Skip,
+                        motion,
+                        ..Default::default()
+                    });
+                    slice.append_mb(block);
+                } else {
+                    let default_partitions = [PartitionInfo::default(); 4];
+                    let default_sub_mbs = [SubMacroblock::default(); 4];
+                    let motion = calculate_motion(
+                        slice,
+                        curr_mb_addr,
+                        PMbType::P_Skip,
+                        &default_partitions,
+                        &default_sub_mbs,
+                    );
+                    let block = Macroblock::P(PMb {
+                        mb_type: PMbType::P_Skip,
+                        motion,
+                        ..Default::default()
+                    });
+                    slice.append_mb(block);
+                }
+            }
+            if slice.get_macroblock_count() >= pic_size_in_mbs {
+                break;
+            }
+            if mb_skip_run > 0 && !more_rbsp_data(input) {
+                break;
+            }
+        }
+
+        let next_mb_addr = slice.get_next_mb_addr() as usize;
+        trace!("=============== Parsing macroblock: {next_mb_addr} ===============");
+        let block = parse_macroblock(input, slice)?;
+        slice.append_mb(block);
+        if slice.get_macroblock_count() >= pic_size_in_mbs {
+            break;
+        }
+        if !more_rbsp_data(input) {
+            break;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

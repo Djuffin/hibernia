@@ -10,5 +10,11 @@ publish = false
 
 [dependencies]
 hibernia = { workspace = true }
+bitstream-io = { workspace = true }
 schemars = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+
+[[bin]]
+name = "h264_gen"
+path = "src/main.rs"

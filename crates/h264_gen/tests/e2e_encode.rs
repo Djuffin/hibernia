@@ -1,14 +1,13 @@
-use crate::h264::nal::{NalHeader, NalUnitType};
-use crate::h264::nal_writer::create_annex_b_nal_unit;
-use crate::h264::pps::PicParameterSet;
-use crate::h264::rbsp_writer::RbspWriter;
-use crate::h264::slice::{DeblockingFilterIdc, SliceHeader, SliceType};
-use crate::h264::sps::SequenceParameterSet;
-use crate::h264::writer::{write_pps, write_slice_header, write_sps};
-use crate::h264::{ChromaFormat, Profile};
-
-use crate::h264::decoder::Decoder;
-use crate::h264::nal_parser::NalParser;
+use h264_gen::nal_writer::create_annex_b_nal_unit;
+use h264_gen::rbsp_writer::RbspWriter;
+use h264_gen::writer::{write_pps, write_slice_header, write_sps};
+use hibernia::h264::decoder::Decoder;
+use hibernia::h264::nal::{NalHeader, NalUnitType};
+use hibernia::h264::nal_parser::NalParser;
+use hibernia::h264::pps::PicParameterSet;
+use hibernia::h264::slice::{DeblockingFilterIdc, SliceHeader, SliceType};
+use hibernia::h264::sps::SequenceParameterSet;
+use hibernia::h264::{ChromaFormat, Profile};
 use std::io::Cursor;
 
 #[test]
@@ -59,7 +58,7 @@ fn test_generate_and_decode_video() {
     idr_header.idr_pic_id = Some(0);
     idr_header.pic_order_cnt_lsb = Some(0);
     idr_header.deblocking_filter_idc = DeblockingFilterIdc::Off;
-    idr_header.dec_ref_pic_marking = Some(crate::h264::slice::DecRefPicMarking {
+    idr_header.dec_ref_pic_marking = Some(hibernia::h264::slice::DecRefPicMarking {
         no_output_of_prior_pics_flag: Some(false),
         long_term_reference_flag: Some(false),
         adaptive_ref_pic_marking_mode_flag: None,
@@ -98,7 +97,7 @@ fn test_generate_and_decode_video() {
         p_header.deblocking_filter_idc = DeblockingFilterIdc::Off;
         p_header.num_ref_idx_l0_active_minus1 = 0;
         p_header.num_ref_idx_l1_active_minus1 = 0;
-        p_header.dec_ref_pic_marking = Some(crate::h264::slice::DecRefPicMarking {
+        p_header.dec_ref_pic_marking = Some(hibernia::h264::slice::DecRefPicMarking {
             no_output_of_prior_pics_flag: None,
             long_term_reference_flag: None,
             adaptive_ref_pic_marking_mode_flag: Some(false),
@@ -121,7 +120,7 @@ fn test_generate_and_decode_video() {
 
     let mut frames_decoded = 0;
 
-    let check_frame = |frame: crate::h264::decoder::VideoFrame,
+    let check_frame = |frame: hibernia::h264::decoder::VideoFrame,
                        frames_decoded: usize,
                        is_flush: bool| {
         let msg = if is_flush {

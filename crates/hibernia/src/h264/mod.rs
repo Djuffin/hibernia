@@ -1,4 +1,3 @@
-pub mod bitstream_gen;
 pub mod cabac;
 pub mod cavlc;
 pub mod deblocking;
@@ -9,26 +8,17 @@ pub mod intra_pred;
 pub mod macroblock;
 pub mod nal;
 pub mod nal_parser;
-pub mod nal_writer;
 pub mod parser;
 pub mod poc;
 pub mod pps;
 pub mod rbsp;
-pub mod rbsp_writer;
 pub mod residual;
 pub mod slice;
 pub mod sps;
 pub mod tables;
-pub mod writer;
 
 #[cfg(test)]
 pub mod e2e_tests;
-
-#[cfg(test)]
-pub mod e2e_encode_test;
-
-#[cfg(test)]
-pub mod json_tests;
 
 use num_traits::cast::FromPrimitive;
 

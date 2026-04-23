@@ -1,11 +1,11 @@
-use crate::h264::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType};
-use crate::h264::rbsp_writer::{RbspWriter, WriteResult};
-use crate::h264::slice::{
+use crate::rbsp_writer::{RbspWriter, WriteResult};
+use hibernia::h264::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType};
+use hibernia::h264::slice::{
     DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, PredWeightTable,
     RefPicListModification, RefPicListModifications, SliceHeader, SliceType,
 };
-use crate::h264::sps::{SequenceParameterSet, VuiParameters};
-use crate::h264::{ChromaFormat, ColorPlane};
+use hibernia::h264::sps::{SequenceParameterSet, VuiParameters};
+use hibernia::h264::{ChromaFormat, ColorPlane};
 
 pub fn write_sps(sps: &SequenceParameterSet, writer: &mut RbspWriter) -> WriteResult {
     writer.u(8, sps.profile as u32)?;
@@ -518,14 +518,14 @@ pub fn write_slice_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::h264::decoder::DecoderContext;
-    use crate::h264::parser::{parse_pps, parse_slice_header, parse_sps};
-    use crate::h264::pps::PicParameterSet;
-    use crate::h264::rbsp::RbspReader;
-    use crate::h264::slice::SliceHeader;
-    use crate::h264::slice::SliceType;
-    use crate::h264::sps::{SequenceParameterSet, VuiParameters};
-    use crate::h264::{nal::NalHeader, nal::NalUnitType, ChromaFormat, Profile};
+    use hibernia::h264::decoder::DecoderContext;
+    use hibernia::h264::parser::{parse_pps, parse_slice_header, parse_sps};
+    use hibernia::h264::pps::PicParameterSet;
+    use hibernia::h264::rbsp::RbspReader;
+    use hibernia::h264::slice::SliceHeader;
+    use hibernia::h264::slice::SliceType;
+    use hibernia::h264::sps::{SequenceParameterSet, VuiParameters};
+    use hibernia::h264::{nal::NalHeader, nal::NalUnitType, ChromaFormat, Profile};
 
     #[test]
     fn test_write_read_sps() {

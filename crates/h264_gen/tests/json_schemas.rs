@@ -1,10 +1,10 @@
-use crate::h264::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
-use crate::h264::slice::{
+use hibernia::h264::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
+use hibernia::h264::slice::{
     DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, PredWeightTable,
     RefPicListModification, RefPicListModifications, SliceHeader, SliceType, WeightingFactors,
 };
-use crate::h264::sps::{FrameCrop, SequenceParameterSet, VuiParameters};
-use crate::h264::{ChromaFormat, ColorPlane, Profile};
+use hibernia::h264::sps::{FrameCrop, SequenceParameterSet, VuiParameters};
+use hibernia::h264::{ChromaFormat, ColorPlane, Profile};
 
 #[test]
 fn test_sps_json_deserialization() {

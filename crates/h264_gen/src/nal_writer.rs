@@ -1,5 +1,5 @@
-use super::nal::NalHeader;
-use super::rbsp_writer::{RbspWriter, WriteResult};
+use crate::rbsp_writer::{RbspWriter, WriteResult};
+use hibernia::h264::nal::NalHeader;
 
 pub fn add_emulation_prevention(data: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(data.len() + data.len() / 10);
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_create_annex_b_nal_unit() {
-        use crate::h264::nal::NalUnitType;
+        use hibernia::h264::nal::NalUnitType;
 
         let header = NalHeader { nal_ref_idc: 3, nal_unit_type: NalUnitType::IDRSlice };
 

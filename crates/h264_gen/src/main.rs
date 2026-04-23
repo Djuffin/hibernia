@@ -1,4 +1,4 @@
-use hibernia::h264::bitstream_gen::{generate_bitstream, BitstreamConfig};
+use h264_gen::bitstream_gen::{generate_bitstream, BitstreamConfig};
 use std::env;
 use std::fs;
 use std::process;

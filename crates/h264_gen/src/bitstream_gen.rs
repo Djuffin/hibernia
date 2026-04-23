@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::nal::{NalHeader, NalUnitType};
-use super::nal_writer::create_annex_b_nal_unit;
-use super::pps::PicParameterSet;
-use super::rbsp_writer::RbspWriter;
-use super::slice::SliceHeader;
-use super::sps::SequenceParameterSet;
-use super::writer::{write_pps, write_slice_header, write_sps};
+use crate::nal_writer::create_annex_b_nal_unit;
+use crate::rbsp_writer::RbspWriter;
+use crate::writer::{write_pps, write_slice_header, write_sps};
+use hibernia::h264::nal::{NalHeader, NalUnitType};
+use hibernia::h264::pps::PicParameterSet;
+use hibernia::h264::slice::SliceHeader;
+use hibernia::h264::sps::SequenceParameterSet;
 
 pub type BitstreamConfig = Vec<NalUnitDescriptor>;
 
@@ -289,13 +289,13 @@ mod tests {
         assert!(!bitstream.is_empty());
 
         // Decode the generated bitstream
-        let mut decoder = crate::h264::decoder::Decoder::new();
+        let mut decoder = hibernia::h264::decoder::Decoder::new();
         let cursor = std::io::Cursor::new(bitstream);
-        let nal_parser = crate::h264::nal_parser::NalParser::new(cursor);
+        let nal_parser = hibernia::h264::nal_parser::NalParser::new(cursor);
 
         let mut frames_decoded = 0;
 
-        let mut check_frame = |frame: crate::h264::decoder::VideoFrame| {
+        let mut check_frame = |frame: hibernia::h264::decoder::VideoFrame| {
             frames_decoded += 1;
             let y_plane = &frame.planes[0];
             let u_plane = &frame.planes[1];

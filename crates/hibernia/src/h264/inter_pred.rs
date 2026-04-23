@@ -1,7 +1,12 @@
-use super::decoder::VideoFrame;
-use super::macroblock::MotionVector;
-use super::Point;
-use v_frame::plane::Plane;
+use super::decoder::{DecodingError, VideoFrame};
+use super::dpb::DpbPicture;
+use super::macroblock::{
+    self, get_4x4chroma_block_location, BMb, MbPredictionMode, MotionVector, PMb,
+};
+use super::slice::{Slice, SliceType};
+use super::residual::Block4x4;
+use super::{ColorPlane, Point};
+use v_frame::plane::{Plane, PlaneOffset};
 
 /// Section 8.4.2.2.1 Luma sample interpolation process.
 /// This function interpolates a block of luma samples with quarter-sample accuracy.
@@ -565,6 +570,755 @@ impl Default for InterpolationBuffer {
 impl InterpolationBuffer {
     pub fn new() -> Self {
         Self { data: [[0; 21]; 21] }
+    }
+}
+
+// Section 8.4.2.3: Weighted prediction mode for the current slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WeightedPredMode {
+    Default,
+    Explicit,
+    Implicit,
+}
+
+// Resolved weighting parameters for one prediction direction (Section 8.4.3 outputs).
+struct WeightParams {
+    log_wd: u32,
+    w0: i32,
+    o0: i32,
+    w1: i32,
+    o1: i32,
+}
+
+/// Determine the weighted prediction mode for the current slice (Section 8.4.2.3).
+fn get_weighted_pred_mode(slice: &Slice) -> WeightedPredMode {
+    match slice.header.slice_type {
+        SliceType::P | SliceType::SP => {
+            if slice.pps.weighted_pred_flag {
+                WeightedPredMode::Explicit
+            } else {
+                WeightedPredMode::Default
+            }
+        }
+        SliceType::B => match slice.pps.weighted_bipred_idc {
+            1 => WeightedPredMode::Explicit,
+            2 => WeightedPredMode::Implicit,
+            _ => WeightedPredMode::Default,
+        },
+        _ => WeightedPredMode::Default,
+    }
+}
+
+// Section 8.4.2.3.2, Eq 8-274/8-275: Weighted sample prediction for uni-prediction.
+#[inline]
+fn weighted_uni_pred(pred: u8, w: i32, o: i32, log_wd: u32) -> u8 {
+    let val = if log_wd >= 1 {
+        ((i32::from(pred) * w + (1 << (log_wd - 1))) >> log_wd) + o
+    } else {
+        i32::from(pred) * w + o
+    };
+    val.clamp(0, 255) as u8
+}
+
+// Section 8.4.2.3.2, Eq 8-276: Weighted sample prediction for bi-prediction.
+#[inline]
+fn weighted_bi_pred(pred_l0: u8, pred_l1: u8, wp: &WeightParams) -> u8 {
+    let val = ((i32::from(pred_l0) * wp.w0 + i32::from(pred_l1) * wp.w1 + (1 << wp.log_wd))
+        >> (wp.log_wd + 1))
+        + ((wp.o0 + wp.o1 + 1) >> 1);
+    val.clamp(0, 255) as u8
+}
+
+// Section 8.4.3: Derive explicit luma weighting parameters from pred_weight_table.
+fn get_explicit_luma_weights(slice: &Slice, ref_idx_l0: usize, ref_idx_l1: usize) -> WeightParams {
+    let table = slice.header.pred_weight_table.as_ref().unwrap();
+    let log_wd = table.luma_log2_weight_denom;
+    let (w0, o0) =
+        table.list0.get(ref_idx_l0).map_or((1 << log_wd, 0), |f| (f.luma_weight, f.luma_offset));
+    let (w1, o1) =
+        table.list1.get(ref_idx_l1).map_or((1 << log_wd, 0), |f| (f.luma_weight, f.luma_offset));
+    WeightParams { log_wd, w0, o0, w1, o1 }
+}
+
+// Section 8.4.3: Derive explicit chroma weighting parameters from pred_weight_table.
+// chroma_idx: 0 = Cb, 1 = Cr.
+fn get_explicit_chroma_weights(
+    slice: &Slice,
+    ref_idx_l0: usize,
+    ref_idx_l1: usize,
+    chroma_idx: usize,
+) -> WeightParams {
+    let table = slice.header.pred_weight_table.as_ref().unwrap();
+    let log_wd = table.chroma_log2_weight_denom;
+    let (w0, o0) = table
+        .list0
+        .get(ref_idx_l0)
+        .map_or((1 << log_wd, 0), |f| (f.chroma_weights[chroma_idx], f.chroma_offsets[chroma_idx]));
+    let (w1, o1) = table
+        .list1
+        .get(ref_idx_l1)
+        .map_or((1 << log_wd, 0), |f| (f.chroma_weights[chroma_idx], f.chroma_offsets[chroma_idx]));
+    WeightParams { log_wd, w0, o0, w1, o1 }
+}
+
+// Section 8.4.3: Derive implicit weighting parameters from POC distances (Eq 8-277 to 8-283).
+// Same weights are used for luma and chroma in implicit mode.
+fn get_implicit_weights(
+    ref_pic_l0: &DpbPicture,
+    ref_pic_l1: &DpbPicture,
+    current_poc: i32,
+) -> WeightParams {
+    let log_wd: u32 = 5;
+    let default = WeightParams { log_wd, w0: 32, o0: 0, w1: 32, o1: 0 };
+
+    // Fallback if either reference is long-term (Eq 8-280)
+    if ref_pic_l0.marking.is_long_term() || ref_pic_l1.marking.is_long_term() {
+        return default;
+    }
+
+    let poc_l0 = ref_pic_l0.picture.pic_order_cnt;
+    let poc_l1 = ref_pic_l1.picture.pic_order_cnt;
+
+    // DiffPicOrderCnt(pic1, pic0) — Eq 8-197/8-198
+    let diff_poc_l1_l0 = poc_l1 - poc_l0;
+    if diff_poc_l1_l0 == 0 {
+        return default;
+    }
+
+    // Eq 8-201, 8-202: DistScaleFactor
+    let td = (poc_l1 - poc_l0).clamp(-128, 127);
+    let tb = (current_poc - poc_l0).clamp(-128, 127);
+    let tx = (16384 + (td.abs() >> 1)) / td;
+    let dist_scale_factor = ((tb * tx + 32) >> 6).clamp(-1024, 1023);
+
+    let w1 = dist_scale_factor >> 2;
+    if w1 < -64 || w1 > 128 {
+        return default;
+    }
+    let w0 = 64 - w1;
+
+    WeightParams { log_wd, w0, o0: 0, w1, o1: 0 }
+}
+
+pub fn render_luma_inter_prediction(
+    slice: &Slice,
+    mb: &PMb,
+    mb_loc: Point,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    ref_pics_l0: &[&DpbPicture],
+    buffer: &mut InterpolationBuffer,
+) -> Result<(), DecodingError> {
+    let y_plane = &mut frame.planes[0];
+    let wp_mode = get_weighted_pred_mode(slice);
+
+    for raster_idx in 0..16 {
+        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+
+        let ref_idx = partition.ref_idx_l0;
+        let mv = partition.mv_l0;
+
+        let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l0 {} out of bounds (list length {})",
+                ref_idx,
+                ref_pics_l0.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[0];
+
+        let blk_x = grid_x * 4;
+        let blk_y = grid_y * 4;
+
+        let mut dst = [0u8; 16]; // 4x4 block
+
+        interpolate_luma(
+            ref_plane,
+            mb_loc.x,
+            mb_loc.y,
+            blk_x as u8,
+            blk_y as u8,
+            4,
+            4,
+            mv,
+            &mut dst,
+            4, // stride for 4x4 block buffer
+            buffer,
+        );
+
+        // Section 8.4.2.3: Apply weighted prediction before residual addition
+        if wp_mode == WeightedPredMode::Explicit {
+            let wp = get_explicit_luma_weights(slice, ref_idx as usize, 0);
+            for sample in &mut dst {
+                *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
+            }
+        }
+
+        // Add residual
+        let blk_idx =
+            macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
+        if let Some(residual_blk) = residuals.get(blk_idx as usize) {
+            for y in 0..4 {
+                for x in 0..4 {
+                    let res = residual_blk.samples[y][x];
+                    let pred = dst[y * 4 + x] as i32;
+                    dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
+                }
+            }
+        }
+
+        // Copy to frame
+        let mut plane_slice = y_plane.mut_slice(PlaneOffset {
+            x: (mb_loc.x + blk_x as u32) as isize,
+            y: (mb_loc.y + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            let row_data = &dst[y * 4..(y + 1) * 4];
+            row[..4].copy_from_slice(row_data);
+        }
+    }
+    Ok(())
+}
+
+pub fn render_chroma_inter_prediction(
+    slice: &Slice,
+    mb: &PMb,
+    mb_loc: Point,
+    plane: ColorPlane,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    ref_pics_l0: &[&DpbPicture],
+) -> Result<(), DecodingError> {
+    let chroma_plane = &mut frame.planes[plane as usize];
+    let mb_x_chroma = mb_loc.x >> 1;
+    let mb_y_chroma = mb_loc.y >> 1;
+    let wp_mode = get_weighted_pred_mode(slice);
+    let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
+
+    // 1. Prediction (Block by block 2x2)
+    for blk_idx in 0..16 {
+        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let ref_idx = partition.ref_idx_l0;
+        let mv = partition.mv_l0;
+
+        let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l0 {} out of bounds (list length {})",
+                ref_idx,
+                ref_pics_l0.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+
+        let blk_x = (grid_x * 4) >> 1; // 2
+        let blk_y = (grid_y * 4) >> 1; // 2
+
+        let mut dst = [0u8; 4]; // 2x2 = 4 pixels
+
+        interpolate_chroma(
+            ref_plane,
+            mb_x_chroma,
+            mb_y_chroma,
+            blk_x as u8,
+            blk_y as u8,
+            2,
+            2,
+            mv,
+            &mut dst,
+            2, // stride
+        );
+
+        // Section 8.4.2.3: Apply weighted prediction
+        if wp_mode == WeightedPredMode::Explicit {
+            let wp = get_explicit_chroma_weights(slice, ref_idx as usize, 0, chroma_idx);
+            for sample in &mut dst {
+                *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
+            }
+        }
+
+        // Write to frame
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_x as u32) as isize,
+            y: (mb_y_chroma + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
+            row[0] = dst[y * 2];
+            row[1] = dst[y * 2 + 1];
+        }
+    }
+
+    // 2. Residuals (Block by block 4x4)
+    for (blk_idx, residual_blk) in residuals.iter().enumerate() {
+        let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
+        // blk_loc is relative to MB top-left in chroma samples
+
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_loc.x) as isize,
+            y: (mb_y_chroma + blk_loc.y) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            for x in 0..4 {
+                let res = residual_blk.samples[y][x];
+                let pred = row[x] as i32;
+                row[x] = (pred + res).clamp(0, 255) as u8;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn render_luma_inter_prediction_b(
+    slice: &Slice,
+    mb: &BMb,
+    mb_loc: Point,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    ref_pics_l0: &[&DpbPicture],
+    ref_pics_l1: &[&DpbPicture],
+    buffer: &mut InterpolationBuffer,
+) -> Result<(), DecodingError> {
+    let y_plane = &mut frame.planes[0];
+    let wp_mode = get_weighted_pred_mode(slice);
+
+    for raster_idx in 0..16 {
+        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let pred_mode = partition.pred_mode;
+
+        let blk_x = grid_x * 4;
+        let blk_y = grid_y * 4;
+
+        let mut dst = [0u8; 16];
+
+        let has_l0 =
+            pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
+        let has_l1 =
+            pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
+
+        let mut pred_l0 = [0u8; 16];
+        let mut pred_l1 = [0u8; 16];
+
+        if has_l0 {
+            let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l0 {} out of bounds (list length {})",
+                    partition.ref_idx_l0,
+                    ref_pics_l0.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[0];
+            interpolate_luma(
+                ref_plane,
+                mb_loc.x,
+                mb_loc.y,
+                blk_x as u8,
+                blk_y as u8,
+                4,
+                4,
+                partition.mv_l0,
+                &mut pred_l0,
+                4,
+                buffer,
+            );
+        }
+
+        if has_l1 {
+            let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l1 {} out of bounds (list length {})",
+                    partition.ref_idx_l1,
+                    ref_pics_l1.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[0];
+            interpolate_luma(
+                ref_plane,
+                mb_loc.x,
+                mb_loc.y,
+                blk_x as u8,
+                blk_y as u8,
+                4,
+                4,
+                partition.mv_l1,
+                &mut pred_l1,
+                4,
+                buffer,
+            );
+        }
+
+        // Section 8.4.2.3: Combine predictions according to weighted prediction mode
+        match wp_mode {
+            WeightedPredMode::Explicit => {
+                let wp = get_explicit_luma_weights(
+                    slice,
+                    partition.ref_idx_l0 as usize,
+                    partition.ref_idx_l1 as usize,
+                );
+                if has_l0 && has_l1 {
+                    for i in 0..16 {
+                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
+                    }
+                } else if has_l0 {
+                    for i in 0..16 {
+                        dst[i] = weighted_uni_pred(pred_l0[i], wp.w0, wp.o0, wp.log_wd);
+                    }
+                } else if has_l1 {
+                    for i in 0..16 {
+                        dst[i] = weighted_uni_pred(pred_l1[i], wp.w1, wp.o1, wp.log_wd);
+                    }
+                }
+            }
+            WeightedPredMode::Implicit => {
+                if has_l0 && has_l1 {
+                    let ref_l0 =
+                        ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l0 {} out of bounds (list length {})",
+                                partition.ref_idx_l0,
+                                ref_pics_l0.len()
+                            ))
+                        })?;
+                    let ref_l1 =
+                        ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l1 {} out of bounds (list length {})",
+                                partition.ref_idx_l1,
+                                ref_pics_l1.len()
+                            ))
+                        })?;
+                    let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
+                    for i in 0..16 {
+                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
+                    }
+                } else if has_l0 {
+                    // Section 8.4.2.3: implicit mode with only one list falls back to default
+                    dst = pred_l0;
+                } else if has_l1 {
+                    dst = pred_l1;
+                }
+            }
+            WeightedPredMode::Default => {
+                if has_l0 && has_l1 {
+                    for i in 0..16 {
+                        dst[i] = ((pred_l0[i] as u16 + pred_l1[i] as u16 + 1) >> 1) as u8;
+                    }
+                } else if has_l0 {
+                    dst = pred_l0;
+                } else if has_l1 {
+                    dst = pred_l1;
+                }
+            }
+        }
+
+        // Add residual
+        let blk_idx =
+            macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
+        if let Some(residual_blk) = residuals.get(blk_idx as usize) {
+            for y in 0..4 {
+                for x in 0..4 {
+                    let res = residual_blk.samples[y][x];
+                    let pred = dst[y * 4 + x] as i32;
+                    dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
+                }
+            }
+        }
+
+        // Copy to frame
+        let mut plane_slice = y_plane.mut_slice(PlaneOffset {
+            x: (mb_loc.x + blk_x as u32) as isize,
+            y: (mb_loc.y + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            let row_data = &dst[y * 4..(y + 1) * 4];
+            row[..4].copy_from_slice(row_data);
+        }
+    }
+    Ok(())
+}
+
+pub fn render_chroma_inter_prediction_b(
+    slice: &Slice,
+    mb: &BMb,
+    mb_loc: Point,
+    plane: ColorPlane,
+    frame: &mut VideoFrame,
+    residuals: &[Block4x4],
+    ref_pics_l0: &[&DpbPicture],
+    ref_pics_l1: &[&DpbPicture],
+) -> Result<(), DecodingError> {
+    let chroma_plane = &mut frame.planes[plane as usize];
+    let mb_x_chroma = mb_loc.x >> 1;
+    let mb_y_chroma = mb_loc.y >> 1;
+    let wp_mode = get_weighted_pred_mode(slice);
+    let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
+
+    // 1. Prediction (2x2 blocks corresponding to each 4x4 luma block)
+    for blk_idx in 0..16 {
+        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let pred_mode = partition.pred_mode;
+
+        let has_l0 =
+            pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
+        let has_l1 =
+            pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
+
+        let blk_x = (grid_x * 4) >> 1;
+        let blk_y = (grid_y * 4) >> 1;
+
+        let mut pred_l0 = [0u8; 4];
+        let mut pred_l1 = [0u8; 4];
+
+        if has_l0 {
+            let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l0 {} out of bounds (list length {})",
+                    partition.ref_idx_l0,
+                    ref_pics_l0.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+            interpolate_chroma(
+                ref_plane,
+                mb_x_chroma,
+                mb_y_chroma,
+                blk_x as u8,
+                blk_y as u8,
+                2,
+                2,
+                partition.mv_l0,
+                &mut pred_l0,
+                2,
+            );
+        }
+
+        if has_l1 {
+            let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                DecodingError::ReferenceNotFound(format!(
+                    "ref_idx_l1 {} out of bounds (list length {})",
+                    partition.ref_idx_l1,
+                    ref_pics_l1.len()
+                ))
+            })?;
+            let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+            interpolate_chroma(
+                ref_plane,
+                mb_x_chroma,
+                mb_y_chroma,
+                blk_x as u8,
+                blk_y as u8,
+                2,
+                2,
+                partition.mv_l1,
+                &mut pred_l1,
+                2,
+            );
+        }
+
+        // Section 8.4.2.3: Combine predictions according to weighted prediction mode
+        let mut dst = [0u8; 4];
+        match wp_mode {
+            WeightedPredMode::Explicit => {
+                let wp = get_explicit_chroma_weights(
+                    slice,
+                    partition.ref_idx_l0 as usize,
+                    partition.ref_idx_l1 as usize,
+                    chroma_idx,
+                );
+                if has_l0 && has_l1 {
+                    for i in 0..4 {
+                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
+                    }
+                } else if has_l0 {
+                    for i in 0..4 {
+                        dst[i] = weighted_uni_pred(pred_l0[i], wp.w0, wp.o0, wp.log_wd);
+                    }
+                } else if has_l1 {
+                    for i in 0..4 {
+                        dst[i] = weighted_uni_pred(pred_l1[i], wp.w1, wp.o1, wp.log_wd);
+                    }
+                }
+            }
+            WeightedPredMode::Implicit => {
+                if has_l0 && has_l1 {
+                    // Implicit mode uses same weights for luma and chroma
+                    let ref_l0 =
+                        ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l0 {} out of bounds (list length {})",
+                                partition.ref_idx_l0,
+                                ref_pics_l0.len()
+                            ))
+                        })?;
+                    let ref_l1 =
+                        ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
+                            DecodingError::ReferenceNotFound(format!(
+                                "ref_idx_l1 {} out of bounds (list length {})",
+                                partition.ref_idx_l1,
+                                ref_pics_l1.len()
+                            ))
+                        })?;
+                    let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
+                    for i in 0..4 {
+                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
+                    }
+                } else if has_l0 {
+                    dst = pred_l0;
+                } else if has_l1 {
+                    dst = pred_l1;
+                }
+            }
+            WeightedPredMode::Default => {
+                if has_l0 && has_l1 {
+                    for i in 0..4 {
+                        dst[i] = ((pred_l0[i] as u16 + pred_l1[i] as u16 + 1) >> 1) as u8;
+                    }
+                } else if has_l0 {
+                    dst = pred_l0;
+                } else if has_l1 {
+                    dst = pred_l1;
+                }
+            }
+        }
+
+        // Write to frame
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_x as u32) as isize,
+            y: (mb_y_chroma + blk_y as u32) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
+            row[0] = dst[y * 2];
+            row[1] = dst[y * 2 + 1];
+        }
+    }
+
+    // 2. Residuals
+    for (blk_idx, residual_blk) in residuals.iter().enumerate() {
+        let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
+
+        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
+            x: (mb_x_chroma + blk_loc.x) as isize,
+            y: (mb_y_chroma + blk_loc.y) as isize,
+        });
+
+        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+            for x in 0..4 {
+                let res = residual_blk.samples[y][x];
+                let pred = row[x] as i32;
+                row[x] = (pred + res).clamp(0, 255) as u8;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod weighted_pred_tests {
+    use super::*;
+
+    // --- weighted_uni_pred tests (Eq 8-274/8-275) ---
+
+    #[test]
+    fn uni_pred_identity() {
+        // w = 1 << log_wd, o = 0 should produce the same value (default weight)
+        for log_wd in 0..8u32 {
+            let w = 1i32 << log_wd;
+            for pred in [0u8, 1, 127, 128, 254, 255] {
+                assert_eq!(
+                    weighted_uni_pred(pred, w, 0, log_wd),
+                    pred,
+                    "identity failed for pred={pred}, log_wd={log_wd}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn uni_pred_log_wd_zero() {
+        // log_wd = 0: result = pred * w + o, clamped
+        assert_eq!(weighted_uni_pred(100, 2, 10, 0), 210);
+        assert_eq!(weighted_uni_pred(200, 2, 0, 0), 255); // clamped
+        assert_eq!(weighted_uni_pred(10, -1, 0, 0), 0); // clamped negative
+    }
+
+    #[test]
+    fn uni_pred_with_offset() {
+        // log_wd = 7, w = 128 (=1<<7), o = 10 => pred + 10
+        assert_eq!(weighted_uni_pred(100, 128, 10, 7), 110);
+        // Clamping to 255
+        assert_eq!(weighted_uni_pred(250, 128, 10, 7), 255);
+    }
+
+    #[test]
+    fn uni_pred_clamping() {
+        // Should clamp to [0, 255]
+        assert_eq!(weighted_uni_pred(0, 128, -50, 7), 0);
+        assert_eq!(weighted_uni_pred(255, 256, 100, 7), 255);
+    }
+
+    // --- weighted_bi_pred tests (Eq 8-276) ---
+
+    #[test]
+    fn bi_pred_equal_weights() {
+        // w0=w1=32, log_wd=5, o0=o1=0 => same as default (l0+l1+1)>>1
+        let wp = WeightParams { log_wd: 5, w0: 32, o0: 0, w1: 32, o1: 0 };
+        assert_eq!(weighted_bi_pred(100, 200, &wp), 150);
+        assert_eq!(weighted_bi_pred(0, 0, &wp), 0);
+        assert_eq!(weighted_bi_pred(255, 255, &wp), 255);
+        assert_eq!(weighted_bi_pred(1, 0, &wp), 1); // (1*32 + 0*32 + 32) >> 6 = 64 >> 6 = 1
+    }
+
+    #[test]
+    fn bi_pred_arithmetic() {
+        // Manual calculation: log_wd=5, w0=32, w1=32, o0=0, o1=0
+        // (100*32 + 200*32 + 32) >> 6 + 0 = (3200 + 6400 + 32) >> 6 = 9632 >> 6 = 150
+        let wp = WeightParams { log_wd: 5, w0: 32, o0: 0, w1: 32, o1: 0 };
+        assert_eq!(weighted_bi_pred(100, 200, &wp), 150);
+
+        // w0=64, w1=0 => effectively uni-pred from L0
+        // (100*64 + 200*0 + 32) >> 6 + 0 = 6432 >> 6 = 100
+        let wp2 = WeightParams { log_wd: 5, w0: 64, o0: 0, w1: 0, o1: 0 };
+        assert_eq!(weighted_bi_pred(100, 200, &wp2), 100);
+    }
+
+    #[test]
+    fn bi_pred_with_offsets() {
+        // log_wd=5, w0=32, w1=32, o0=20, o1=10
+        // (100*32 + 100*32 + 32) >> 6 + (20+10+1)>>1 = (6400+32)>>6 + 15 = 100 + 15 = 115
+        let wp = WeightParams { log_wd: 5, w0: 32, o0: 20, w1: 32, o1: 10 };
+        assert_eq!(weighted_bi_pred(100, 100, &wp), 115);
+    }
+
+    #[test]
+    fn bi_pred_clamping() {
+        let wp = WeightParams { log_wd: 5, w0: 64, o0: 127, w1: 64, o1: 127 };
+        assert_eq!(weighted_bi_pred(255, 255, &wp), 255); // clamped
+        let wp2 = WeightParams { log_wd: 5, w0: 64, o0: -128, w1: 64, o1: -128 };
+        assert_eq!(weighted_bi_pred(0, 0, &wp2), 0); // clamped
+    }
+
+    // --- Default weight identity ---
+
+    #[test]
+    fn default_weight_is_identity() {
+        // Explicit weights with w = 1 << log_wd, o = 0 should match unweighted copy
+        for log_wd in 0..8u32 {
+            let w = 1i32 << log_wd;
+            for pred in [0u8, 64, 128, 200, 255] {
+                let weighted = weighted_uni_pred(pred, w, 0, log_wd);
+                assert_eq!(
+                    weighted, pred,
+                    "default weight not identity: pred={pred}, log_wd={log_wd}"
+                );
+            }
+        }
     }
 }
 

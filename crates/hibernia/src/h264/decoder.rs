@@ -443,11 +443,6 @@ impl Decoder {
                                 );
                             }
                             MbPredictionMode::Intra_8x8 => {
-                                // Clause 8.3.2 prediction. 8x8 inverse transform (Clause
-                                // 8.5.13) is still TODO — residuals passed here come from
-                                // luma_level4x4 via Residual::restore and are all-zero for
-                                // Intra_8x8 macroblocks until the 8x8 transform lands, so
-                                // reconstructed samples currently equal predicted samples.
                                 render_luma_8x8_intra_prediction(
                                     slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
                                 );

@@ -433,8 +433,6 @@ pub fn render_luma_8x8_intra_prediction(
         fill_predicted_8x8(&mut pred, &ctx, mode);
 
         // Write predicted samples and add 4x4 residuals that belong to this 8x8.
-        // Until the 8x8 inverse transform lands, `residuals` (from luma_level4x4
-        // via Residual::restore) are all-zero and the addition is a no-op.
         let mut target_slice = target.mut_slice(ctx.offset);
         for (y, row) in target_slice.rows_iter_mut().take(8).enumerate() {
             for (x, pixel) in row.iter_mut().take(8).enumerate() {

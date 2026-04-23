@@ -14,6 +14,17 @@ pub struct Block4x4 {
     pub samples: [[i32; 4]; 4],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Block8x8 {
+    pub samples: [[i32; 8]; 8],
+}
+
+impl Default for Block8x8 {
+    fn default() -> Self {
+        Block8x8 { samples: [[0; 8]; 8] }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Block2x2 {
     pub samples: [[i32; 2]; 2],
@@ -147,6 +158,25 @@ impl Residual {
                     let mut block = unzip_block_4x4(&idct_coefficients);
                     transform_4x4(&mut block);
                     result.push(block);
+                }
+            } else if self.prediction_mode == MbPredictionMode::Intra_8x8 {
+                // Section 8.5.13 Scaling and transformation process for residual
+                // 8x8 blocks. Reconstruct each 8x8 block and split it into four
+                // Block4x4 in the renderer's expected sub-order (0,0), (4,0),
+                // (0,4), (4,4) so the existing 4x4 residual-add loop works.
+                for i8x8 in 0..4 {
+                    let mut block = unzip_block_8x8(&self.luma_level8x8[i8x8].0);
+                    level_scale_8x8_block(&mut block, self.prediction_mode.is_inter(), qp);
+                    transform_8x8(&mut block);
+                    for (sub_y, sub_x) in [(0, 0), (0, 4), (4, 0), (4, 4)] {
+                        let mut sub = Block4x4::default();
+                        for y in 0..4 {
+                            for x in 0..4 {
+                                sub.samples[y][x] = block.samples[sub_y + y][sub_x + x];
+                            }
+                        }
+                        result.push(sub);
+                    }
                 }
             } else {
                 for blk_idx in 0..16 {
@@ -518,6 +548,158 @@ pub fn transform_4x4(block: &mut Block4x4) {
     d[3] = h3_final.to_array();
 }
 
+// Table 8-14 — 8x8 inverse zig-zag scan. Maps idx in 0..64 to (row, col).
+// Used for frame macroblocks (non-MBAFF); field scan is a separate table.
+#[inline]
+pub const fn un_zig_zag_8x8(idx: usize) -> (/* row */ usize, /* col */ usize) {
+    const TABLE: [(usize, usize); 64] = [
+        (0, 0), (0, 1), (1, 0), (2, 0), (1, 1), (0, 2), (0, 3), (1, 2),
+        (2, 1), (3, 0), (4, 0), (3, 1), (2, 2), (1, 3), (0, 4), (0, 5),
+        (1, 4), (2, 3), (3, 2), (4, 1), (5, 0), (6, 0), (5, 1), (4, 2),
+        (3, 3), (2, 4), (1, 5), (0, 6), (0, 7), (1, 6), (2, 5), (3, 4),
+        (4, 3), (5, 2), (6, 1), (7, 0), (7, 1), (6, 2), (5, 3), (4, 4),
+        (3, 5), (2, 6), (1, 7), (2, 7), (3, 6), (4, 5), (5, 4), (6, 3),
+        (7, 2), (7, 3), (6, 4), (5, 5), (4, 6), (3, 7), (4, 7), (5, 6),
+        (6, 5), (7, 4), (7, 5), (6, 6), (5, 7), (6, 7), (7, 6), (7, 7),
+    ];
+    TABLE[idx]
+}
+
+#[inline]
+pub fn unzip_block_8x8(block: &[i32; 64]) -> Block8x8 {
+    let mut result = Block8x8::default();
+    for (idx, v) in block.iter().enumerate() {
+        let (row, col) = un_zig_zag_8x8(idx);
+        result.samples[row][col] = *v;
+    }
+    result
+}
+
+// Eq. 8-318 — V matrix for 8x8 inverse quantization. Row = qp % 6 (m). Column =
+// position class (vm0..vm5). Column assignment per Eq. 8-317 partitions all 64
+// (i, j) positions into 6 classes based on (i mod 4, j mod 4) / (i mod 2, j mod 2).
+#[inline]
+const fn norm_adjust_8x8(m: u8, i: usize, j: usize) -> u8 {
+    const V: [[u8; 6]; 6] = [
+        [20, 18, 32, 19, 25, 24],
+        [22, 19, 35, 21, 28, 26],
+        [26, 23, 42, 24, 33, 31],
+        [28, 25, 45, 26, 35, 33],
+        [32, 28, 51, 30, 40, 38],
+        [36, 32, 58, 34, 46, 43],
+    ];
+    // Match Eq. 8-317 classification. Order matters: vm0/vm2 (mod-4 diagonals)
+    // take priority over vm1 (mod-2 odd-odd), which takes priority over vm3/vm4.
+    let class: usize = if i % 4 == 0 && j % 4 == 0 {
+        0
+    } else if i % 4 == 2 && j % 4 == 2 {
+        2
+    } else if i % 2 == 1 && j % 2 == 1 {
+        1
+    } else if (i % 4 == 0 && j % 4 == 2) || (i % 4 == 2 && j % 4 == 0) {
+        4
+    } else if (i % 4 == 0 && j % 2 == 1) || (i % 2 == 1 && j % 4 == 0) {
+        3
+    } else {
+        5
+    };
+    V[m as usize][class]
+}
+
+// Eq. 8-316: LevelScale8x8(m, i, j) = weightScale8x8(i, j) * normAdjust8x8(m, i, j).
+// With no custom scaling lists (seq_scaling_matrix_present_flag = 0), the weight
+// scale is flat 16.
+#[inline]
+pub const fn level_scale_8x8(_is_inter: bool, m: u8, i: usize, j: usize) -> i32 {
+    16 * (norm_adjust_8x8(m, i, j) as i32)
+}
+
+// Section 8.5.13.1 Scaling process for residual 8x8 blocks (Eqs. 8-356, 8-357).
+pub fn level_scale_8x8_block(block: &mut Block8x8, is_inter: bool, qp: u8) {
+    let m = qp % 6;
+    if qp >= 36 {
+        let shift = (qp / 6 - 6) as i32;
+        for i in 0..8 {
+            for j in 0..8 {
+                block.samples[i][j] =
+                    (block.samples[i][j] * level_scale_8x8(is_inter, m, i, j)) << shift;
+            }
+        }
+    } else {
+        let shift = (6 - qp / 6) as i32;
+        let offset = 1 << (5 - qp / 6);
+        for i in 0..8 {
+            for j in 0..8 {
+                block.samples[i][j] =
+                    ((block.samples[i][j] * level_scale_8x8(is_inter, m, i, j)) + offset) >> shift;
+            }
+        }
+    }
+}
+
+// Section 8.5.13.2 Transformation process for residual 8x8 blocks. 1D 8-point
+// inverse integer transform (Eqs. 8-358 through 8-381), applied horizontally
+// then vertically (Eqs. 8-382 through 8-405 are the same equations for columns).
+#[inline(always)]
+fn transform_1d_8(d: [i32; 8]) -> [i32; 8] {
+    // Eqs. 8-358 to 8-365
+    let e = [
+        d[0] + d[4],
+        -d[3] + d[5] - d[7] - (d[7] >> 1),
+        d[0] - d[4],
+        d[1] + d[7] - d[3] - (d[3] >> 1),
+        (d[2] >> 1) - d[6],
+        -d[1] + d[7] + d[5] + (d[5] >> 1),
+        d[2] + (d[6] >> 1),
+        d[3] + d[5] + d[1] + (d[1] >> 1),
+    ];
+    // Eqs. 8-366 to 8-373
+    let f = [
+        e[0] + e[6],
+        e[1] + (e[7] >> 2),
+        e[2] + e[4],
+        e[3] + (e[5] >> 2),
+        e[2] - e[4],
+        (e[3] >> 2) - e[5],
+        e[0] - e[6],
+        e[7] - (e[1] >> 2),
+    ];
+    // Eqs. 8-374 to 8-381
+    [
+        f[0] + f[7],
+        f[2] + f[5],
+        f[4] + f[3],
+        f[6] + f[1],
+        f[6] - f[1],
+        f[4] - f[3],
+        f[2] - f[5],
+        f[0] - f[7],
+    ]
+}
+
+pub fn transform_8x8(block: &mut Block8x8) {
+    // Row pass (horizontal 1D).
+    for i in 0..8 {
+        block.samples[i] = transform_1d_8(block.samples[i]);
+    }
+    // Column pass (vertical 1D): transpose, apply, transpose back.
+    let mut transposed = [[0i32; 8]; 8];
+    for i in 0..8 {
+        for j in 0..8 {
+            transposed[j][i] = block.samples[i][j];
+        }
+    }
+    for j in 0..8 {
+        transposed[j] = transform_1d_8(transposed[j]);
+    }
+    // Eq. 8-406: final sample = (m + 32) >> 6.
+    for i in 0..8 {
+        for j in 0..8 {
+            block.samples[i][j] = (transposed[j][i] + 32) >> 6;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,5 +820,102 @@ mod tests {
             let (r, c) = unscan_4x4(i);
             assert_eq!(scan_4x4(r, c), i);
         }
+    }
+
+    #[test]
+    pub fn test_un_zig_zag_8x8_bijection() {
+        let mut seen = [false; 64];
+        for idx in 0..64 {
+            let (r, c) = un_zig_zag_8x8(idx);
+            assert!(r < 8 && c < 8);
+            let flat = r * 8 + c;
+            assert!(!seen[flat], "duplicate mapping at idx {idx} -> ({r},{c})");
+            seen[flat] = true;
+        }
+        assert!(seen.iter().all(|b| *b));
+    }
+
+    #[test]
+    pub fn test_norm_adjust_8x8_class_counts() {
+        // Partition sanity: the 6 weight classes must cover all 64 positions
+        // exactly once. Verify by counting distinct values per m=0; since the
+        // V row at m=0 is [20, 18, 32, 19, 25, 24] (all distinct), each class
+        // yields a distinct weight and the count per weight equals the class size.
+        let mut counts = std::collections::HashMap::new();
+        for i in 0..8 {
+            for j in 0..8 {
+                *counts.entry(norm_adjust_8x8(0, i, j)).or_insert(0usize) += 1;
+            }
+        }
+        assert_eq!(counts[&20], 4); // vm0 class: (0,0), (0,4), (4,0), (4,4)
+        assert_eq!(counts[&18], 16); // vm1: both odd
+        assert_eq!(counts[&32], 4); // vm2: (2,2), (2,6), (6,2), (6,6)
+        assert_eq!(counts[&19], 16); // vm3
+        assert_eq!(counts[&25], 8); // vm4
+        assert_eq!(counts[&24], 16); // vm5 (remainder)
+    }
+
+    #[test]
+    pub fn test_transform_8x8_zeros() {
+        let mut block = Block8x8::default();
+        level_scale_8x8_block(&mut block, false, 20);
+        transform_8x8(&mut block);
+        assert_eq!(block.samples, [[0i32; 8]; 8]);
+    }
+
+    #[test]
+    pub fn test_transform_1d_8_dc_only() {
+        // 1D transform of [x, 0, 0, 0, 0, 0, 0, 0] should produce [x; 8].
+        let out = super::transform_1d_8([5, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(out, [5, 5, 5, 5, 5, 5, 5, 5]);
+    }
+
+    #[test]
+    pub fn test_transform_8x8_dc_only_flat() {
+        // 2D transform of a DC-only block produces a flat block whose value
+        // is the DC after the final (v + 32) >> 6 shift.
+        let mut block = Block8x8::default();
+        block.samples[0][0] = 512; // deliberately chosen so (512 + 32) >> 6 = 8
+        transform_8x8(&mut block);
+        for row in block.samples {
+            for v in row {
+                assert_eq!(v, 8);
+            }
+        }
+    }
+
+    #[test]
+    pub fn test_level_scale_8x8_qp_below_36() {
+        // qp=24, m=0. For (0,0): normAdjust=20, scale=16*20=320. Expected:
+        // (c * 320 + 2^(5 - 4)) >> (6 - 4) = (c * 320 + 2) >> 2.
+        let mut block = Block8x8::default();
+        block.samples[0][0] = 3;
+        level_scale_8x8_block(&mut block, false, 24);
+        assert_eq!(block.samples[0][0], (3 * 320 + 2) >> 2);
+    }
+
+    #[test]
+    pub fn test_unzip_block_8x8_respects_zigzag() {
+        // The CAVLC-de-interleaved input is a flat [i32; 64] in zig-zag order,
+        // and unzip_block_8x8 must place index idx at position un_zig_zag_8x8(idx).
+        let mut input = [0i32; 64];
+        for i in 0..64 {
+            input[i] = i as i32 + 1;
+        }
+        let block = unzip_block_8x8(&input);
+        for idx in 0..64 {
+            let (r, c) = un_zig_zag_8x8(idx);
+            assert_eq!(block.samples[r][c], input[idx], "idx={idx}");
+        }
+    }
+
+    #[test]
+    pub fn test_level_scale_8x8_qp_ge_36() {
+        // qp=42, m=0 (42%6=0). normAdjust(0,0,0)=20, scale=320.
+        // Expected: (c * 320) << (7 - 6) = c * 320 * 2.
+        let mut block = Block8x8::default();
+        block.samples[0][0] = 3;
+        level_scale_8x8_block(&mut block, false, 42);
+        assert_eq!(block.samples[0][0], 3 * 320 * 2);
     }
 }

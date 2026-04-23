@@ -682,7 +682,6 @@ fn test_ffmpeg_all_intra() -> Result<(), String> {
 }
 
 #[test]
-#[ignore = "8x8 block decoding still has bugs"]
 fn test_ffmpeg_high_cavlc_8x8() -> Result<(), String> {
     let test_dir = TestDir::new("target/tmp_ffmpeg_high_cavlc_8x8").map_err(|e| e.to_string())?;
 

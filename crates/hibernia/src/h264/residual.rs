@@ -46,6 +46,10 @@ pub struct Residual {
     pub prediction_mode: MbPredictionMode,
     pub coded_block_pattern: CodedBlockPattern,
     pub qp: i32,
+    // Clause 7.4.5 transform_size_8x8_flag, copied from the parent MB. Selects
+    // the 8x8 transform/scaling path for both Intra_8x8 and Inter MBs with
+    // 8x8 DCT enabled in the PPS.
+    pub transform_size_8x8_flag: bool,
 
     pub dc_level16x16: [i32; 16],
     pub ac_level16x16: [[i32; 15]; 16],
@@ -159,11 +163,13 @@ impl Residual {
                     transform_4x4(&mut block);
                     result.push(block);
                 }
-            } else if self.prediction_mode == MbPredictionMode::Intra_8x8 {
+            } else if self.transform_size_8x8_flag {
                 // Section 8.5.13 Scaling and transformation process for residual
-                // 8x8 blocks. Reconstruct each 8x8 block and split it into four
-                // Block4x4 in the renderer's expected sub-order (0,0), (4,0),
-                // (0,4), (4,4) so the existing 4x4 residual-add loop works.
+                // 8x8 blocks. Used for Intra_8x8 and for Inter MBs when the PPS
+                // enables the 8x8 transform. Reconstruct each 8x8 block and split
+                // it into four Block4x4 in the renderer's expected sub-order
+                // (0,0), (4,0), (0,4), (4,4) so the existing 4x4 residual-add
+                // loop works.
                 for i8x8 in 0..4 {
                     let mut block = unzip_block_8x8(&self.luma_level8x8[i8x8].0);
                     level_scale_8x8_block(&mut block, self.prediction_mode.is_inter(), qp);

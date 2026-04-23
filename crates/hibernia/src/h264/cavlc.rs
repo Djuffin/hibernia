@@ -374,7 +374,9 @@ fn parse_residual_luma(
     // Clause 7.3.5.3.1 residual_luma. CAVLC always uses four 4x4 sub-block calls per
     // 8x8 region; the 8x8 transform just changes storage and interleaves the parsed
     // coefficients into level8x8[i8x8][4*i + i4x4] before the inverse transform.
-    let transform_8x8 = pred_mode == MbPredictionMode::Intra_8x8;
+    // Triggered by transform_size_8x8_flag, which applies to Intra_8x8 and to
+    // Inter MBs when the PPS enables the 8x8 transform.
+    let transform_8x8 = residual.transform_size_8x8_flag;
     for i8x8 in 0..4 {
         if coded_block_pattern.luma() & (1 << i8x8) != 0 {
             for i4x4 in 0..4 {
@@ -584,6 +586,7 @@ pub fn parse_p_macroblock(
         let mut residual = Box::<Residual>::default();
         residual.coded_block_pattern = block.coded_block_pattern;
         residual.prediction_mode = block.MbPartPredMode(0);
+        residual.transform_size_8x8_flag = block.transform_size_8x8_flag;
         parse_residual(input, slice, &mut residual)?;
         block.residual = Some(residual);
     }
@@ -776,6 +779,7 @@ pub fn parse_b_macroblock(
         let mut residual = Box::<Residual>::default();
         residual.coded_block_pattern = block.coded_block_pattern;
         residual.prediction_mode = block.mb_type.MbPartPredMode(0);
+        residual.transform_size_8x8_flag = block.transform_size_8x8_flag;
         parse_residual(input, slice, &mut residual)?;
         block.residual = Some(residual);
     }
@@ -889,6 +893,7 @@ pub fn parse_i_macroblock(
             let mut residual = Box::<Residual>::default();
             residual.coded_block_pattern = block.coded_block_pattern;
             residual.prediction_mode = block.MbPartPredMode(0);
+            residual.transform_size_8x8_flag = block.transform_size_8x8_flag;
             parse_residual(input, slice, &mut residual)?;
             result = Macroblock::I(block);
             result.set_residual(Some(residual));

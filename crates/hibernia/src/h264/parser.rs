@@ -970,10 +970,20 @@ pub fn calc_prev_intra4x4_pred_mode(
         let mode = if let Some(mb_neighbor) = mb_neighbor {
             if let Some(mb) = slice.get_mb_neighbor(mb_addr, mb_neighbor) {
                 if let Macroblock::I(mb) = mb {
-                    if mb.MbPartPredMode(0) == MbPredictionMode::Intra_4x4 {
-                        mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
-                    } else {
-                        default_mode
+                    match mb.MbPartPredMode(0) {
+                        MbPredictionMode::Intra_4x4 => {
+                            mb.rem_intra4x4_pred_mode[block_neighbor_idx as usize]
+                        }
+                        // Spec 8.3.1.1: when the neighbor MB uses Intra_8x8, the
+                        // contributing mode is Intra8x8PredMode of the 8x8 block
+                        // that contains the neighboring 4x4 block. Intra_4x4 and
+                        // Intra_8x8 share the 0..8 numbering so it's a u32 round-trip.
+                        MbPredictionMode::Intra_8x8 => {
+                            let n8x8 = block_neighbor_idx / 4;
+                            let m = mb.rem_intra8x8_pred_mode[n8x8 as usize] as u32;
+                            m.try_into().unwrap_or(default_mode)
+                        }
+                        _ => default_mode,
                     }
                 } else {
                     default_mode

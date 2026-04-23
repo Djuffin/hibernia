@@ -99,7 +99,8 @@ fn filter_macroblock(slice: &Slice, frame: &mut VideoFrame, mb_addr: MbAddr) {
     let transform_8x8 = match mb {
         Macroblock::I(m) => m.transform_size_8x8_flag,
         Macroblock::P(m) => m.transform_size_8x8_flag,
-        _ => false,
+        Macroblock::B(m) => m.transform_size_8x8_flag,
+        Macroblock::PCM(_) => false,
     };
 
     // Section 8.7, step 1 — locate neighbor macroblocks A (left) and B (top)
@@ -478,9 +479,16 @@ fn is_intra_16x16(mb: &Macroblock) -> bool {
 
 #[inline(always)]
 fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
+    // Section 8.7.2.1: bS=2 is derived from the transform block containing the
+    // sample, whose size depends on transform_size_8x8_flag. For 8x8 transforms
+    // the "block" is the enclosing 8x8 group — its four 4x4 sub-sections share a
+    // single coded status for deblocking purposes.
     if let Some(res) = get_residual(mb) {
         if is_intra_16x16(mb) {
             res.ac_level16x16_nc[blk_idx] != 0 || res.dc_level16x16[blk_idx] != 0
+        } else if res.transform_size_8x8_flag {
+            let i8x8 = blk_idx / 4;
+            res.luma_level8x8[i8x8].0.iter().any(|&v| v != 0)
         } else {
             res.luma_level4x4_nc[blk_idx] != 0
         }

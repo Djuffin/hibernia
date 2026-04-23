@@ -691,13 +691,11 @@ fn test_ffmpeg_high_cavlc_8x8() -> Result<(), String> {
     let h264_path_str = h264_path.to_str().unwrap();
     let y4m_path_str = y4m_path.to_str().unwrap();
 
-    // High profile + CAVLC + 8x8 transform, loop filter disabled.
+    // High profile + CAVLC + 8x8 transform with deblocking enabled.
     // -profile:v high:    High profile enables the 8x8 transform and 8x8 intra prediction.
     // -coder 0:           Force CAVLC entropy coding (High profile defaults to CABAC).
     // 8x8dct=1:           Explicitly enable transform_8x8_mode_flag so blocks exercise the
     //                     8x8 residual / intra prediction paths rather than only 4x4.
-    // no-deblock=1:       Disable the in-loop deblocking filter so this test isolates the
-    //                     8x8 residual + intra prediction path from deblocking differences.
     if !run_ffmpeg(&[
         "-y",
         "-f",
@@ -715,7 +713,7 @@ fn test_ffmpeg_high_cavlc_8x8() -> Result<(), String> {
         "-coder",
         "0",
         "-x264-params",
-        "8x8dct=1:no-deblock=1",
+        "8x8dct=1",
         h264_path_str,
     ])? {
         return Ok(());

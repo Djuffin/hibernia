@@ -680,3 +680,53 @@ fn test_ffmpeg_all_intra() -> Result<(), String> {
     compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
     Ok(())
 }
+
+#[test]
+#[ignore = "decoder does not yet support the 8x8 transform (transform_8x8_mode_flag)"]
+fn test_ffmpeg_high_cavlc_8x8() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_high_cavlc_8x8").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    // High profile + CAVLC + 8x8 transform.
+    // -profile:v high:    High profile enables the 8x8 transform and 8x8 intra prediction.
+    // -coder 0:           Force CAVLC entropy coding (High profile defaults to CABAC).
+    // 8x8dct=1:           Explicitly enable transform_8x8_mode_flag so blocks exercise the
+    //                     8x8 residual / intra prediction paths rather than only 4x4.
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "2",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-pix_fmt",
+        "yuv420p",
+        "-coder",
+        "0",
+        "-x264-params",
+        "8x8dct=1",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}

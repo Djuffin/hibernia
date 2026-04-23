@@ -117,21 +117,21 @@ fn test_decoding_against_gold(
 pub fn test_NL1_Sony_D() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice.
     // disable_deblocking_filter_idc is equal to 1, specifying disabling of the deblocking filter process.
-    test_decoding_against_gold("data/NL1_Sony_D.jsv", "data/NL1_Sony_D.y4m")
+    test_decoding_against_gold("data/NL1_Sony_D/NL1_Sony_D.jsv", "data/NL1_Sony_D/NL1_Sony_D.y4m")
 }
 
 #[test]
 pub fn test_SVA_NL1_B() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice.
     // disable_deblocking_filter_idc is equal to 1, specifying disabling of the deblocking filter process.
-    test_decoding_against_gold("data/SVA_NL1_B.264", "data/SVA_NL1_B.y4m")
+    test_decoding_against_gold("data/SVA_NL1_B/SVA_NL1_B.264", "data/SVA_NL1_B/SVA_NL1_B.y4m")
 }
 
 #[test]
 pub fn test_BA1_Sony_D() -> Result<(), String> {
     // Decoding of I slices with the deblocking filter process enabled.
     // All slices are coded as I slices. Each picture contains only one slice.
-    test_decoding_against_gold("data/BA1_Sony_D.jsv", "data/BA1_Sony_D.y4m")
+    test_decoding_against_gold("data/BA1_Sony_D/BA1_Sony_D.jsv", "data/BA1_Sony_D/BA1_Sony_D.y4m")
 }
 
 #[test]
@@ -141,7 +141,7 @@ pub fn test_NL2_Sony_H() -> Result<(), String> {
     // disable_deblocking_filter_idc is equal to 1, specifying disabling of the deblocking filter process.
     // pic_order_cnt_type is equal to 0.
     // h264 (Constrained Baseline), yuv420p(progressive), 176x144
-    test_decoding_against_gold("data/NL2_Sony_H.jsv", "data/NL2_Sony_H.y4m")
+    test_decoding_against_gold("data/NL2_Sony_H/NL2_Sony_H.jsv", "data/NL2_Sony_H/NL2_Sony_H.y4m")
 }
 
 #[test]
@@ -149,7 +149,7 @@ pub fn test_SVA_BA2_D() -> Result<(), String> {
     // Decoding of I or P slices. Each picture contains only one slice.
     // deblocking filter process enabled.
     // pic_order_cnt_type is equal to 2.
-    test_decoding_against_gold("data/SVA_BA2_D.264", "data/SVA_BA2_D_rec.y4m")
+    test_decoding_against_gold("data/SVA_BA2_D/SVA_BA2_D.264", "data/SVA_BA2_D/SVA_BA2_D_rec.y4m")
 }
 
 #[test]
@@ -157,7 +157,7 @@ pub fn test_BA2_Sony_F() -> Result<(), String> {
     // Decoding of I or P slices. Each picture contains only one slice.
     // deblocking filter process enabled.
     // pic_order_cnt_type is equal to 0.
-    test_decoding_against_gold("data/BA2_Sony_F.jsv", "data/BA2_Sony_F.y4m")
+    test_decoding_against_gold("data/BA2_Sony_F/BA2_Sony_F.jsv", "data/BA2_Sony_F/BA2_Sony_F.y4m")
 }
 
 #[test]
@@ -165,7 +165,7 @@ pub fn test_CANL1_TOSHIBA_G() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice. disable_deblocking_filter_idc is equal
     // to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 2.
-    test_decoding_against_gold("data/CANL1_TOSHIBA_G.264", "data/CANL1_TOSHIBA_G_dec.y4m")
+    test_decoding_against_gold("data/CANL1_TOSHIBA_G/CANL1_TOSHIBA_G.264", "data/CANL1_TOSHIBA_G/CANL1_TOSHIBA_G_dec.y4m")
 }
 
 #[test]
@@ -173,7 +173,7 @@ pub fn test_CANL1_Sony_E() -> Result<(), String> {
     // All slices are coded as I slices. Each picture contains only one slice. disable_deblocking_filter_idc is equal
     // to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 0.
-    test_decoding_against_gold("data/CANL1_Sony_E.jsv", "data/CANL1_Sony_E.y4m")
+    test_decoding_against_gold("data/CANL1_Sony_E/CANL1_Sony_E.jsv", "data/CANL1_Sony_E/CANL1_Sony_E.y4m")
 }
 
 #[test]
@@ -181,7 +181,7 @@ pub fn test_CANL2_Sony_E() -> Result<(), String> {
     // All slices are coded as I or P slices. Each picture contains only one slice. disable_deblocking_filter_idc is
     // equal to 1, specifying disabling of the deblocking filter process. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 0.
-    test_decoding_against_gold("data/CANL2_Sony_E.jsv", "data/CANL2_Sony_E.y4m")
+    test_decoding_against_gold("data/CANL2_Sony_E/CANL2_Sony_E.jsv", "data/CANL2_Sony_E/CANL2_Sony_E.y4m")
 }
 
 #[test]
@@ -189,19 +189,19 @@ pub fn test_CABA2_SVA_B() -> Result<(), String> {
     // Decoding of I or P slices with CABAC and the deblocking filter process enabled.
     // Each picture contains only one slice. entropy_coding_mode_flag is equal to 1, specifying the
     // CABAC parsing process. pic_order_cnt_type is equal to 0. num_ref_frames is equal to 5.
-    test_decoding_against_gold("data/CABA2_SVA_B.264", "data/CABA2_SVA_B_rec.y4m")
+    test_decoding_against_gold("data/CABA2_SVA_B/CABA2_SVA_B.264", "data/CABA2_SVA_B/CABA2_SVA_B_rec.y4m")
 }
 
 #[test]
 pub fn test_CABA3_SVA_B() -> Result<(), String> {
     // IPB slices with CABAC. Temporal direct prediction. num_ref_frames=5.
-    test_decoding_against_gold("data/CABA3_SVA_B.264", "data/CABA3_SVA_B_rec.y4m")
+    test_decoding_against_gold("data/CABA3_SVA_B/CABA3_SVA_B.264", "data/CABA3_SVA_B/CABA3_SVA_B_rec.y4m")
 }
 
 #[test]
 pub fn test_CVBS3_Sony_C() -> Result<(), String> {
     // IPB slices with CAVLC. Temporal direct prediction. direct_8x8_inference=on. num_ref_frames=4.
-    test_decoding_against_gold("data/CVBS3_Sony_C.jsv", "data/CVBS3_Sony_C_rec.y4m")
+    test_decoding_against_gold("data/CVBS3_Sony_C/CVBS3_Sony_C.jsv", "data/CVBS3_Sony_C/CVBS3_Sony_C_rec.y4m")
 }
 
 #[test]

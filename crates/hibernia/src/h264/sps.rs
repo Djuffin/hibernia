@@ -1,3 +1,4 @@
+use super::scaling_list::SeqScalingMatrix;
 use super::{tables, ChromaFormat, Profile};
 
 /// Hypothetical Reference Decoder (HRD) parameters.
@@ -84,6 +85,10 @@ pub struct SequenceParameterSet {
     pub bit_depth_chroma_minus8: u8,
     pub qpprime_y_zero_transform_bypass_flag: bool,
     pub seq_scaling_matrix_present_flag: bool,
+    /// Present iff `seq_scaling_matrix_present_flag` is true. Holds the raw
+    /// per-list entries coded in the bitstream (pre-fallback); decode via
+    /// `scaling_list::resolve_seq_scaling_matrix` to obtain effective weights.
+    pub seq_scaling_matrix: Option<SeqScalingMatrix>,
 
     pub log2_max_frame_num_minus4: u8,
 

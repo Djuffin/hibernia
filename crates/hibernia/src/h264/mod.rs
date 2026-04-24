@@ -13,6 +13,7 @@ pub mod poc;
 pub mod pps;
 pub mod rbsp;
 pub mod residual;
+pub mod scaling_list;
 pub mod slice;
 pub mod sps;
 pub mod tables;

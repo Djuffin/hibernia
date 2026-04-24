@@ -24,6 +24,7 @@ fn test_sps_json_deserialization() {
         bit_depth_chroma_minus8: 2,
         qpprime_y_zero_transform_bypass_flag: true,
         seq_scaling_matrix_present_flag: false,
+        seq_scaling_matrix: None,
         log2_max_frame_num_minus4: 4,
         pic_order_cnt_type: 1,
         log2_max_pic_order_cnt_lsb_minus4: 5,
@@ -106,6 +107,7 @@ fn test_pps_json_deserialization() {
         constrained_intra_pred_flag: true,
         redundant_pic_cnt_present_flag: true,
         transform_8x8_mode_flag: true,
+        pic_scaling_matrix: None,
         second_chroma_qp_index_offset: -2,
     };
 

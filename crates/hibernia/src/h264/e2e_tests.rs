@@ -731,6 +731,100 @@ fn test_ffmpeg_high_cavlc_8x8() -> Result<(), String> {
 }
 
 #[test]
+fn test_ffmpeg_high_custom_scaling_matrix() -> Result<(), String> {
+    let test_dir =
+        TestDir::new("target/tmp_ffmpeg_high_custom_scaling_matrix").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    // High profile + CABAC + 8x8 transform + custom scaling matrices.
+    // cqm=jvt tells x264 to emit the JVT default scaling matrices (non-flat),
+    // which sets seq_scaling_matrix_present_flag=1 in the SPS and exercises
+    // the full custom scaling path: SPS parsing of scaling_list(), rule-A
+    // fallback resolution, and the threaded weight_scale in the inverse
+    // quantization of 4x4 luma/chroma and 8x8 luma residuals.
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "2",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-pix_fmt",
+        "yuv420p",
+        "-coder",
+        "1",
+        "-x264-params",
+        "8x8dct=1:cqm=jvt",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+
+    // Sanity check: the encoded stream actually signals a custom scaling
+    // matrix somewhere (SPS or PPS). If ffmpeg/x264 silently ignored the cqm
+    // setting the y4m comparison above would still pass with flat matrices,
+    // so we probe the bitstream here to make sure the feature was exercised.
+    {
+        use crate::h264::nal::NalUnitType;
+        let mut found_custom_matrix = false;
+        let nal_parser = NalParser::new(Cursor::new(&encoded_data));
+        for nal_result in nal_parser {
+            let raw = nal_result.map_err(|e| format!("NAL error: {e:?}"))?;
+            if raw.is_empty() {
+                continue;
+            }
+            // Strip emulation-prevention bytes before parsing (same path as
+            // the real decoder takes in decoder.rs).
+            let stripped = crate::h264::parser::remove_emulation_if_needed(&raw);
+            let bytes: &[u8] = if stripped.is_empty() { &raw } else { &stripped };
+            let nal_type = bytes[0] & 0x1F;
+            let rbsp = &bytes[1..];
+            let mut reader = crate::h264::rbsp::RbspReader::new(rbsp);
+            if nal_type == NalUnitType::SeqParameterSet as u8 {
+                let sps = crate::h264::parser::parse_sps(&mut reader)
+                    .map_err(|e| format!("SPS parse: {e}"))?;
+                if sps.seq_scaling_matrix.is_some() {
+                    found_custom_matrix = true;
+                    break;
+                }
+            } else if nal_type == NalUnitType::PicParameterSet as u8 {
+                let pps = crate::h264::parser::parse_pps(&mut reader)
+                    .map_err(|e| format!("PPS parse: {e}"))?;
+                if pps.pic_scaling_matrix.is_some() {
+                    found_custom_matrix = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            found_custom_matrix,
+            "expected a custom scaling matrix in SPS or PPS; x264 may not have honored cqm=jvt"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_ffmpeg_high_cabac_8x8() -> Result<(), String> {
     let test_dir = TestDir::new("target/tmp_ffmpeg_high_cabac_8x8").map_err(|e| e.to_string())?;
 

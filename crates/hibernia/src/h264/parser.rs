@@ -4,6 +4,10 @@ use super::macroblock;
 use super::nal;
 use super::pps;
 use super::rbsp;
+use super::scaling_list::{
+    self, num_pps_8x8_lists, num_sps_8x8_lists, PicScalingMatrix, ScalingList4x4Entry,
+    ScalingList8x8Entry, SeqScalingMatrix,
+};
 use super::slice;
 use super::sps;
 use super::tables;
@@ -228,6 +232,81 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     Ok(vui)
 }
 
+// Section 7.3.2.1.1.1 / 7.3.2.2.1 — SPS scaling matrix syntax. Iterates over
+// the `seq_scaling_list_present_flag[i]` flags and decodes each present list
+// via `scaling_list::parse_scaling_list`. Non-present entries remain
+// `NotPresent` so the resolver can apply fallback rule A later.
+fn parse_seq_scaling_matrix(
+    input: &mut BitReader,
+    chroma_format: ChromaFormat,
+) -> ParseResult<SeqScalingMatrix> {
+    let mut matrix = SeqScalingMatrix::default();
+    let n_8x8 = num_sps_8x8_lists(chroma_format);
+    matrix.lists_8x8 = vec![ScalingList8x8Entry::NotPresent; n_8x8];
+
+    let total = 6 + n_8x8;
+    for i in 0..total {
+        let present = input.f().map_err(|e| format!("seq_scaling_list_present_flag[{i}]: {e}"))?;
+        if !present {
+            continue;
+        }
+        if i < 6 {
+            let (values, use_default) = scaling_list::parse_scaling_list(input, 16)?;
+            matrix.lists_4x4[i] = if use_default {
+                ScalingList4x4Entry::UseDefault
+            } else {
+                ScalingList4x4Entry::Explicit(values)
+            };
+        } else {
+            let (values, use_default) = scaling_list::parse_scaling_list(input, 64)?;
+            matrix.lists_8x8[i - 6] = if use_default {
+                ScalingList8x8Entry::UseDefault
+            } else {
+                ScalingList8x8Entry::Explicit(values)
+            };
+        }
+    }
+
+    Ok(matrix)
+}
+
+// Section 7.3.2.2.1 — PPS scaling matrix. The 8x8 list count here depends on
+// both `chroma_format_idc` and `transform_8x8_mode_flag`.
+fn parse_pic_scaling_matrix(
+    input: &mut BitReader,
+    chroma_format: ChromaFormat,
+    transform_8x8_mode_flag: bool,
+) -> ParseResult<PicScalingMatrix> {
+    let mut matrix = PicScalingMatrix::default();
+    let n_8x8 = num_pps_8x8_lists(chroma_format, transform_8x8_mode_flag);
+    matrix.lists_8x8 = vec![ScalingList8x8Entry::NotPresent; n_8x8];
+
+    let total = 6 + n_8x8;
+    for i in 0..total {
+        let present = input.f().map_err(|e| format!("pic_scaling_list_present_flag[{i}]: {e}"))?;
+        if !present {
+            continue;
+        }
+        if i < 6 {
+            let (values, use_default) = scaling_list::parse_scaling_list(input, 16)?;
+            matrix.lists_4x4[i] = if use_default {
+                ScalingList4x4Entry::UseDefault
+            } else {
+                ScalingList4x4Entry::Explicit(values)
+            };
+        } else {
+            let (values, use_default) = scaling_list::parse_scaling_list(input, 64)?;
+            matrix.lists_8x8[i - 6] = if use_default {
+                ScalingList8x8Entry::UseDefault
+            } else {
+                ScalingList8x8Entry::Explicit(values)
+            };
+        }
+    }
+
+    Ok(matrix)
+}
+
 // Section 7.3.2.1.1 Sequence parameter set data syntax
 pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
     let mut sps = SequenceParameterSet::default();
@@ -256,7 +335,8 @@ pub fn parse_sps(input: &mut BitReader) -> ParseResult<SequenceParameterSet> {
         read_value!(input, sps.qpprime_y_zero_transform_bypass_flag, f);
         read_value!(input, sps.seq_scaling_matrix_present_flag, f);
         if sps.seq_scaling_matrix_present_flag {
-            return Err("custom scaling matrices are not supported".into());
+            sps.seq_scaling_matrix =
+                Some(parse_seq_scaling_matrix(input, sps.chroma_format_idc)?);
         }
     }
 
@@ -422,7 +502,16 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
         let pic_scaling_matrix_present_flag: bool;
         read_value!(input, pic_scaling_matrix_present_flag, f);
         if pic_scaling_matrix_present_flag {
-            return Err("PPS scaling matrices are not supported".into());
+            // The PPS alone does not know chroma_format_idc; look it up on the
+            // referenced SPS (the standard 7.3.2.2.1 formula). Falls back to
+            // YUV420 when SPS isn't yet available, which matches the most
+            // common case (and will be re-validated once the SPS is parsed).
+            let chroma_format = ChromaFormat::YUV420;
+            pps.pic_scaling_matrix = Some(parse_pic_scaling_matrix(
+                input,
+                chroma_format,
+                pps.transform_8x8_mode_flag,
+            )?);
         }
         read_value!(input, pps.second_chroma_qp_index_offset, se);
     } else {

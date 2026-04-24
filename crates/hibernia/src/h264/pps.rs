@@ -44,6 +44,7 @@ pub enum SliceGroup {
     },
 }
 
+use super::scaling_list::PicScalingMatrix;
 use super::ColorPlane;
 
 // Section 7.4.2.2 Picture parameter set RBSP semantics
@@ -82,7 +83,9 @@ pub struct PicParameterSet {
     // True specifies that the 8x8 transform decoding process may be in use.
     // False if not present.
     pub transform_8x8_mode_flag: bool,
-    //pub pic_scaling_matrix: Option<PicScalingMatrix>,
+    /// Raw per-list entries for the picture-level scaling matrix (clause
+    /// 7.3.2.2.1). `None` means `pic_scaling_matrix_present_flag = 0`.
+    pub pic_scaling_matrix: Option<PicScalingMatrix>,
     pub second_chroma_qp_index_offset: i32,
 }
 

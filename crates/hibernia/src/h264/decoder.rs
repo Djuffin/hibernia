@@ -22,6 +22,9 @@ use super::macroblock::{
 };
 use super::poc::PocState;
 use super::residual::{level_scale_4x4_block, unzip_block_4x4};
+use super::scaling_list::{
+    resolve_pic_scaling_matrix, resolve_seq_scaling_matrix, ResolvedScalingMatrix,
+};
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::{info, trace};
@@ -295,12 +298,6 @@ impl Decoder {
                         "gaps_in_frame_num_value_allowed_flag=1 is not supported".into(),
                     ));
                 }
-                if sps.seq_scaling_matrix_present_flag {
-                    return Err(DecodingError::FeatureNotSupported(
-                        "custom scaling matrices are not supported".into(),
-                    ));
-                }
-
                 // Update DPB size: use level-derived MaxDpbFrames per A.3.1,
                 // or VUI max_dec_frame_buffering if bitstream_restriction_flag is set.
                 let max_dpb_frames = super::dpb::max_dpb_frames(&sps);
@@ -378,6 +375,23 @@ impl Decoder {
             resolve_ref_pic_list(&slice.ref_pic_list0, &self.dpb.pictures, "ref_pic_list0")?;
         let ref_pics_l1 =
             resolve_ref_pic_list(&slice.ref_pic_list1, &self.dpb.pictures, "ref_pic_list1")?;
+
+        // Resolve the active (picture-level) scaling matrix from SPS + PPS per
+        // clauses 7.4.2.1.1.1 (rule A) and 7.4.2.2.1 (rule B). Falls back to
+        // all-flat-16 when neither signals a custom matrix.
+        let active_scaling_matrix: ResolvedScalingMatrix = {
+            let sps_resolved = resolve_seq_scaling_matrix(
+                slice.sps.seq_scaling_matrix.as_ref(),
+                slice.sps.ChromaArrayType(),
+            );
+            resolve_pic_scaling_matrix(
+                &sps_resolved,
+                slice.sps.seq_scaling_matrix.is_some(),
+                slice.pps.pic_scaling_matrix.as_ref(),
+                slice.pps.transform_8x8_mode_flag,
+                slice.sps.ChromaArrayType(),
+            )
+        };
         let first_mb_addr = slice.header.first_mb_in_slice;
         for i in 0..slice.get_macroblock_count() {
             let mb_addr = first_mb_addr + i as u32;
@@ -428,7 +442,7 @@ impl Decoder {
                             % (52 + qp_bd_offset_y)
                             - qp_bd_offset_y;
                         let residuals = if let Some(residual) = imb.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp as u8)
+                            residual.restore(ColorPlane::Y, qp as u8, &active_scaling_matrix)
                         } else {
                             SmallVec::new()
                         };
@@ -479,7 +493,7 @@ impl Decoder {
                                 })?;
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = if let Some(residual) = imb.residual.as_ref() {
-                                residual.restore(plane_name, chroma_qp)
+                                residual.restore(plane_name, chroma_qp, &active_scaling_matrix)
                             } else {
                                 SmallVec::new()
                             };
@@ -498,7 +512,7 @@ impl Decoder {
                             % (52 + qp_bd_offset_y)
                             - qp_bd_offset_y;
                         let residuals = if let Some(residual) = block.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp as u8)
+                            residual.restore(ColorPlane::Y, qp as u8, &active_scaling_matrix)
                         } else {
                             SmallVec::new()
                         };
@@ -521,7 +535,7 @@ impl Decoder {
                                     DecodingError::OutOfRange("chroma QP out of u8 range".into())
                                 })?;
                             let residuals = if let Some(residual) = block.residual.as_ref() {
-                                residual.restore(plane_name, chroma_qp)
+                                residual.restore(plane_name, chroma_qp, &active_scaling_matrix)
                             } else {
                                 SmallVec::new()
                             };
@@ -541,7 +555,7 @@ impl Decoder {
                             % (52 + qp_bd_offset_y)
                             - qp_bd_offset_y;
                         let residuals = if let Some(residual) = block.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp as u8)
+                            residual.restore(ColorPlane::Y, qp as u8, &active_scaling_matrix)
                         } else {
                             SmallVec::new()
                         };
@@ -565,7 +579,7 @@ impl Decoder {
                                     DecodingError::OutOfRange("chroma QP out of u8 range".into())
                                 })?;
                             let residuals = if let Some(residual) = block.residual.as_ref() {
-                                residual.restore(plane_name, chroma_qp)
+                                residual.restore(plane_name, chroma_qp, &active_scaling_matrix)
                             } else {
                                 SmallVec::new()
                             };

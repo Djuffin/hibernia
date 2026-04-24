@@ -729,3 +729,52 @@ fn test_ffmpeg_high_cavlc_8x8() -> Result<(), String> {
     compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
     Ok(())
 }
+
+#[test]
+fn test_ffmpeg_high_cabac_8x8() -> Result<(), String> {
+    let test_dir = TestDir::new("target/tmp_ffmpeg_high_cabac_8x8").map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    // High profile + CABAC + 8x8 transform. Mirrors test_ffmpeg_high_cavlc_8x8
+    // but uses -coder 1 (CABAC, the default High-profile coder) to exercise the
+    // 8x8 CABAC residual path: ctxBlockCat=5, Table 9-43 ctxIdxInc mapping,
+    // 64-coefficient sig-coeff/last parsing, and luma_level8x8 storage. P-frame
+    // inter MBs with 8x8 DCT also exercise the transform_size_8x8_flag CABAC bin.
+    if !run_ffmpeg(&[
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "mandelbrot=size=432x240:rate=15",
+        "-t",
+        "2",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-pix_fmt",
+        "yuv420p",
+        "-coder",
+        "1",
+        "-x264-params",
+        "8x8dct=1",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}

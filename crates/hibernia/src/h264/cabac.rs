@@ -1425,7 +1425,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             // Eq 9-22: Min( levelListIdx / NumC8x8, 2 )
             min(scanning_pos, 2)
         } else if matches!(ctx_block_cat, 5 | 9 | 13) {
-            unimplemented!("Table 9-43 context mapping for 8x8 blocks");
+            // Table 9-43 (frame scan). Field scan is unsupported — callers reject
+            // field_pic_flag upstream in parse_residual_block_cabac.
+            super::tables::SIG_COEFF_FLAG_CTX_IDX_INC_8X8_FRAME[scanning_pos] as usize
         } else {
             // Luma DC, AC, 4x4 and Chroma AC
             scanning_pos
@@ -1437,7 +1439,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if ctx_block_cat == 3 {
             min(scanning_pos, 2)
         } else if matches!(ctx_block_cat, 5 | 9 | 13) {
-            unimplemented!("Table 9-43 context mapping for 8x8 blocks");
+            super::tables::LAST_SIG_COEFF_FLAG_CTX_IDX_INC_8X8[scanning_pos] as usize
         } else {
             scanning_pos
         }
@@ -1633,7 +1635,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         residual.prediction_mode = match curr_mb.mb_type {
             CabacMbType::I(m) => {
                 if m == super::macroblock::IMbType::I_NxN {
-                    super::macroblock::MbPredictionMode::Intra_4x4
+                    if curr_mb.transform_size_8x8_flag {
+                        super::macroblock::MbPredictionMode::Intra_8x8
+                    } else {
+                        super::macroblock::MbPredictionMode::Intra_4x4
+                    }
                 } else {
                     super::macroblock::MbPredictionMode::Intra_16x16
                 }
@@ -1641,6 +1647,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             CabacMbType::P(_) | CabacMbType::B(_) => super::macroblock::MbPredictionMode::Pred_L0,
         };
         residual.coded_block_pattern = curr_mb.coded_block_pattern;
+        residual.transform_size_8x8_flag = curr_mb.transform_size_8x8_flag;
 
         // Snapshot A/B neighbor MBs once for all cbf-context decodes in this MB.
         let neighbor_cache = ResidualNeighborCache::build(slice, mb_addr);
@@ -1661,27 +1668,48 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             )?;
         }
 
-        // 2. Luma AC (if Intra 16x16) or Luma 4x4 (others)
-        for i in 0..16 {
-            let (ctx_block_cat, max_num_coeff) =
-                if residual.prediction_mode == super::macroblock::MbPredictionMode::Intra_16x16 {
+        // 2. Luma AC (if Intra 16x16), Luma 8x8 (if transform_8x8_flag), or Luma 4x4 (others).
+        // Intra_16x16 forbids the 8x8 transform, so the 8x8 path is mutually exclusive
+        // with the DC/AC case above.
+        if curr_mb.transform_size_8x8_flag {
+            for i8x8 in 0..4 {
+                if residual.coded_block_pattern.luma() & (1 << i8x8) != 0 {
+                    self.parse_residual_block_cabac(
+                        slice,
+                        mb_addr,
+                        curr_mb,
+                        &neighbor_cache,
+                        residual,
+                        5,
+                        i8x8,
+                        0,
+                        64,
+                    )?;
+                }
+            }
+        } else {
+            for i in 0..16 {
+                let (ctx_block_cat, max_num_coeff) = if residual.prediction_mode
+                    == super::macroblock::MbPredictionMode::Intra_16x16
+                {
                     (1, 15)
                 } else {
                     (2, 16)
                 };
 
-            if residual.coded_block_pattern.luma() & (1 << (i / 4)) != 0 {
-                self.parse_residual_block_cabac(
-                    slice,
-                    mb_addr,
-                    curr_mb,
-                    &neighbor_cache,
-                    residual,
-                    ctx_block_cat,
-                    i,
-                    0,
-                    max_num_coeff,
-                )?;
+                if residual.coded_block_pattern.luma() & (1 << (i / 4)) != 0 {
+                    self.parse_residual_block_cabac(
+                        slice,
+                        mb_addr,
+                        curr_mb,
+                        &neighbor_cache,
+                        residual,
+                        ctx_block_cat,
+                        i,
+                        0,
+                        max_num_coeff,
+                    )?;
+                }
             }
         }
 
@@ -1754,10 +1782,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             }
         }
 
-        if curr_mb.transform_size_8x8_flag {
-            return Err("8x8 transform residual parsing is not supported".into());
-        }
-
         Ok(())
     }
 
@@ -1826,6 +1850,14 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     }
                 }
             }
+            5 => {
+                // For an 8x8 luma block, propagate CBF to the 4 constituent 4x4
+                // positions in luma_ac so neighbor lookups (which index by 4x4
+                // blkIdx) see a consistent non-zero CBF.
+                if cbf {
+                    curr_mb.cbf.luma_ac |= 0xF << (blk_idx * 4);
+                }
+            }
             _ => {}
         }
 
@@ -1835,9 +1867,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // 2. significant_coeff_flag / last_significant_coeff_flag.
-        assert!(max_num_coeff <= 16);
+        assert!(max_num_coeff <= 64);
         // Bitmask of significant coefficient positions. Bit `i` is 1 if scanning position `i` is non-zero.
-        let mut sig_map = 0u16;
+        let mut sig_map = 0u64;
 
         let sig_props =
             get_syntax_element_properties(SyntaxElement::SignificantCoeffFlag(ctx_block_cat));
@@ -1872,7 +1904,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let num_coeff = sig_map.count_ones() as u8;
         let mut num_decod_abs_level_eq1 = 0;
         let mut num_decod_abs_level_gt1 = 0;
-        let mut coeff_level = [0i32; 16];
+        let mut coeff_level = [0i32; 64];
 
         let abs_props =
             get_syntax_element_properties(SyntaxElement::CoeffAbsLevelMinus1(ctx_block_cat));
@@ -1880,7 +1912,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         let mut remaining_sig = sig_map;
         while remaining_sig != 0 {
-            let pos = 15 - remaining_sig.leading_zeros();
+            let pos = 63 - remaining_sig.leading_zeros();
             remaining_sig ^= 1 << pos;
 
             let val_minus1 = self.parse_abs_level_minus1(
@@ -1900,8 +1932,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
             let sign = self.decode_bypass()?;
             let level = if sign == 1 { -abs_level } else { abs_level };
-            // Mask with 15 to completely guarantee to LLVM that no bounds check is needed
-            coeff_level[(pos as usize) & 15] = level;
+            // Mask with 63 to completely guarantee to LLVM that no bounds check is needed
+            coeff_level[(pos as usize) & 63] = level;
         }
 
         // 4. Store coefficients in Residual
@@ -1937,6 +1969,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 );
                 levels.copy_from_slice(&coeff_level[0..15]);
                 *nc = num_coeff;
+            }
+            5 => {
+                // Luma 8x8 (64 coeffs, zig-zag order). Consumed by the 8x8 inverse
+                // transform path in Residual::restore via unzip_block_8x8.
+                residual.luma_level8x8[blk_idx].0.copy_from_slice(&coeff_level[..64]);
             }
             _ => {}
         }
@@ -2595,14 +2632,44 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         curr_mb.transform_size_8x8_flag = flag;
                     }
 
-                    if mb.transform_size_8x8_flag {
-                        return Err("Intra 8x8 prediction parsing is not supported".into());
-                    } else {
-                        let prev_intra_props =
-                            get_syntax_element_properties(SyntaxElement::PrevIntra4x4PredModeFlag);
-                        let rem_intra_props =
-                            get_syntax_element_properties(SyntaxElement::RemIntra4x4PredMode);
+                    // Table 9-34: prev_intra4x4_pred_mode_flag and
+                    // prev_intra8x8_pred_mode_flag share ctxIdxOffset 68; the rem_*
+                    // syntax elements share ctxIdxOffset 69. Binarization is FL with
+                    // 1 bin (flag) / 3 bins (rem), identical between 4x4 and 8x8.
+                    let prev_intra_props =
+                        get_syntax_element_properties(SyntaxElement::PrevIntra4x4PredModeFlag);
+                    let rem_intra_props =
+                        get_syntax_element_properties(SyntaxElement::RemIntra4x4PredMode);
 
+                    if mb.transform_size_8x8_flag {
+                        for i in 0..4 {
+                            let prev_intra_pred_mode_flag =
+                                self.decode_bin(prev_intra_props.ctx_idx_offset as usize)? == 1;
+                            let prev_mode =
+                                super::parser::calc_prev_intra8x8_pred_mode(slice, &mb, mb_addr, i);
+
+                            if prev_intra_pred_mode_flag {
+                                mb.rem_intra8x8_pred_mode[i] = prev_mode;
+                            } else {
+                                let rem_intra_offset = rem_intra_props.ctx_idx_offset as usize;
+                                let rem_intra_pred_mode = self.decode_bin(rem_intra_offset)? as u32
+                                    | ((self.decode_bin(rem_intra_offset)? as u32) << 1)
+                                    | ((self.decode_bin(rem_intra_offset)? as u32) << 2);
+
+                                if rem_intra_pred_mode < (prev_mode as u32) {
+                                    mb.rem_intra8x8_pred_mode[i] =
+                                        super::macroblock::Intra_8x8_SamplePredMode::try_from(
+                                            rem_intra_pred_mode,
+                                        )?;
+                                } else {
+                                    mb.rem_intra8x8_pred_mode[i] =
+                                        super::macroblock::Intra_8x8_SamplePredMode::try_from(
+                                            rem_intra_pred_mode + 1,
+                                        )?;
+                                }
+                            }
+                        }
+                    } else {
                         for i in 0..16 {
                             let prev_intra_pred_mode_flag =
                                 self.decode_bin(prev_intra_props.ctx_idx_offset as usize)? == 1;
@@ -2858,6 +2925,33 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     residual: None,
                     cbf_info: CbfInfo::default(),
                 };
+
+                // Spec 7.3.5 macroblock_layer: transform_size_8x8_flag is parsed for
+                // non-I_NxN MBs when CodedBlockPatternLuma > 0, PPS allows it, and every
+                // sub-MB partition is at least 8x8. For P: sub-partitions can go below
+                // 8x8 only when mb_type is P_8x8/P_8x8ref0 and a sub_mb_type has
+                // NumSubMbPart > 1.
+                let no_sub_mb_part_size_less_than_8x8 = if p_type
+                    == super::macroblock::PMbType::P_8x8
+                    || p_type == super::macroblock::PMbType::P_8x8ref0
+                {
+                    sub_mbs.iter().all(|sm| sm.sub_mb_type.NumSubMbPart() == 1)
+                } else {
+                    true
+                };
+                if slice.pps.transform_8x8_mode_flag
+                    && mb.coded_block_pattern.luma() > 0
+                    && no_sub_mb_part_size_less_than_8x8
+                {
+                    let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
+                    let ctx_idx_inc = Self::get_ctx_idx_inc_transform_size_8x8_flag(&accessor);
+                    let props =
+                        get_syntax_element_properties(SyntaxElement::TransformSize8x8Flag);
+                    let flag =
+                        self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)? == 1;
+                    mb.transform_size_8x8_flag = flag;
+                    curr_mb.transform_size_8x8_flag = flag;
+                }
 
                 if !mb.coded_block_pattern.is_zero()
                     && mb.mb_type != super::macroblock::PMbType::P_Skip
@@ -3202,6 +3296,39 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     ],
                 };
 
+                // Spec 7.3.5 macroblock_layer: for B MBs transform_size_8x8_flag is
+                // parsed when CodedBlockPatternLuma > 0, PPS allows it, every sub-
+                // partition is at least 8x8, and (for B_Direct_16x16) direct_8x8_
+                // inference_flag is set.
+                let no_sub_mb_part_size_less_than_8x8 = if b_type
+                    == super::macroblock::BMbType::B_8x8
+                {
+                    sub_mbs.iter().all(|sm| {
+                        if sm.sub_mb_type == super::macroblock::BSubMbType::B_Direct_8x8 {
+                            slice.sps.direct_8x8_inference_flag
+                        } else {
+                            sm.sub_mb_type.NumSubMbPart() == 1
+                        }
+                    })
+                } else {
+                    true
+                };
+                if slice.pps.transform_8x8_mode_flag
+                    && mb.coded_block_pattern.luma() > 0
+                    && no_sub_mb_part_size_less_than_8x8
+                    && (b_type != super::macroblock::BMbType::B_Direct_16x16
+                        || slice.sps.direct_8x8_inference_flag)
+                {
+                    let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
+                    let ctx_idx_inc = Self::get_ctx_idx_inc_transform_size_8x8_flag(&accessor);
+                    let props =
+                        get_syntax_element_properties(SyntaxElement::TransformSize8x8Flag);
+                    let flag =
+                        self.decode_bin((props.ctx_idx_offset as usize) + ctx_idx_inc)? == 1;
+                    mb.transform_size_8x8_flag = flag;
+                    curr_mb.transform_size_8x8_flag = flag;
+                }
+
                 if !mb.coded_block_pattern.is_zero() {
                     mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                 }
@@ -3420,23 +3547,6 @@ pub struct CabacTableEntry {
     pub ctx_idx_offset_suffix: Option<u32>,
 }
 
-/// Per-`ctxBlockCat` ctxIdxOffset for `coded_block_flag`. H.264 Table 9-34 / 9-40.
-/// Indexed by `ctx_block_cat` in 0..=13. Out-of-range cats fall back to 85 in the caller.
-const CBF_OFFSETS: [u32; 14] =
-    [85, 89, 93, 97, 101, 1012, 460, 464, 468, 1016, 472, 476, 480, 1020];
-
-/// Per-`ctxBlockCat` ctxIdxOffset for `significant_coeff_flag`. Table 9-34 / 9-40.
-const SIG_COEFF_OFFSETS: [u32; 14] =
-    [105, 120, 134, 149, 152, 402, 484, 499, 513, 660, 528, 543, 557, 718];
-
-/// Per-`ctxBlockCat` ctxIdxOffset for `last_significant_coeff_flag`. Table 9-34 / 9-40.
-const LAST_SIG_COEFF_OFFSETS: [u32; 14] =
-    [166, 181, 195, 210, 213, 417, 572, 587, 601, 690, 616, 631, 645, 748];
-
-/// Per-`ctxBlockCat` ctxIdxOffset for `coeff_abs_level_minus1`. Table 9-34 / 9-40.
-const COEFF_ABS_OFFSETS: [u32; 14] =
-    [227, 237, 247, 257, 266, 426, 952, 962, 972, 708, 982, 992, 1002, 766];
-
 #[inline]
 pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
     match se {
@@ -3564,28 +3674,28 @@ pub fn get_syntax_element_properties(se: SyntaxElement) -> CabacTableEntry {
         SyntaxElement::CodedBlockFlag(cat) => CabacTableEntry {
             binarization: BinarizationType::FL { c_max: 1 },
             max_bin_idx_ctx: 0,
-            ctx_idx_offset: *CBF_OFFSETS.get(cat).unwrap_or(&85),
+            ctx_idx_offset: *super::tables::CBF_OFFSETS.get(cat).unwrap_or(&85),
             max_bin_idx_ctx_suffix: None,
             ctx_idx_offset_suffix: None,
         },
         SyntaxElement::SignificantCoeffFlag(cat) => CabacTableEntry {
             binarization: BinarizationType::FL { c_max: 1 },
             max_bin_idx_ctx: 0,
-            ctx_idx_offset: *SIG_COEFF_OFFSETS.get(cat).unwrap_or(&105),
+            ctx_idx_offset: *super::tables::SIG_COEFF_OFFSETS.get(cat).unwrap_or(&105),
             max_bin_idx_ctx_suffix: None,
             ctx_idx_offset_suffix: None,
         },
         SyntaxElement::LastSignificantCoeffFlag(cat) => CabacTableEntry {
             binarization: BinarizationType::FL { c_max: 1 },
             max_bin_idx_ctx: 0,
-            ctx_idx_offset: *LAST_SIG_COEFF_OFFSETS.get(cat).unwrap_or(&166),
+            ctx_idx_offset: *super::tables::LAST_SIG_COEFF_OFFSETS.get(cat).unwrap_or(&166),
             max_bin_idx_ctx_suffix: None,
             ctx_idx_offset_suffix: None,
         },
         SyntaxElement::CoeffAbsLevelMinus1(cat) => CabacTableEntry {
             binarization: BinarizationType::UEGk { k: 0, signed_val_flag: false, u_coff: 14 },
             max_bin_idx_ctx: 1,
-            ctx_idx_offset: *COEFF_ABS_OFFSETS.get(cat).unwrap_or(&227),
+            ctx_idx_offset: *super::tables::COEFF_ABS_OFFSETS.get(cat).unwrap_or(&227),
             max_bin_idx_ctx_suffix: None,
             ctx_idx_offset_suffix: None,
         },

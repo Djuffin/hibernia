@@ -197,3 +197,40 @@ pub fn get_init_table(slice_type: SliceType, cabac_init_idc: u8) -> &'static [(i
         }
     }
 }
+
+/// Per-`ctxBlockCat` ctxIdxOffset for `coded_block_flag`. H.264 Table 9-34 / 9-40.
+/// Indexed by `ctx_block_cat` in 0..=13. Out-of-range cats fall back to 85 in the caller.
+pub const CBF_OFFSETS: [u32; 14] =
+    [85, 89, 93, 97, 101, 1012, 460, 464, 468, 1016, 472, 476, 480, 1020];
+
+/// Per-`ctxBlockCat` ctxIdxOffset for `significant_coeff_flag`. Table 9-34 / 9-40.
+pub const SIG_COEFF_OFFSETS: [u32; 14] =
+    [105, 120, 134, 149, 152, 402, 484, 499, 513, 660, 528, 543, 557, 718];
+
+/// Per-`ctxBlockCat` ctxIdxOffset for `last_significant_coeff_flag`. Table 9-34 / 9-40.
+pub const LAST_SIG_COEFF_OFFSETS: [u32; 14] =
+    [166, 181, 195, 210, 213, 417, 572, 587, 601, 690, 616, 631, 645, 748];
+
+/// Per-`ctxBlockCat` ctxIdxOffset for `coeff_abs_level_minus1`. Table 9-34 / 9-40.
+pub const COEFF_ABS_OFFSETS: [u32; 14] =
+    [227, 237, 247, 257, 266, 426, 952, 962, 972, 708, 982, 992, 1002, 766];
+
+/// Table 9-43 — ctxIdxInc for `significant_coeff_flag` in 8x8 luma/Cb/Cr blocks
+/// (ctxBlockCat 5, 9, 13) with frame-coded macroblocks. Indexed by levelListIdx
+/// in 0..=62.
+pub const SIG_COEFF_FLAG_CTX_IDX_INC_8X8_FRAME: [u8; 63] = [
+    0, 1, 2, 3, 4, 5, 5, 4, 4, 3, 3, 4, 4, 4, 5, 5,
+    4, 4, 4, 4, 3, 3, 6, 7, 7, 7, 8, 9, 10, 9, 8, 7,
+    7, 6, 11, 12, 13, 11, 6, 7, 8, 9, 14, 10, 9, 8, 6, 11,
+    12, 13, 11, 6, 9, 14, 10, 9, 11, 12, 13, 11, 14, 10, 12,
+];
+
+/// Table 9-43 — ctxIdxInc for `last_significant_coeff_flag` in 8x8 luma/Cb/Cr
+/// blocks (ctxBlockCat 5, 9, 13). The frame/field columns collapse to the same
+/// mapping. Indexed by levelListIdx in 0..=62.
+pub const LAST_SIG_COEFF_FLAG_CTX_IDX_INC_8X8: [u8; 63] = [
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4,
+    5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8,
+];

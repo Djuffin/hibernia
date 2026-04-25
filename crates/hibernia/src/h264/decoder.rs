@@ -970,18 +970,18 @@ impl Decoder {
             }
         }
 
-        // Copy decoded macroblocks into picture-wide state consumed at finalize:
+        // Move decoded macroblocks into picture-wide state consumed at finalize:
         // `mb_slice_id` drives cross-slice deblocking suppression and `mb_motion`
-        // / `mb_is_intra` feed the picture-level motion field assembly.
+        // / `mb_is_intra` feed the picture-level motion field assembly. Drains
+        // the slice — nothing reads `slice.macroblocks` after this point.
         let first_mb_addr = slice.header.first_mb_in_slice as usize;
-        for i in 0..slice.get_macroblock_count() {
+        let slices_seen = current.slices_seen;
+        for (i, mb) in slice.take_macroblocks().into_iter().enumerate() {
             let mb_addr = first_mb_addr + i;
-            if let Some(mb) = slice.get_mb(mb_addr as u32) {
-                current.mb_motion[mb_addr] = mb.get_motion_info();
-                current.mb_is_intra[mb_addr] = matches!(mb, Macroblock::I(_) | Macroblock::PCM(_));
-                current.macroblocks[mb_addr] = Some(mb.clone());
-                current.mb_slice_id[mb_addr] = current.slices_seen;
-            }
+            current.mb_motion[mb_addr] = mb.get_motion_info();
+            current.mb_is_intra[mb_addr] = matches!(&mb, Macroblock::I(_) | Macroblock::PCM(_));
+            current.mb_slice_id[mb_addr] = slices_seen;
+            current.macroblocks[mb_addr] = Some(mb);
         }
 
         Ok(())

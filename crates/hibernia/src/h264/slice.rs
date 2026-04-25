@@ -327,6 +327,12 @@ impl Slice {
         self.macroblocks.len()
     }
 
+    /// Move the parsed macroblocks out of the slice, leaving it empty.
+    /// Caller must not access them via `get_mb`/`get_mb_mut` afterwards.
+    pub fn take_macroblocks(&mut self) -> Vec<Macroblock> {
+        std::mem::take(&mut self.macroblocks)
+    }
+
     pub fn get_next_mb_addr(&self) -> MbAddr {
         self.macroblocks.len() as MbAddr + self.header.first_mb_in_slice
     }

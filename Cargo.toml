@@ -9,6 +9,12 @@ authors = ["Eugene Zemtsov"]
 license = "MIT"
 repository = "https://github.com/Djuffin/hibernia"
 
+[profile.release]
+debug = "line-tables-only"
+
+[profile.bench]
+debug = "line-tables-only"
+
 [workspace.dependencies]
 bitstream-io = "2.2.0"
 num-traits = "0.2.17"

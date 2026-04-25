@@ -72,25 +72,67 @@ impl ResidualPool {
     }
 }
 
+/// Luma residual storage. The three coded variants are mutually exclusive,
+/// selected by `prediction_mode` (Intra_16x16 vs the rest) and
+/// `transform_size_8x8_flag`. Unioning them halves the size of `Residual`.
+/// `Empty` is the post-acquire / default state, before the parser has chosen.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum LumaResidual {
+    #[default]
+    Empty,
+    /// Intra_16x16: separate 4x4 DC block and 16 AC blocks of 15 coefficients each.
+    Intra16x16 {
+        dc: [i32; 16],
+        ac: [[i32; 15]; 16],
+        ac_nc: [u8; 16],
+    },
+    /// 4x4 transform (Intra_4x4 or Inter without 8x8 DCT): 16 blocks of 16 coefficients.
+    Block4x4 {
+        levels: [[i32; 16]; 16],
+        nc: [u8; 16],
+    },
+    /// 8x8 transform (Intra_8x8 or Inter with 8x8 DCT enabled): 4 blocks of 64 coefficients.
+    /// CAVLC decodes these as four 4x4 subsections and de-interleaves into
+    /// `levels[i8x8][4*i + i4x4]` per Clause 7.3.5.3.1. The per-4x4 NC counts
+    /// are kept for CAVLC neighbor-context derivation in subsequent blocks; the
+    /// 8x8 inverse transform itself does not consult them.
+    Block8x8 {
+        levels: [LumaLevel8x8; 4],
+        nc: [u8; 16],
+    },
+}
+
+impl LumaResidual {
+    /// Resets to the Intra_16x16 layout with zeroed coefficient arrays.
+    pub fn init_intra_16x16(&mut self) {
+        *self = LumaResidual::Intra16x16 {
+            dc: [0; 16],
+            ac: [[0; 15]; 16],
+            ac_nc: [0; 16],
+        };
+    }
+
+    /// Resets to the 4x4-transform layout with zeroed coefficient arrays.
+    pub fn init_4x4(&mut self) {
+        *self = LumaResidual::Block4x4 { levels: [[0; 16]; 16], nc: [0; 16] };
+    }
+
+    /// Resets to the 8x8-transform layout with zeroed coefficient arrays.
+    pub fn init_8x8(&mut self) {
+        *self = LumaResidual::Block8x8 { levels: [LumaLevel8x8::default(); 4], nc: [0; 16] };
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Residual {
     pub prediction_mode: MbPredictionMode,
     pub coded_block_pattern: CodedBlockPattern,
-    pub qp: i32,
     // Clause 7.4.5 transform_size_8x8_flag, copied from the parent MB. Selects
     // the 8x8 transform/scaling path for both Intra_8x8 and Inter MBs with
     // 8x8 DCT enabled in the PPS.
     pub transform_size_8x8_flag: bool,
 
-    pub dc_level16x16: [i32; 16],
-    pub ac_level16x16: [[i32; 15]; 16],
-    pub ac_level16x16_nc: [u8; 16],
-    pub luma_level4x4: [[i32; 16]; 16],
-    pub luma_level4x4_nc: [u8; 16],
-    // CAVLC 8x8 residual (Clause 7.3.5.3.1): four 8x8 blocks, each holding
-    // 64 coefficients in 8x8 scan order. In CAVLC, these are decoded as four
-    // 4x4 subsections and de-interleaved here via level8x8[i8x8][4*i + i4x4].
-    pub luma_level8x8: [LumaLevel8x8; 4],
+    pub luma: LumaResidual,
 
     pub chroma_cb_dc_level: [i32; 4],
     pub chroma_cr_dc_level: [i32; 4],
@@ -104,59 +146,48 @@ pub struct Residual {
 
 impl Residual {
     pub fn get_dc_levels_for(&mut self, plane: ColorPlane) -> &mut [i32] {
-        let nc: &mut u8;
         match plane {
-            ColorPlane::Y => {
-                if self.has_separate_luma_dc() {
-                    self.dc_level16x16.as_mut_slice()
-                } else {
-                    panic!("No separate DC levels in this prediction mode");
-                }
-            }
+            ColorPlane::Y => match &mut self.luma {
+                LumaResidual::Intra16x16 { dc, .. } => dc.as_mut_slice(),
+                _ => panic!("No separate DC levels in this prediction mode"),
+            },
             ColorPlane::Cb => self.chroma_cb_dc_level.as_mut_slice(),
             ColorPlane::Cr => self.chroma_cr_dc_level.as_mut_slice(),
         }
     }
 
     pub fn get_ac_levels_for(&mut self, blk_idx: u8, plane: ColorPlane) -> (&mut [i32], &mut u8) {
-        let levels: &mut [i32];
-        let nc: &mut u8;
         let blk_idx = blk_idx as usize;
         match plane {
-            ColorPlane::Y => {
-                if self.has_separate_luma_dc() {
-                    levels = self.ac_level16x16[blk_idx].as_mut_slice();
-                    nc = &mut self.ac_level16x16_nc[blk_idx];
-                } else {
-                    levels = self.luma_level4x4[blk_idx].as_mut_slice();
-                    nc = &mut self.luma_level4x4_nc[blk_idx];
+            ColorPlane::Y => match &mut self.luma {
+                LumaResidual::Intra16x16 { ac, ac_nc, .. } => {
+                    (ac[blk_idx].as_mut_slice(), &mut ac_nc[blk_idx])
                 }
-            }
-            ColorPlane::Cb => {
-                levels = self.chroma_cb_ac_level[blk_idx].as_mut_slice();
-                nc = &mut self.chroma_cb_level4x4_nc[blk_idx];
-            }
-            ColorPlane::Cr => {
-                levels = self.chroma_cr_ac_level[blk_idx].as_mut_slice();
-                nc = &mut self.chroma_cr_level4x4_nc[blk_idx];
-            }
+                LumaResidual::Block4x4 { levels, nc } => {
+                    (levels[blk_idx].as_mut_slice(), &mut nc[blk_idx])
+                }
+                _ => panic!("get_ac_levels_for(Y): luma residual is not 4x4 or Intra_16x16"),
+            },
+            ColorPlane::Cb => (
+                self.chroma_cb_ac_level[blk_idx].as_mut_slice(),
+                &mut self.chroma_cb_level4x4_nc[blk_idx],
+            ),
+            ColorPlane::Cr => (
+                self.chroma_cr_ac_level[blk_idx].as_mut_slice(),
+                &mut self.chroma_cr_level4x4_nc[blk_idx],
+            ),
         }
-        (levels, nc)
     }
 
     // Calculates nC for the block withing the macroblock
     pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         let blk_idx = blk_idx as usize;
         match plane {
-            ColorPlane::Y => match self.prediction_mode {
-                MbPredictionMode::Intra_16x16 => self.ac_level16x16_nc[blk_idx],
-                MbPredictionMode::Intra_4x4
-                | MbPredictionMode::Intra_8x8
-                | MbPredictionMode::Pred_L0
-                | MbPredictionMode::Pred_L1
-                | MbPredictionMode::BiPred
-                | MbPredictionMode::Direct
-                | MbPredictionMode::None => self.luma_level4x4_nc[blk_idx],
+            ColorPlane::Y => match &self.luma {
+                LumaResidual::Intra16x16 { ac_nc, .. } => ac_nc[blk_idx],
+                LumaResidual::Block4x4 { nc, .. } => nc[blk_idx],
+                LumaResidual::Block8x8 { nc, .. } => nc[blk_idx],
+                LumaResidual::Empty => 0,
             },
 
             ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx],
@@ -179,54 +210,62 @@ impl Residual {
 
         if plane == ColorPlane::Y {
             let weight_scale_4x4 = scaling.list_4x4(is_inter, ColorPlane::Y);
-            if self.has_separate_luma_dc() {
-                // Section 8.5.2 Specification of transform decoding process for luma samples
-                // of Intra_16x16 macroblock prediction mode
-                let mut dcs_block = unzip_block_4x4(&self.dc_level16x16);
-                dcs_block = transform_dc(&dcs_block);
-                dc_scale_4x4_block(&mut dcs_block, weight_scale_4x4[0], qp);
+            match &self.luma {
+                LumaResidual::Intra16x16 { dc, ac, .. } => {
+                    // Section 8.5.2 Specification of transform decoding process for luma samples
+                    // of Intra_16x16 macroblock prediction mode
+                    let mut dcs_block = unzip_block_4x4(dc);
+                    dcs_block = transform_dc(&dcs_block);
+                    dc_scale_4x4_block(&mut dcs_block, weight_scale_4x4[0], qp);
 
-                for blk_idx in 0..16 {
-                    let mut idct_coefficients = [0i32; 16];
-                    let (dc_row, dc_column) = unscan_4x4(blk_idx);
-                    idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
-                    idct_coefficients[1..].copy_from_slice(&self.ac_level16x16[blk_idx]);
-                    level_scale_4x4_block(&mut idct_coefficients, weight_scale_4x4, true, qp);
-                    let mut block = unzip_block_4x4(&idct_coefficients);
-                    transform_4x4(&mut block);
-                    result.push(block);
-                }
-            } else if self.transform_size_8x8_flag {
-                // Section 8.5.13 Scaling and transformation process for residual
-                // 8x8 blocks. Used for Intra_8x8 and for Inter MBs when the PPS
-                // enables the 8x8 transform. Reconstruct each 8x8 block and split
-                // it into four Block4x4 in the renderer's expected sub-order
-                // (0,0), (4,0), (0,4), (4,4) so the existing 4x4 residual-add
-                // loop works.
-                let weight_scale_8x8 =
-                    weight_scale_8x8_2d(scaling.list_8x8(is_inter, ColorPlane::Y));
-                for i8x8 in 0..4 {
-                    let mut block = unzip_block_8x8(&self.luma_level8x8[i8x8].0);
-                    level_scale_8x8_block(&mut block, &weight_scale_8x8, qp);
-                    transform_8x8(&mut block);
-                    for (sub_y, sub_x) in [(0, 0), (0, 4), (4, 0), (4, 4)] {
-                        let mut sub = Block4x4::default();
-                        for y in 0..4 {
-                            for x in 0..4 {
-                                sub.samples[y][x] = block.samples[sub_y + y][sub_x + x];
-                            }
-                        }
-                        result.push(sub);
+                    for blk_idx in 0..16 {
+                        let mut idct_coefficients = [0i32; 16];
+                        let (dc_row, dc_column) = unscan_4x4(blk_idx);
+                        idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
+                        idct_coefficients[1..].copy_from_slice(&ac[blk_idx]);
+                        level_scale_4x4_block(&mut idct_coefficients, weight_scale_4x4, true, qp);
+                        let mut block = unzip_block_4x4(&idct_coefficients);
+                        transform_4x4(&mut block);
+                        result.push(block);
                     }
                 }
-            } else {
-                for blk_idx in 0..16 {
-                    let mut idct_coefficients = [0i32; 16];
-                    idct_coefficients.copy_from_slice(&self.luma_level4x4[blk_idx]);
-                    level_scale_4x4_block(&mut idct_coefficients, weight_scale_4x4, false, qp);
-                    let mut block = unzip_block_4x4(&idct_coefficients);
-                    transform_4x4(&mut block);
-                    result.push(block);
+                LumaResidual::Block8x8 { levels, .. } => {
+                    // Section 8.5.13 Scaling and transformation process for residual
+                    // 8x8 blocks. Used for Intra_8x8 and for Inter MBs when the PPS
+                    // enables the 8x8 transform. Reconstruct each 8x8 block and split
+                    // it into four Block4x4 in the renderer's expected sub-order
+                    // (0,0), (4,0), (0,4), (4,4) so the existing 4x4 residual-add
+                    // loop works.
+                    let weight_scale_8x8 =
+                        weight_scale_8x8_2d(scaling.list_8x8(is_inter, ColorPlane::Y));
+                    for i8x8 in 0..4 {
+                        let mut block = unzip_block_8x8(&levels[i8x8].0);
+                        level_scale_8x8_block(&mut block, &weight_scale_8x8, qp);
+                        transform_8x8(&mut block);
+                        for (sub_y, sub_x) in [(0, 0), (0, 4), (4, 0), (4, 4)] {
+                            let mut sub = Block4x4::default();
+                            for y in 0..4 {
+                                for x in 0..4 {
+                                    sub.samples[y][x] = block.samples[sub_y + y][sub_x + x];
+                                }
+                            }
+                            result.push(sub);
+                        }
+                    }
+                }
+                LumaResidual::Block4x4 { levels, .. } => {
+                    for blk_idx in 0..16 {
+                        let mut idct_coefficients = [0i32; 16];
+                        idct_coefficients.copy_from_slice(&levels[blk_idx]);
+                        level_scale_4x4_block(&mut idct_coefficients, weight_scale_4x4, false, qp);
+                        let mut block = unzip_block_4x4(&idct_coefficients);
+                        transform_4x4(&mut block);
+                        result.push(block);
+                    }
+                }
+                LumaResidual::Empty => {
+                    // No luma residual data — leave `result` empty so the caller
+                    // adds nothing on top of the prediction.
                 }
             }
         } else {

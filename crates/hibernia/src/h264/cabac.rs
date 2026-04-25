@@ -1649,6 +1649,16 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         residual.coded_block_pattern = curr_mb.coded_block_pattern;
         residual.transform_size_8x8_flag = curr_mb.transform_size_8x8_flag;
 
+        // Initialize the luma variant; parse_residual_block_cabac requires the
+        // matching layout to be set when it goes to write coefficients.
+        if residual.prediction_mode == super::macroblock::MbPredictionMode::Intra_16x16 {
+            residual.luma.init_intra_16x16();
+        } else if curr_mb.transform_size_8x8_flag {
+            residual.luma.init_8x8();
+        } else {
+            residual.luma.init_4x4();
+        }
+
         // Snapshot A/B neighbor MBs once for all cbf-context decodes in this MB.
         let neighbor_cache = ResidualNeighborCache::build(slice, mb_addr);
 
@@ -1937,20 +1947,30 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // 4. Store coefficients in Residual
+        use super::residual::LumaResidual;
         match ctx_block_cat {
             0 => {
                 // Luma DC (16 coeffs)
-                residual.dc_level16x16.copy_from_slice(&coeff_level[..16]);
+                let LumaResidual::Intra16x16 { dc, .. } = &mut residual.luma else {
+                    unreachable!("Luma DC requires Intra_16x16 layout");
+                };
+                dc.copy_from_slice(&coeff_level[..16]);
             }
             1 => {
                 // Luma AC (15 coeffs)
-                residual.ac_level16x16[blk_idx].copy_from_slice(&coeff_level[0..15]);
-                residual.ac_level16x16_nc[blk_idx] = num_coeff;
+                let LumaResidual::Intra16x16 { ac, ac_nc, .. } = &mut residual.luma else {
+                    unreachable!("Luma AC requires Intra_16x16 layout");
+                };
+                ac[blk_idx].copy_from_slice(&coeff_level[0..15]);
+                ac_nc[blk_idx] = num_coeff;
             }
             2 => {
                 // Luma 4x4 (16 coeffs)
-                residual.luma_level4x4[blk_idx].copy_from_slice(&coeff_level[0..16]);
-                residual.luma_level4x4_nc[blk_idx] = num_coeff;
+                let LumaResidual::Block4x4 { levels, nc } = &mut residual.luma else {
+                    unreachable!("Luma 4x4 requires Block4x4 layout");
+                };
+                levels[blk_idx].copy_from_slice(&coeff_level[0..16]);
+                nc[blk_idx] = num_coeff;
             }
             3 => {
                 // Chroma DC Cb/Cr
@@ -1973,7 +1993,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             5 => {
                 // Luma 8x8 (64 coeffs, zig-zag order). Consumed by the 8x8 inverse
                 // transform path in Residual::restore via unzip_block_8x8.
-                residual.luma_level8x8[blk_idx].0.copy_from_slice(&coeff_level[..64]);
+                let LumaResidual::Block8x8 { levels, .. } = &mut residual.luma else {
+                    unreachable!("Luma 8x8 requires Block8x8 layout");
+                };
+                levels[blk_idx].0.copy_from_slice(&coeff_level[..64]);
             }
             _ => {}
         }

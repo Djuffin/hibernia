@@ -628,30 +628,21 @@ fn compute_bs_arrays(
 }
 
 #[inline(always)]
-fn is_intra_16x16(mb: &Macroblock) -> bool {
-    match mb {
-        Macroblock::I(m) => m.MbPartPredMode(0) == MbPredictionMode::Intra_16x16,
-        _ => false,
-    }
-}
-
-#[inline(always)]
 fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
     // Section 8.7.2.1: bS=2 is derived from the transform block containing the
     // sample, whose size depends on transform_size_8x8_flag. For 8x8 transforms
     // the "block" is the enclosing 8x8 group — its four 4x4 sub-sections share a
     // single coded status for deblocking purposes.
-    if let Some(res) = mb.get_residual() {
-        if is_intra_16x16(mb) {
-            res.ac_level16x16_nc[blk_idx] != 0 || res.dc_level16x16[blk_idx] != 0
-        } else if res.transform_size_8x8_flag {
+    use super::residual::LumaResidual;
+    let Some(res) = mb.get_residual() else { return false };
+    match &res.luma {
+        LumaResidual::Intra16x16 { dc, ac_nc, .. } => ac_nc[blk_idx] != 0 || dc[blk_idx] != 0,
+        LumaResidual::Block8x8 { levels, .. } => {
             let i8x8 = blk_idx / 4;
-            res.luma_level8x8[i8x8].0.iter().any(|&v| v != 0)
-        } else {
-            res.luma_level4x4_nc[blk_idx] != 0
+            levels[i8x8].0.iter().any(|&v| v != 0)
         }
-    } else {
-        false
+        LumaResidual::Block4x4 { nc, .. } => nc[blk_idx] != 0,
+        LumaResidual::Empty => false,
     }
 }
 

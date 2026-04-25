@@ -8,7 +8,7 @@ use super::parser::{
     calc_prev_intra4x4_pred_mode, calc_prev_intra8x8_pred_mode, calculate_motion,
     calculate_motion_b, more_rbsp_data, BitReader, ParseResult,
 };
-use super::residual::{Residual, ResidualPool};
+use super::residual::{LumaResidual, Residual, ResidualPool};
 use super::slice::{Slice, SliceType};
 use super::tables;
 use super::ColorPlane;
@@ -365,6 +365,18 @@ fn parse_residual_luma(
     trace!("parse_residual_luma");
     let pred_mode = residual.prediction_mode;
     let coded_block_pattern = residual.coded_block_pattern;
+    let transform_8x8 = residual.transform_size_8x8_flag;
+
+    // Initialize the luma variant up front; the per-block writers below assume
+    // the matching layout is already present.
+    if pred_mode == MbPredictionMode::Intra_16x16 {
+        residual.luma.init_intra_16x16();
+    } else if transform_8x8 {
+        residual.luma.init_8x8();
+    } else {
+        residual.luma.init_4x4();
+    }
+
     if pred_mode == MbPredictionMode::Intra_16x16 {
         trace!(" luma DC");
         let nc = calculate_nc(slice, 0, residual, ColorPlane::Y);
@@ -376,7 +388,6 @@ fn parse_residual_luma(
     // coefficients into level8x8[i8x8][4*i + i4x4] before the inverse transform.
     // Triggered by transform_size_8x8_flag, which applies to Intra_8x8 and to
     // Inter MBs when the PPS enables the 8x8 transform.
-    let transform_8x8 = residual.transform_size_8x8_flag;
     for i8x8 in 0..4 {
         if coded_block_pattern.luma() & (1 << i8x8) != 0 {
             for i4x4 in 0..4 {
@@ -386,10 +397,13 @@ fn parse_residual_luma(
                 if transform_8x8 {
                     let mut tmp = [0i32; 16];
                     let total_coeff = parse_residual_block(input, &mut tmp, nc)?;
-                    residual.luma_level4x4_nc[blk_idx] = total_coeff;
+                    let LumaResidual::Block8x8 { levels, nc: nc_arr } = &mut residual.luma else {
+                        unreachable!("8x8 transform requires Block8x8 layout");
+                    };
+                    nc_arr[blk_idx] = total_coeff;
                     // De-interleave the 4x4 sub-section into the 8x8 block per spec:
                     // level8x8[i8x8][4*i + i4x4] = level4x4[i8x8*4 + i4x4][i]
-                    let target = &mut residual.luma_level8x8[i8x8].0;
+                    let target = &mut levels[i8x8].0;
                     for i in 0..16 {
                         target[4 * i + i4x4] = tmp[i];
                     }

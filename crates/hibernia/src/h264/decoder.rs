@@ -309,6 +309,7 @@ pub struct Decoder {
     // before the first slice of a stream and immediately after a picture is
     // finalized.
     current_picture: Option<CurrentPicture>,
+    residual_pool: super::residual::ResidualPool,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -337,6 +338,7 @@ impl Decoder {
             interpolation_buffer: InterpolationBuffer::new(),
             poc_state: PocState::new(),
             current_picture: None,
+            residual_pool: super::residual::ResidualPool::default(),
         }
     }
 
@@ -590,7 +592,8 @@ impl Decoder {
             self.setup_colocated_pic_info(slice, pic_order_cnt);
         }
 
-        parser::parse_slice_data(input, slice).map_err(DecodingError::MisformedData)?;
+        parser::parse_slice_data(input, slice, &mut self.residual_pool)
+            .map_err(DecodingError::MisformedData)?;
         let pic_size = current.macroblocks.len();
         let mb_count = slice.get_macroblock_count();
         let end_mb = (slice.header.first_mb_in_slice as usize).saturating_add(mb_count);
@@ -688,6 +691,23 @@ impl Decoder {
         // Section C.2.4: Store current picture (with bumping if DPB is full).
         let pictures = self.dpb.store_picture(current.dpb_pic);
         self.output_pictures.extend(pictures);
+
+        // Reclaim per-MB Residual boxes before macroblocks are dropped. The DPB
+        // only keeps the decoded frame and motion field; the macroblock array
+        // dies with `current` at end of scope.
+        for slot in current.macroblocks.iter_mut() {
+            if let Some(mb) = slot {
+                let residual = match mb {
+                    Macroblock::I(m) => m.residual.take(),
+                    Macroblock::P(m) => m.residual.take(),
+                    Macroblock::B(m) => m.residual.take(),
+                    Macroblock::PCM(_) => None,
+                };
+                if let Some(r) = residual {
+                    self.residual_pool.release(r);
+                }
+            }
+        }
 
         self.poc_state.update_mmco5_state(
             has_mmco5,

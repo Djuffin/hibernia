@@ -628,16 +628,6 @@ fn compute_bs_arrays(
 }
 
 #[inline(always)]
-fn get_residual<'a>(mb: &'a Macroblock) -> Option<&'a super::residual::Residual> {
-    match mb {
-        Macroblock::I(m) => m.residual.as_deref(),
-        Macroblock::P(m) => m.residual.as_deref(),
-        Macroblock::B(m) => m.residual.as_deref(),
-        Macroblock::PCM(_) => None,
-    }
-}
-
-#[inline(always)]
 fn is_intra_16x16(mb: &Macroblock) -> bool {
     match mb {
         Macroblock::I(m) => m.MbPartPredMode(0) == MbPredictionMode::Intra_16x16,
@@ -651,7 +641,7 @@ fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
     // sample, whose size depends on transform_size_8x8_flag. For 8x8 transforms
     // the "block" is the enclosing 8x8 group — its four 4x4 sub-sections share a
     // single coded status for deblocking purposes.
-    if let Some(res) = get_residual(mb) {
+    if let Some(res) = mb.get_residual() {
         if is_intra_16x16(mb) {
             res.ac_level16x16_nc[blk_idx] != 0 || res.dc_level16x16[blk_idx] != 0
         } else if res.transform_size_8x8_flag {

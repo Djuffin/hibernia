@@ -2219,15 +2219,23 @@ pub fn calculate_motion(
     motion
 }
 // Section 7.3.4 Slice data syntax
-pub fn parse_slice_data(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
+pub fn parse_slice_data(
+    input: &mut BitReader,
+    slice: &mut Slice,
+    pool: &mut super::residual::ResidualPool,
+) -> ParseResult<()> {
     if slice.pps.entropy_coding_mode_flag {
-        parse_slice_data_cabac(input, slice)
+        parse_slice_data_cabac(input, slice, pool)
     } else {
-        parse_slice_data_cavlc(input, slice)
+        parse_slice_data_cavlc(input, slice, pool)
     }
 }
 
-pub fn parse_slice_data_cabac(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
+pub fn parse_slice_data_cabac(
+    input: &mut BitReader,
+    slice: &mut Slice,
+    pool: &mut super::residual::ResidualPool,
+) -> ParseResult<()> {
     let mut cabac_ctx = CabacContext::new(input, slice)?;
     loop {
         let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
@@ -2238,7 +2246,7 @@ pub fn parse_slice_data_cabac(input: &mut BitReader, slice: &mut Slice) -> Parse
         }
 
         trace!("=============== Parsing macroblock (CABAC): {} ===============", next_mb_addr);
-        let mb = cabac_ctx.parse_macroblock(slice)?;
+        let mb = cabac_ctx.parse_macroblock(slice, pool)?;
         slice.append_mb(mb);
 
         if cabac_ctx.decode_terminate()? {
@@ -2332,7 +2340,8 @@ mod tests {
         assert_eq!(dec_ref_pic_marking.no_output_of_prior_pics_flag, Some(false));
         assert_eq!(dec_ref_pic_marking.long_term_reference_flag, Some(false));
 
-        parse_slice_data(&mut input, &mut slice).expect("blocks parsing failed");
+        let mut pool = crate::h264::residual::ResidualPool::default();
+        parse_slice_data(&mut input, &mut slice, &mut pool).expect("blocks parsing failed");
         assert_eq!(slice.get_macroblock_count(), 16);
         if let Some(Macroblock::I(block)) = slice.get_mb(0) {
             assert_eq!(block.mb_type, IMbType::I_NxN);

@@ -8,7 +8,7 @@ use super::parser::{
     calc_prev_intra4x4_pred_mode, calc_prev_intra8x8_pred_mode, calculate_motion,
     calculate_motion_b, more_rbsp_data, BitReader, ParseResult,
 };
-use super::residual::Residual;
+use super::residual::{Residual, ResidualPool};
 use super::slice::{Slice, SliceType};
 use super::tables;
 use super::ColorPlane;
@@ -441,31 +441,35 @@ pub fn parse_residual(
 }
 
 // Section 7.3.5 Macroblock layer syntax
-pub fn parse_macroblock(input: &mut BitReader, slice: &Slice) -> ParseResult<Macroblock> {
+pub fn parse_macroblock(
+    input: &mut BitReader,
+    slice: &Slice,
+    pool: &mut ResidualPool,
+) -> ParseResult<Macroblock> {
     let mb_type_val: u32;
     read_value!(input, mb_type_val, ue);
 
     if matches!(slice.header.slice_type, SliceType::I | SliceType::SI) {
         let mb_type = IMbType::try_from(mb_type_val)?;
-        parse_i_macroblock(input, slice, mb_type)
+        parse_i_macroblock(input, slice, mb_type, pool)
     } else if slice.header.slice_type == SliceType::B {
         // Table 7-14: B slice mb_type 0-22 are B types, 23-48 are I types (subtract 23)
         if mb_type_val >= 23 {
             let mb_type = IMbType::try_from(mb_type_val - 23)?;
-            parse_i_macroblock(input, slice, mb_type)
+            parse_i_macroblock(input, slice, mb_type, pool)
         } else {
             let mb_type = BMbType::try_from(mb_type_val)?;
-            parse_b_macroblock(input, slice, mb_type)
+            parse_b_macroblock(input, slice, mb_type, pool)
         }
     } else if mb_type_val >= 5 {
         // The macroblock types for P and SP slices are specified in Tables 7-13 and 7-11.
         // mb_type values 0 to 4 are specified in Table 7-13 and mb_type values 5 to 30 are
         // specified in Table 7-11, indexed by subtracting 5 from the value of mb_type.
         let mb_type = IMbType::try_from(mb_type_val - 5)?;
-        parse_i_macroblock(input, slice, mb_type)
+        parse_i_macroblock(input, slice, mb_type, pool)
     } else {
         let mb_type = PMbType::try_from(mb_type_val)?;
-        parse_p_macroblock(input, slice, mb_type)
+        parse_p_macroblock(input, slice, mb_type, pool)
     }
 }
 
@@ -473,6 +477,7 @@ pub fn parse_p_macroblock(
     input: &mut BitReader,
     slice: &Slice,
     mb_type: PMbType,
+    pool: &mut ResidualPool,
 ) -> ParseResult<Macroblock> {
     let mut block = PMb { mb_type, transform_size_8x8_flag: false, qp: 0, ..PMb::default() };
     let this_mb_addr = slice.get_next_mb_addr();
@@ -583,7 +588,7 @@ pub fn parse_p_macroblock(
 
     if !block.coded_block_pattern.is_zero() {
         read_value!(input, block.mb_qp_delta, se);
-        let mut residual = Box::<Residual>::default();
+        let mut residual = pool.acquire();
         residual.coded_block_pattern = block.coded_block_pattern;
         residual.prediction_mode = block.MbPartPredMode(0);
         residual.transform_size_8x8_flag = block.transform_size_8x8_flag;
@@ -598,6 +603,7 @@ pub fn parse_b_macroblock(
     input: &mut BitReader,
     slice: &Slice,
     mb_type: BMbType,
+    pool: &mut ResidualPool,
 ) -> ParseResult<Macroblock> {
     let mut block = BMb { mb_type, ..BMb::default() };
     let this_mb_addr = slice.get_next_mb_addr();
@@ -776,7 +782,7 @@ pub fn parse_b_macroblock(
 
     if !block.coded_block_pattern.is_zero() {
         read_value!(input, block.mb_qp_delta, se);
-        let mut residual = Box::<Residual>::default();
+        let mut residual = pool.acquire();
         residual.coded_block_pattern = block.coded_block_pattern;
         residual.prediction_mode = block.mb_type.MbPartPredMode(0);
         residual.transform_size_8x8_flag = block.transform_size_8x8_flag;
@@ -791,6 +797,7 @@ pub fn parse_i_macroblock(
     input: &mut BitReader,
     slice: &Slice,
     mb_type: IMbType,
+    pool: &mut ResidualPool,
 ) -> ParseResult<Macroblock> {
     if mb_type == IMbType::I_PCM {
         let mut block = PcmMb { qp: 0, ..PcmMb::default() };
@@ -890,7 +897,7 @@ pub fn parse_i_macroblock(
             || block.MbPartPredMode(0) == MbPredictionMode::Intra_16x16
         {
             read_value!(input, block.mb_qp_delta, se);
-            let mut residual = Box::<Residual>::default();
+            let mut residual = pool.acquire();
             residual.coded_block_pattern = block.coded_block_pattern;
             residual.prediction_mode = block.MbPartPredMode(0);
             residual.transform_size_8x8_flag = block.transform_size_8x8_flag;
@@ -905,7 +912,11 @@ pub fn parse_i_macroblock(
     }
 }
 
-pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> ParseResult<()> {
+pub fn parse_slice_data_cavlc(
+    input: &mut BitReader,
+    slice: &mut Slice,
+    pool: &mut ResidualPool,
+) -> ParseResult<()> {
     loop {
         let pic_size_in_mbs = slice.sps.pic_size_in_mbs();
         if slice.header.slice_type != SliceType::I && slice.header.slice_type != SliceType::SI {
@@ -963,7 +974,7 @@ pub fn parse_slice_data_cavlc(input: &mut BitReader, slice: &mut Slice) -> Parse
 
         let next_mb_addr = slice.get_next_mb_addr() as usize;
         trace!("=============== Parsing macroblock: {next_mb_addr} ===============");
-        let block = parse_macroblock(input, slice)?;
+        let block = parse_macroblock(input, slice, pool)?;
         slice.append_mb(block);
         if slice.get_macroblock_count() >= pic_size_in_mbs {
             break;

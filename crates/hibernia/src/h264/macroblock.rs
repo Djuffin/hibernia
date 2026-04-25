@@ -901,19 +901,8 @@ impl Macroblock {
     pub fn get_nc(&self, blk_idx: u8, plane: ColorPlane) -> u8 {
         // Section 9.2.1
         match self {
-            Macroblock::I(mb) => match &mb.residual {
-                Some(r) => r.get_nc(blk_idx, plane),
-                None => 0,
-            },
             Macroblock::PCM(_) => 16,
-            Macroblock::P(mb) => match &mb.residual {
-                Some(r) => r.get_nc(blk_idx, plane),
-                None => 0,
-            },
-            Macroblock::B(mb) => match &mb.residual {
-                Some(r) => r.get_nc(blk_idx, plane),
-                None => 0,
-            },
+            _ => self.get_residual().map_or(0, |r| r.get_nc(blk_idx, plane)),
         }
     }
 
@@ -923,6 +912,15 @@ impl Macroblock {
             Macroblock::P(mb) => mb.coded_block_pattern,
             Macroblock::B(mb) => mb.coded_block_pattern,
             Macroblock::PCM(_) => CodedBlockPattern::default(),
+        }
+    }
+
+    pub fn get_residual(&self) -> Option<&Residual> {
+        match self {
+            Macroblock::I(mb) => mb.residual.as_deref(),
+            Macroblock::P(mb) => mb.residual.as_deref(),
+            Macroblock::B(mb) => mb.residual.as_deref(),
+            Macroblock::PCM(_) => None,
         }
     }
 

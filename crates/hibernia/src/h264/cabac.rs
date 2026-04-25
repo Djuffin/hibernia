@@ -2496,6 +2496,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn parse_macroblock(
         &mut self,
         slice: &mut Slice,
+        pool: &mut super::residual::ResidualPool,
     ) -> ParseResult<super::macroblock::Macroblock> {
         let mb_addr = slice.get_next_mb_addr();
         trace!("parse_macroblock addr={}", mb_addr);
@@ -2725,9 +2726,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                 }
 
-                let mut residual = super::residual::Residual::default();
+                let mut residual = pool.acquire();
                 self.parse_residual_cabac(slice, mb_addr, &mut curr_mb, &mut residual)?;
-                mb.residual = Some(Box::new(residual));
+                mb.residual = Some(residual);
                 mb.cbf_info = curr_mb.cbf;
 
                 Ok(super::macroblock::Macroblock::I(mb))
@@ -2959,9 +2960,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                 }
 
-                let mut residual = super::residual::Residual::default();
+                let mut residual = pool.acquire();
                 self.parse_residual_cabac(slice, mb_addr, &mut curr_mb, &mut residual)?;
-                mb.residual = Some(Box::new(residual));
+                mb.residual = Some(residual);
                 mb.cbf_info = curr_mb.cbf;
 
                 Ok(super::macroblock::Macroblock::P(mb))
@@ -3333,9 +3334,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                 }
 
-                let mut residual = super::residual::Residual::default();
+                let mut residual = pool.acquire();
                 self.parse_residual_cabac(slice, mb_addr, &mut curr_mb, &mut residual)?;
-                mb.residual = Some(Box::new(residual));
+                mb.residual = Some(residual);
                 mb.cbf_info = curr_mb.cbf;
 
                 Ok(super::macroblock::Macroblock::B(mb))

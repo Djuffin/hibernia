@@ -281,12 +281,15 @@ impl Slice {
     }
 
     pub fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
-        let index = mb_addr - self.header.first_mb_in_slice;
+        // `mb_addr` may be below this slice's range when a caller probes a
+        // neighbor that belongs to a previous slice of the same picture —
+        // return `None` rather than overflowing.
+        let index = mb_addr.checked_sub(self.header.first_mb_in_slice)?;
         self.macroblocks.get(index as usize)
     }
 
     pub fn get_mb_mut(&mut self, mb_addr: MbAddr) -> Option<&mut Macroblock> {
-        let index = mb_addr - self.header.first_mb_in_slice;
+        let index = mb_addr.checked_sub(self.header.first_mb_in_slice)?;
         self.macroblocks.get_mut(index as usize)
     }
 

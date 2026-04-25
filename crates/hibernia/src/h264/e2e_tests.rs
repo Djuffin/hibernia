@@ -249,6 +249,40 @@ pub fn test_CAWP5_TOSHIBA_E() -> Result<(), String> {
     )
 }
 
+#[test]
+pub fn test_SVA_Base_B() -> Result<(), String> {
+    // Multi-slice picture, 3 slices per picture. CAVLC. IP slices, POC type 2,
+    // 5 ref frames. disable_deblocking_filter_idc=0 — picture-level deblocking
+    // filters across slice boundaries.
+    test_decoding_against_gold(
+        "data/SVA_Base_B/SVA_Base_B.264",
+        "data/SVA_Base_B/SVA_Base_B_rec.y4m",
+    )
+}
+
+#[test]
+pub fn test_CACQP3_Sony_D() -> Result<(), String> {
+    // Single-slice-per-picture stream with a fresh PPS update before every
+    // picture's slice (varying chroma_qp_index_offset across pictures).
+    // CABAC. IPB slices, POC type 0, 4 ref frames, temporal direct prediction.
+    // disable_deblocking_filter_idc = 2.
+    test_decoding_against_gold(
+        "data/CACQP3_Sony_D/CACQP3_Sony_D.jsv",
+        "data/CACQP3_Sony_D/CACQP3_Sony_D.y4m",
+    )
+}
+
+#[test]
+pub fn test_CABAST3_Sony_E() -> Result<(), String> {
+    // Multi-slice picture: 4 slices per picture at first_mb_in_slice
+    // 25 pictures.
+    // CABAC. IPB slices, POC type 0, 1 ref frame, no direct prediction.
+    test_decoding_against_gold(
+        "data/CABAST3_Sony_E/CABAST3_Sony_E.jsv",
+        "data/CABAST3_Sony_E/CABAST3_Sony_E.y4m",
+    )
+}
+
 struct TestDir {
     path: PathBuf,
 }
@@ -862,6 +896,203 @@ fn test_ffmpeg_high_cabac_8x8() -> Result<(), String> {
         return Ok(());
     }
 
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_baseline_multi_slice() -> Result<(), String> {
+    // Baseline profile, 4 slices per picture. CAVLC, I/P only.
+    // disable_deblocking_filter_idc defaults to 0 (filter across all edges),
+    // so this exercises picture-level deblocking with cross-slice edges and
+    // the boundary state machine across many slice transitions.
+    let test_dir = TestDir::new("target/tmp_ffmpeg_baseline_multi_slice")
+        .map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    if !run_ffmpeg(&[
+        "-y",
+        "-f", "lavfi",
+        "-i", "mandelbrot=size=432x240:rate=15",
+        "-t", "1",
+        "-c:v", "libx264",
+        "-profile:v", "baseline",
+        "-pix_fmt", "yuv420p",
+        "-x264-params", "slices=4",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_main_multi_slice() -> Result<(), String> {
+    // Main profile (CABAC + B-frames), 4 slices per picture. B-slices use
+    // temporal direct prediction off colocated pictures that themselves have
+    // 4 slices, exercising the per-MB `slice_ref_pocs` lookup added in Step 8.
+    let test_dir = TestDir::new("target/tmp_ffmpeg_main_multi_slice")
+        .map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    if !run_ffmpeg(&[
+        "-y",
+        "-f", "lavfi",
+        "-i", "mandelbrot=size=432x240:rate=15",
+        "-t", "3",
+        "-c:v", "libx264",
+        "-profile:v", "main",
+        "-bf", "3",
+        "-b_strategy", "0",
+        "-coder", "1",
+        "-pix_fmt", "yuv420p",
+        "-x264-params", "slices=4",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_high_multi_slice() -> Result<(), String> {
+    // High profile (8x8 transform) with 3 slices per picture. Confirms the
+    // 8x8 deblocking branch (filter only at the 8-sample MB boundary) picks
+    // the right per-slice deblock parameters when transform_size_8x8_flag
+    // is set across slices.
+    let test_dir = TestDir::new("target/tmp_ffmpeg_high_multi_slice")
+        .map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    if !run_ffmpeg(&[
+        "-y",
+        "-f", "lavfi",
+        "-i", "mandelbrot=size=432x240:rate=15",
+        "-t", "2",
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-coder", "1",
+        "-pix_fmt", "yuv420p",
+        "-x264-params", "slices=3:8x8dct=1",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_multi_slice_variable_size() -> Result<(), String> {
+    // Variable slice size via `slice-max-mbs`. Tests Step 10's `next_mb_addr`
+    // tracking when slices have non-uniform MB counts within a picture.
+    // 432x240 = 27x15 = 405 MBs; max-mbs=120 yields 3-4 slices per picture
+    // with varying sizes (last slice typically smaller).
+    let test_dir = TestDir::new("target/tmp_ffmpeg_multi_slice_variable_size")
+        .map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    if !run_ffmpeg(&[
+        "-y",
+        "-f", "lavfi",
+        "-i", "mandelbrot=size=432x240:rate=15",
+        "-t", "2",
+        "-c:v", "libx264",
+        "-profile:v", "main",
+        "-coder", "1",
+        "-pix_fmt", "yuv420p",
+        "-x264-params", "slice-max-mbs=120",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
+    if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
+        return Ok(());
+    }
+
+    let encoded_data = fs::read(&h264_path).map_err(|e| e.to_string())?;
+    let expected_y4m = fs::read(&y4m_path).map_err(|e| e.to_string())?;
+    let actual_y4m = decode_to_y4m(&encoded_data)?;
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)?;
+    Ok(())
+}
+
+#[test]
+fn test_ffmpeg_multi_slice_weighted() -> Result<(), String> {
+    // Multi-slice combined with weighted prediction. Each slice carries its
+    // own `pred_weight_table`; this confirms that picture-scope deblocking
+    // and motion field assembly stay correct when slice-scoped state varies
+    // across slices of the same picture.
+    let test_dir = TestDir::new("target/tmp_ffmpeg_multi_slice_weighted")
+        .map_err(|e| e.to_string())?;
+
+    let h264_path = test_dir.path().join("test_stream.264");
+    let y4m_path = test_dir.path().join("output.y4m");
+    let h264_path_str = h264_path.to_str().unwrap();
+    let y4m_path_str = y4m_path.to_str().unwrap();
+
+    if !run_ffmpeg(&[
+        "-y",
+        "-f", "lavfi",
+        "-i", "mandelbrot=size=432x240:rate=15",
+        "-t", "2",
+        "-c:v", "libx264",
+        "-profile:v", "main",
+        "-coder", "1",
+        "-bf", "2",
+        "-b_strategy", "0",
+        "-pix_fmt", "yuv420p",
+        "-x264-params", "slices=3:weightp=2:weightb=1",
+        h264_path_str,
+    ])? {
+        return Ok(());
+    }
     if !run_ffmpeg(&["-y", "-i", h264_path_str, y4m_path_str])? {
         return Ok(());
     }

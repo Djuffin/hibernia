@@ -143,6 +143,12 @@ pub struct CurrentPicture {
     // when boundary detection triggers finalize, the new slice's SPS may differ
     // and the in-progress picture must MMCO-process under its own SPS.
     pub sps: sps::SequenceParameterSet,
+    // PPS active for this picture. Captured at picture start because the
+    // context-resident PPS with the same id can be replaced before finalize
+    // runs (each picture in a stream may carry a fresh PPS update before its
+    // first slice arrives), and the picture-level deblocking pass at finalize
+    // needs this picture's `chroma_qp_index_offset`, not the next picture's.
+    pub pps: pps::PicParameterSet,
 
     // Picture-wide accumulated state, length = pic_size_in_mbs.
     // Decoded macroblocks indexed by mb_addr. `None` until the owning slice
@@ -515,6 +521,7 @@ impl Decoder {
             delta_pic_order_cnt: header.delta_pic_order_cnt,
             first_slice_header: header.clone(),
             sps: sps.clone(),
+            pps: slice.pps.clone(),
             macroblocks: vec![None; pic_size],
             mb_slice_id: vec![u16::MAX; pic_size],
             mb_motion: vec![macroblock::MbMotion::default(); pic_size],
@@ -631,21 +638,14 @@ impl Decoder {
 
         // Section 8.7: deblocking is a picture-level pass. Run it before any
         // DPB mutation so the stored frame reflects the filtered samples.
-        let pps = self
-            .context
-            .get_pps(current.first_slice_header.pic_parameter_set_id)
-            .cloned()
-            .ok_or_else(|| {
-                DecodingError::MisformedData(format!(
-                    "PPS {} missing at finalize",
-                    current.first_slice_header.pic_parameter_set_id
-                ))
-            })?;
+        // Use the PPS captured at picture start; the context-resident PPS
+        // with the same id may have been overwritten by the next picture's
+        // PPS update by the time finalize runs.
         let pic_width_in_mbs = current.sps.pic_width_in_mbs();
         let pic_height_in_mbs = (current.sps.pic_height_in_map_units_minus1 + 1) as usize;
         let deblock_input = deblocking::PictureDeblockInput {
             sps: &current.sps,
-            pps: &pps,
+            pps: &current.pps,
             macroblocks: &current.macroblocks,
             mb_slice_id: &current.mb_slice_id,
             slice_deblock: &current.slice_deblock,

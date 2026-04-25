@@ -305,16 +305,31 @@ struct Surroundings8x8 {
 }
 
 impl Surroundings8x8 {
-    // has_top_right covers the p[x, -1] samples for x = 8..15. For block 0 they
-    // live within neighbor MB B's bottom row; for block 1 they require neighbor
-    // MB C (above-right); for block 2 they come from within the current MB
-    // (block 1's bottom row, always decoded); for block 3 they lie to the right
-    // of the current MB and are never available (substituted from p[7,-1]).
-    pub fn load(&mut self, plane: &Plane<u8>, blk_loc: Point, has_top_right: bool) {
+    // Reference-sample availability is slice-scoped (Section 6.4.8): a neighbor
+    // sample whose containing MB is in a different slice is "not available for
+    // Intra_8x8 prediction" even though it sits at a valid plane offset. The
+    // caller passes `has_top` / `has_left` / `has_corner` already reduced
+    // against the slice's `has_mb_neighbor` map; here we only consume them.
+    //
+    // `has_top_right` covers the p[x, -1] samples for x = 8..15. For block 0
+    // they live within neighbor MB B's bottom row; for block 1 they require
+    // neighbor MB C (above-right); for block 2 they come from within the
+    // current MB (block 1's bottom row, always decoded); for block 3 they lie
+    // to the right of the current MB and are never available (substituted from
+    // p[7, -1]).
+    pub fn load(
+        &mut self,
+        plane: &Plane<u8>,
+        blk_loc: Point,
+        has_top: bool,
+        has_left: bool,
+        has_corner: bool,
+        has_top_right: bool,
+    ) {
         let offset = point_to_plane_offset(blk_loc);
-        let top_available = offset.y > 0;
-        let left_available = offset.x > 0;
-        let corner_available = top_available && left_available;
+        let top_available = has_top && offset.y > 0;
+        let left_available = has_left && offset.x > 0;
+        let corner_available = has_corner && offset.y > 0 && offset.x > 0;
 
         let mut top_row_raw = [0u8; 16];
         let mut left_col_raw = [0u8; 8];
@@ -410,23 +425,30 @@ pub fn render_luma_8x8_intra_prediction(
     target: &mut Plane<u8>,
     residuals: &[Block4x4],
 ) {
+    let has_a = slice.has_mb_neighbor(mb_addr, MbNeighborName::A);
     let has_b = slice.has_mb_neighbor(mb_addr, MbNeighborName::B);
     let has_c = slice.has_mb_neighbor(mb_addr, MbNeighborName::C);
+    let has_d = slice.has_mb_neighbor(mb_addr, MbNeighborName::D);
     let mut ctx = Surroundings8x8::default();
 
     for blk_idx in 0..4u8 {
         let mut blk_loc = get_8x8luma_block_location(blk_idx);
         blk_loc.x += mb_loc.x;
         blk_loc.y += mb_loc.y;
-        // has_top_right per the 8x8 block's position in the MB (see Surroundings8x8::load).
-        let has_top_right = match blk_idx {
-            0 => has_b,
-            1 => has_c,
-            2 => true,
-            3 => false,
+        // Per-block neighbor availability. Blocks 0/1 pull their top reference
+        // from MB B; blocks 0/2 pull their left from MB A; block 0's corner is
+        // MB D; block 1's corner sits in MB B; block 2's corner sits in MB A.
+        // Within-MB block edges (blocks 2/3 top, blocks 1/3 left, block 3
+        // corner) are always available because the source block is decoded
+        // earlier in the same slice.
+        let (has_top, has_left, has_corner, has_top_right) = match blk_idx {
+            0 => (has_b, has_a, has_d, has_b),
+            1 => (has_b, true, has_b, has_c),
+            2 => (true, has_a, has_a, true),
+            3 => (true, true, true, false),
             _ => unreachable!(),
         };
-        ctx.load(target, blk_loc, has_top_right);
+        ctx.load(target, blk_loc, has_top, has_left, has_corner, has_top_right);
 
         let mode = mb.rem_intra8x8_pred_mode[blk_idx as usize];
         let mut pred = [[0u8; 8]; 8];

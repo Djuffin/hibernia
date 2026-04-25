@@ -591,6 +591,16 @@ impl Decoder {
         }
 
         parser::parse_slice_data(input, slice).map_err(DecodingError::MisformedData)?;
+        let pic_size = current.macroblocks.len();
+        let mb_count = slice.get_macroblock_count();
+        let end_mb = (slice.header.first_mb_in_slice as usize).saturating_add(mb_count);
+        if end_mb > pic_size {
+            return Err(DecodingError::MisformedData(format!(
+                "slice extends past picture: first_mb_in_slice={}, count={}, pic_size_in_mbs={}",
+                slice.header.first_mb_in_slice, mb_count, pic_size
+            )));
+        }
+
         self.process_slice_into_picture(slice, current)?;
 
         // Capture per-slice metadata and POC tables for finalize-time

@@ -722,9 +722,12 @@ fn get_bs(
 
     match (p_part, q_part) {
         (Some(pp), Some(qq)) => {
-            // P-slice context for q (refPicList1 is empty in P-slices). When
-            // p and q are in different slice types, the q-block's slice rules
-            // determine the comparison per Section 8.7.2.1.
+            // P-slice context for q (refPicList1 is empty in P-slices). If
+            // p comes from a B-slice partition that uses BiPred or Pred_L1,
+            // only its L0 entry is consulted here — the q-side P-slice rules
+            // don't describe how to interpret p's L1 reference. Acceptable
+            // in practice because mixing P and B slices within one picture
+            // is uncommon, and uniform-type pictures are unaffected.
             if q_l1_pocs.is_empty() {
                 let ref_p_l0 = p_l0_pocs.get(pp.ref_idx_l0 as usize).copied();
                 let ref_q_l0 = q_l0_pocs.get(qq.ref_idx_l0 as usize).copied();

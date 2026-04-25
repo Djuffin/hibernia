@@ -11,14 +11,17 @@ use super::{tables, ColorPlane, Point};
 /// Information about the colocated picture (refPicList1[0]) needed for temporal direct prediction.
 #[derive(Clone, Debug)]
 pub struct ColPicInfo {
-    /// Motion vectors and ref indices for each MB in the colocated picture.
+    /// Motion vectors and ref indices for each MB in the colocated picture,
+    /// indexed by mb_addr.
     pub mb_motion: Vec<MbMotion>,
-    /// Whether each MB in the colocated picture was intra-coded.
+    /// Whether each MB in the colocated picture was intra-coded, indexed by mb_addr.
     pub mb_is_intra: Vec<bool>,
-    /// POC of each reference in the colocated picture's refPicList0.
-    pub ref_pic_l0_pocs: Vec<i32>,
-    /// POC of each reference in the colocated picture's refPicList1.
-    pub ref_pic_l1_pocs: Vec<i32>,
+    /// Slice index that decoded each MB of the colocated picture, indexed by
+    /// mb_addr. Used to select the correct `slice_ref_pocs` entry per MB.
+    pub mb_slice_id: Vec<u16>,
+    /// `(refPicList0_pocs, refPicList1_pocs)` for each slice of the colocated
+    /// picture, indexed by slice id.
+    pub slice_ref_pocs: Vec<(Vec<i32>, Vec<i32>)>,
     /// POC of the colocated picture itself.
     pub pic_poc: i32,
     /// Whether RefPicList1[0] is marked as short-term reference (needed for colZeroFlag in spatial direct).

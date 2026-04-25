@@ -1993,13 +1993,19 @@ fn derive_temporal_direct_partition(
     let col_motion = &col_pic.mb_motion[col_mb_addr];
     let col_part = &col_motion.partitions[grid_y][grid_x];
 
+    // Each colocated MB's `ref_idx_l0/l1` is interpreted in the context of
+    // its own slice's ref pic list. For multi-slice pictures, different MBs
+    // of the colocated picture may use different POC tables.
+    let col_slice_id = col_pic.mb_slice_id[col_mb_addr] as usize;
+    let (col_l0_pocs, col_l1_pocs) = &col_pic.slice_ref_pocs[col_slice_id];
+
     // Determine mvCol and refIdxCol from the colocated partition
     // Per spec: prefer L0, fallback to L1
     let (mv_col, ref_idx_col, col_ref_pocs) = if col_part.pred_mode == MbPredictionMode::Pred_L1 {
-        (col_part.mv_l1, col_part.ref_idx_l1, &col_pic.ref_pic_l1_pocs)
+        (col_part.mv_l1, col_part.ref_idx_l1, col_l1_pocs.as_slice())
     } else {
         // Pred_L0, BiPred, or other: use L0
-        (col_part.mv_l0, col_part.ref_idx_l0, &col_pic.ref_pic_l0_pocs)
+        (col_part.mv_l0, col_part.ref_idx_l0, col_l0_pocs.as_slice())
     };
 
     // Get the POC of the picture referenced by the colocated partition

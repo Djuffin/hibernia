@@ -2,7 +2,7 @@ use std::cmp::{max, min, Ordering};
 use std::collections::VecDeque;
 use std::io::Read;
 
-use super::slice::{RefPicListModification, Slice, SliceType};
+use super::slice::{DeblockingFilterIdc, RefPicListModification, Slice, SliceHeader, SliceType};
 use super::tables::mb_type_to_16x16_pred_mode;
 use super::ColorPlane;
 
@@ -51,12 +51,17 @@ pub struct Picture {
 pub struct MotionFieldStorage {
     /// Motion vectors and ref indices for each MB, indexed by mb_addr.
     pub mb_motion: Vec<macroblock::MbMotion>,
-    /// Whether each MB was intra-coded.
+    /// Whether each MB was intra-coded, indexed by mb_addr.
     pub mb_is_intra: Vec<bool>,
-    /// POC of each reference in the picture's refPicList0.
-    pub ref_pic_l0_pocs: Vec<i32>,
-    /// POC of each reference in the picture's refPicList1.
-    pub ref_pic_l1_pocs: Vec<i32>,
+    /// Slice index that decoded each MB, indexed by mb_addr. Used by
+    /// temporal direct prediction to look up the right ref-list POCs in
+    /// `slice_ref_pocs` — each MB's `ref_idx_l0/l1` is interpreted in the
+    /// context of *its own slice's* ref pic lists, which can differ across
+    /// slices of a multi-slice picture.
+    pub mb_slice_id: Vec<u16>,
+    /// `(refPicList0_pocs, refPicList1_pocs)` for each slice in the picture,
+    /// indexed by slice id.
+    pub slice_ref_pocs: Vec<(Vec<i32>, Vec<i32>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +98,148 @@ impl DecoderContext {
         self.pps.retain(|x| x.pic_parameter_set_id != id);
         self.pps.push(pps);
     }
+}
+
+/// Per-slice deblocking parameters captured at slice-decode time and consumed
+/// at picture finalize time. Needed because deblocking is a picture-level pass
+/// (per Section 8.7), but each slice carries its own filter parameters.
+#[derive(Clone, Debug)]
+pub struct SliceDeblockParams {
+    pub idc: DeblockingFilterIdc,
+    pub alpha_c0_offset_div2: i32,
+    pub beta_offset_div2: i32,
+}
+
+/// State accumulated across all slices of a single coded picture.
+///
+/// Multi-slice pictures are detected via Section 7.4.1.2.4: while consecutive
+/// slice NAL units share the same `frame_num`, `pic_parameter_set_id`, POC fields,
+/// etc., they belong to the same picture and accumulate into the same
+/// `CurrentPicture`. When any of those fields change, the existing
+/// `CurrentPicture` is finalized (deblocked, motion field built, stored in DPB,
+/// emitted for output) and a fresh one is started.
+#[derive(Clone, Debug)]
+pub struct CurrentPicture {
+    // The DPB-bound picture being assembled. Slice decoding writes pixels
+    // directly into `dpb_pic.picture.frame`.
+    pub dpb_pic: DpbPicture,
+    pub disposition: ReferenceDisposition,
+
+    // Section 7.4.1.2.4 boundary-detection fields, captured from first slice.
+    pub pic_parameter_set_id: u8,
+    pub frame_num: u16,
+    pub field_pic_flag: bool,
+    pub nal_ref_idc_nonzero: bool,
+    pub nal_unit_type_is_idr: bool,
+    pub idr_pic_id: Option<u32>,
+    pub pic_order_cnt_lsb: Option<u32>,
+    pub delta_pic_order_cnt_bottom: Option<i32>,
+    pub delta_pic_order_cnt: [i32; 2],
+
+    // First slice's header — kept so MMCO / `dec_ref_pic_marking` is applied
+    // once at finalize time using the picture-defining slice (per Section 7.4.3).
+    pub first_slice_header: SliceHeader,
+    // SPS active for this picture. Captured so finalize is self-contained:
+    // when boundary detection triggers finalize, the new slice's SPS may differ
+    // and the in-progress picture must MMCO-process under its own SPS.
+    pub sps: sps::SequenceParameterSet,
+
+    // Picture-wide accumulated state, length = pic_size_in_mbs.
+    // Decoded macroblocks indexed by mb_addr. `None` until the owning slice
+    // has been processed; finalize asserts no `None` remains.
+    pub macroblocks: Vec<Option<Macroblock>>,
+    // Slice index (0..slices_seen) that decoded each MB. Used by the
+    // picture-level deblocking pass for `disable_deblocking_filter_idc=2`
+    // (filter except across slice boundaries). `u16::MAX` means undecoded.
+    pub mb_slice_id: Vec<u16>,
+    // Per-MB motion info accumulated for `MotionFieldStorage` at finalize.
+    pub mb_motion: Vec<macroblock::MbMotion>,
+    // Per-MB intra flag accumulated for `MotionFieldStorage` at finalize.
+    pub mb_is_intra: Vec<bool>,
+
+    // Per-slice metadata, indexed by slice_id (0..slices_seen).
+    // Deblocking parameters captured at slice-decode time, consumed by the
+    // picture-level deblocking pass.
+    pub slice_deblock: Vec<SliceDeblockParams>,
+    // POCs of (refPicList0, refPicList1) for each slice, resolved at
+    // slice-decode time *before* DPB mutation. Indexed by slice_id and
+    // consumed when building the picture's `MotionFieldStorage`.
+    pub slice_ref_pocs: Vec<(Vec<i32>, Vec<i32>)>,
+
+    // Number of slices appended to this picture so far. Equal to the next
+    // slice_id to assign.
+    pub slices_seen: u16,
+    // Lowest mb_addr that hasn't been decoded by any slice yet. Used to
+    // enforce the Section 7.4.3 raster-order rule on `first_mb_in_slice`
+    // without an O(N) scan over `macroblocks`.
+    pub next_mb_addr: macroblock::MbAddr,
+}
+
+/// Detects whether the incoming slice begins a new coded picture, per
+/// Section 7.4.1.2.4 ("Detection of the first VCL NAL unit of a primary
+/// coded picture").
+///
+/// Returns `true` if the slice belongs to a new picture (and the in-progress
+/// `prev` should be finalized before this slice is processed). Returns `false`
+/// if the slice is another part of `prev`.
+fn is_new_picture(
+    prev: &CurrentPicture,
+    hdr: &SliceHeader,
+    nal: &nal::NalHeader,
+    sps: &sps::SequenceParameterSet,
+) -> bool {
+    // frame_num differs in value.
+    if prev.frame_num != hdr.frame_num {
+        return true;
+    }
+
+    // pic_parameter_set_id differs in value.
+    if prev.pic_parameter_set_id != hdr.pic_parameter_set_id {
+        return true;
+    }
+
+    // field_pic_flag differs in value. Field coding is rejected upstream, so
+    // in practice both are always `false` — checked anyway for spec correctness.
+    if prev.field_pic_flag != hdr.field_pic_flag {
+        return true;
+    }
+
+    // nal_ref_idc differs in value, with one of the values being equal to 0.
+    let hdr_nal_ref_idc_nonzero = nal.nal_ref_idc != 0;
+    if prev.nal_ref_idc_nonzero != hdr_nal_ref_idc_nonzero {
+        return true;
+    }
+
+    // nal_unit_type differs in value, with one of the values being equal to 5
+    // (IDR slice).
+    let hdr_is_idr = nal.nal_unit_type == nal::NalUnitType::IDRSlice;
+    if prev.nal_unit_type_is_idr != hdr_is_idr {
+        return true;
+    }
+
+    // nal_unit_type is equal to 5 for both, and idr_pic_id differs in value.
+    if prev.nal_unit_type_is_idr && hdr_is_idr && prev.idr_pic_id != hdr.idr_pic_id {
+        return true;
+    }
+
+    // pic_order_cnt_type is equal to 0 for both, and either pic_order_cnt_lsb
+    // differs or delta_pic_order_cnt_bottom differs.
+    if sps.pic_order_cnt_type == 0 {
+        if prev.pic_order_cnt_lsb != hdr.pic_order_cnt_lsb {
+            return true;
+        }
+        if prev.delta_pic_order_cnt_bottom != hdr.delta_pic_order_cnt_bottom {
+            return true;
+        }
+    }
+
+    // pic_order_cnt_type is equal to 1 for both, and either delta_pic_order_cnt[0]
+    // differs or delta_pic_order_cnt[1] differs.
+    if sps.pic_order_cnt_type == 1 && prev.delta_pic_order_cnt != hdr.delta_pic_order_cnt {
+        return true;
+    }
+
+    false
 }
 
 /// A standards-compliant H.264 (AVC) video decoder.
@@ -152,6 +299,10 @@ pub struct Decoder {
     output_pictures: VecDeque<Picture>,
     interpolation_buffer: InterpolationBuffer,
     poc_state: PocState,
+    // Picture currently being assembled across one or more slices. `None`
+    // before the first slice of a stream and immediately after a picture is
+    // finalized.
+    current_picture: Option<CurrentPicture>,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -179,6 +330,7 @@ impl Decoder {
             output_pictures: VecDeque::new(),
             interpolation_buffer: InterpolationBuffer::new(),
             poc_state: PocState::new(),
+            current_picture: None,
         }
     }
 
@@ -203,80 +355,31 @@ impl Decoder {
             NalUnitType::IDRSlice | NalUnitType::NonIDRSlice => {
                 let mut slice = parser::parse_slice_header(&self.context, &nal, &mut input)
                     .map_err(parse_error_handler)?;
-
                 trace!("{:?} {:#?}", nal.nal_unit_type, slice);
-                let frame = VideoFrame::new_with_padding(
-                    slice.sps.pic_width(),
-                    slice.sps.pic_height(),
-                    v_frame::pixel::ChromaSampling::Cs420,
-                    16,
-                );
 
-                let disposition = if nal.nal_unit_type == NalUnitType::IDRSlice {
-                    ReferenceDisposition::Idr
-                } else if nal.nal_ref_idc != 0 {
-                    ReferenceDisposition::NonIdrReference
-                } else {
-                    ReferenceDisposition::NonReference
-                };
-
-                let pic_order_cnt = self.poc_state.calculate_poc(&slice, disposition);
-
-                let crop_dims = slice.sps.crop_dimensions();
-
-                let pic = Picture {
-                    frame,
-                    frame_num: slice.header.frame_num,
-                    pic_order_cnt,
-                    motion_field: None,
-                    crop: crop_dims,
-                };
-                let mut dpb_pic = DpbPicture {
-                    picture: pic,
-                    marking: if nal.nal_ref_idc != 0 {
-                        super::dpb::DpbMarking::UsedForShortTermReference
-                    } else {
-                        super::dpb::DpbMarking::UnusedForReference
-                    },
-                    is_idr: nal.nal_unit_type == NalUnitType::IDRSlice,
-                    structure: super::dpb::DpbPictureStructure::Frame,
-                    needed_for_output: true,
-                };
-
-                // --- C.2.2: Picture decoding (current picture NOT in DPB) ---
-
-                // Construct reference picture lists before parsing, because temporal
-                // direct prediction (used during B-slice parsing) needs the colocated picture.
-                self.construct_ref_pic_list0(&mut slice, pic_order_cnt)?;
-                if slice.header.slice_type == SliceType::B {
-                    self.construct_ref_pic_list1(&mut slice, pic_order_cnt)?;
-                    self.setup_colocated_pic_info(&mut slice, pic_order_cnt);
+                // Section 7.4.1.2.4: finalize the in-progress picture if this
+                // slice begins a new one. With `current_picture == None` (first
+                // slice of the stream, or just-finalized) we always start fresh.
+                let starts_new_picture = self
+                    .current_picture
+                    .as_ref()
+                    .map(|prev| is_new_picture(prev, &slice.header, &nal, &slice.sps))
+                    .unwrap_or(true);
+                if starts_new_picture {
+                    self.finalize_pending_picture()?;
+                    self.current_picture = Some(self.start_new_picture(&slice, &nal)?);
                 }
 
-                parser::parse_slice_data(&mut input, &mut slice).map_err(parse_error_handler)?;
-                self.process_slice(&mut slice, &mut dpb_pic.picture.frame)?;
-
-                // Build motion field while DPB indices are still valid (before mutations).
-                self.save_motion_field(&slice, disposition, &mut dpb_pic);
-
-                // --- C.2.3: Mark references + remove dead pictures (before storage) ---
-                let (has_mmco5, flushed) = self.dpb.mark_prior_references(
-                    &slice.header,
-                    disposition,
-                    &slice.sps,
-                    &mut dpb_pic,
-                );
-                self.output_pictures.extend(flushed);
-                self.dpb.remove_dead_pictures();
-
-                // --- C.2.4: Store current picture (with bumping if DPB is full) ---
-                let pictures = self.dpb.store_picture(dpb_pic);
-                self.output_pictures.extend(pictures);
-
-                self.poc_state.update_mmco5_state(
-                    has_mmco5,
-                    disposition != ReferenceDisposition::NonReference,
-                );
+                // Decoding methods need `&mut self`, which conflicts with a
+                // `self.current_picture.as_mut()` borrow. Take the picture out,
+                // decode into it, then put it back. On decode error the `?`
+                // drops `current` — partial pictures are not retained.
+                let mut current = self
+                    .current_picture
+                    .take()
+                    .expect("set above when starts_new_picture, otherwise carried over");
+                self.decode_slice_into_current(&mut current, &mut slice, &mut input)?;
+                self.current_picture = Some(current);
             }
             NalUnitType::SupplementalEnhancementInfo => {}
             NalUnitType::SeqParameterSet => {
@@ -328,8 +431,12 @@ impl Decoder {
                 self.context.put_pps(pps);
             }
             NalUnitType::AccessUnitDelimiter => {}
-            NalUnitType::EndOfSeq => {}
-            NalUnitType::EndOfStream => {}
+            NalUnitType::EndOfSeq => {
+                self.finalize_pending_picture()?;
+            }
+            NalUnitType::EndOfStream => {
+                self.finalize_pending_picture()?;
+            }
             NalUnitType::FillerData => {}
             NalUnitType::SeqParameterSetExtension => {}
             NalUnitType::Prefix => {}
@@ -341,6 +448,241 @@ impl Decoder {
             NalUnitType::Reserved => {}
         }
 
+        Ok(())
+    }
+
+    /// Allocates a fresh `CurrentPicture` for the picture that begins with
+    /// this slice: computes POC, builds an empty `DpbPicture` frame, and
+    /// pre-allocates picture-wide per-MB state. Does not mutate the DPB.
+    fn start_new_picture(
+        &mut self,
+        slice: &Slice,
+        nal: &nal::NalHeader,
+    ) -> Result<CurrentPicture, DecodingError> {
+        let sps = &slice.sps;
+        let header = &slice.header;
+
+        let frame = VideoFrame::new_with_padding(
+            sps.pic_width(),
+            sps.pic_height(),
+            v_frame::pixel::ChromaSampling::Cs420,
+            16,
+        );
+
+        let disposition = if nal.nal_unit_type == nal::NalUnitType::IDRSlice {
+            ReferenceDisposition::Idr
+        } else if nal.nal_ref_idc != 0 {
+            ReferenceDisposition::NonIdrReference
+        } else {
+            ReferenceDisposition::NonReference
+        };
+
+        let pic_order_cnt = self.poc_state.calculate_poc(slice, disposition);
+        let crop_dims = sps.crop_dimensions();
+
+        let pic = Picture {
+            frame,
+            frame_num: header.frame_num,
+            pic_order_cnt,
+            motion_field: None,
+            crop: crop_dims,
+        };
+        let dpb_pic = DpbPicture {
+            picture: pic,
+            marking: if nal.nal_ref_idc != 0 {
+                DpbMarking::UsedForShortTermReference
+            } else {
+                DpbMarking::UnusedForReference
+            },
+            is_idr: nal.nal_unit_type == nal::NalUnitType::IDRSlice,
+            structure: super::dpb::DpbPictureStructure::Frame,
+            needed_for_output: true,
+        };
+
+        let pic_size = sps.pic_size_in_mbs();
+
+        Ok(CurrentPicture {
+            dpb_pic,
+            disposition,
+            pic_parameter_set_id: header.pic_parameter_set_id,
+            frame_num: header.frame_num,
+            field_pic_flag: header.field_pic_flag,
+            nal_ref_idc_nonzero: nal.nal_ref_idc != 0,
+            nal_unit_type_is_idr: nal.nal_unit_type == nal::NalUnitType::IDRSlice,
+            idr_pic_id: header.idr_pic_id,
+            pic_order_cnt_lsb: header.pic_order_cnt_lsb,
+            delta_pic_order_cnt_bottom: header.delta_pic_order_cnt_bottom,
+            delta_pic_order_cnt: header.delta_pic_order_cnt,
+            first_slice_header: header.clone(),
+            sps: sps.clone(),
+            macroblocks: vec![None; pic_size],
+            mb_slice_id: vec![u16::MAX; pic_size],
+            mb_motion: vec![macroblock::MbMotion::default(); pic_size],
+            mb_is_intra: vec![false; pic_size],
+            slice_deblock: Vec::new(),
+            slice_ref_pocs: Vec::new(),
+            slices_seen: 0,
+            next_mb_addr: 0,
+        })
+    }
+
+    /// Builds reference lists, parses the slice's coded data, decodes its
+    /// macroblocks into the current picture's frame, and captures per-slice
+    /// metadata (deblock parameters, ref-list POCs) while DPB indices are
+    /// still valid — finalize-time consumers (picture-level deblocking and
+    /// motion field) need POCs that reflect the DPB state at decode time.
+    fn decode_slice_into_current(
+        &mut self,
+        current: &mut CurrentPicture,
+        slice: &mut Slice,
+        input: &mut parser::BitReader,
+    ) -> Result<(), DecodingError> {
+        let pic_order_cnt = current.dpb_pic.picture.pic_order_cnt;
+
+        // Section 7.4.3: `first_mb_in_slice` is strictly increasing across
+        // slices of a picture (raster order). Reject streams whose slices
+        // overlap or move backwards — they would silently overwrite already
+        // decoded MBs.
+        if slice.header.first_mb_in_slice < current.next_mb_addr {
+            return Err(DecodingError::MisformedData(format!(
+                "slice first_mb_in_slice={} would overlap already-decoded MBs (next expected {})",
+                slice.header.first_mb_in_slice, current.next_mb_addr
+            )));
+        }
+
+        // Section 7.4.1.2.4: picture-scope fields must agree across all slices
+        // of a picture. `is_new_picture` would have started a fresh picture
+        // when these differ, so a mismatch here means a decoder bug rather
+        // than a bitstream issue — debug-only check.
+        debug_assert!(
+            current.slices_seen == 0
+                || (slice.header.frame_num == current.frame_num
+                    && slice.header.pic_parameter_set_id == current.pic_parameter_set_id
+                    && slice.header.field_pic_flag == current.field_pic_flag),
+            "picture-scope slice header fields drifted across slices"
+        );
+
+        // Section 7.4.3: when present in multiple slices of the same picture,
+        // `dec_ref_pic_marking` must be identical. Only the first slice's
+        // marking is consulted at finalize time, so this catches malformed
+        // streams that disagree across slices.
+        debug_assert!(
+            current.slices_seen == 0
+                || slice.header.dec_ref_pic_marking
+                    == current.first_slice_header.dec_ref_pic_marking,
+            "dec_ref_pic_marking mismatch across slices of the same picture"
+        );
+
+        // Section C.2.2: Picture decoding (current picture NOT in DPB).
+        // Construct reference picture lists before parsing, because temporal
+        // direct prediction (used during B-slice parsing) needs the colocated
+        // picture.
+        self.construct_ref_pic_list0(slice, pic_order_cnt)?;
+        if slice.header.slice_type == SliceType::B {
+            self.construct_ref_pic_list1(slice, pic_order_cnt)?;
+            self.setup_colocated_pic_info(slice, pic_order_cnt);
+        }
+
+        parser::parse_slice_data(input, slice).map_err(DecodingError::MisformedData)?;
+        self.process_slice_into_picture(slice, current)?;
+
+        // Capture per-slice metadata and POC tables for finalize-time
+        // consumers (picture-level deblocking and motion field). Resolving
+        // POCs here while DPB indices are still valid is critical: MMCO at
+        // finalize time may invalidate them.
+        let l0_pocs: Vec<i32> = slice
+            .ref_pic_list0
+            .iter()
+            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
+            .collect();
+        let l1_pocs: Vec<i32> = slice
+            .ref_pic_list1
+            .iter()
+            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
+            .collect();
+        current.slice_deblock.push(SliceDeblockParams {
+            idc: slice.header.deblocking_filter_idc,
+            alpha_c0_offset_div2: slice.header.slice_alpha_c0_offset_div2,
+            beta_offset_div2: slice.header.slice_beta_offset_div2,
+        });
+        current.slice_ref_pocs.push((l0_pocs, l1_pocs));
+        current.slices_seen += 1;
+        current.next_mb_addr =
+            slice.header.first_mb_in_slice + slice.get_macroblock_count() as MbAddr;
+
+        Ok(())
+    }
+
+    /// Applies MMCO / `dec_ref_pic_marking`, drops dead references, stores the
+    /// picture in the DPB (with output bumping), and updates POC state.
+    /// Consumes the `CurrentPicture`.
+    fn finalize_picture(&mut self, mut current: CurrentPicture) -> Result<(), DecodingError> {
+        // Every MB must have been decoded by some slice. Truncated slices are
+        // caught earlier by `parse_slice_data`, but a missing slice (multi-slice
+        // picture where one slice never arrived) leaves sentinels behind that
+        // would silently produce a corrupted frame. `macroblocks` and
+        // `mb_slice_id` are written together, so checking either suffices.
+        if current.mb_slice_id.iter().any(|&id| id == u16::MAX) {
+            return Err(DecodingError::MisformedData(
+                "picture has macroblocks with no slice owner at finalize".into(),
+            ));
+        }
+        debug_assert!(current.macroblocks.iter().all(Option::is_some));
+
+        // Section 8.7: deblocking is a picture-level pass. Run it before any
+        // DPB mutation so the stored frame reflects the filtered samples.
+        let pps = self
+            .context
+            .get_pps(current.first_slice_header.pic_parameter_set_id)
+            .cloned()
+            .ok_or_else(|| {
+                DecodingError::MisformedData(format!(
+                    "PPS {} missing at finalize",
+                    current.first_slice_header.pic_parameter_set_id
+                ))
+            })?;
+        let pic_width_in_mbs = current.sps.pic_width_in_mbs();
+        let pic_height_in_mbs = (current.sps.pic_height_in_map_units_minus1 + 1) as usize;
+        let deblock_input = deblocking::PictureDeblockInput {
+            sps: &current.sps,
+            pps: &pps,
+            macroblocks: &current.macroblocks,
+            mb_slice_id: &current.mb_slice_id,
+            slice_deblock: &current.slice_deblock,
+            slice_ref_pocs: &current.slice_ref_pocs,
+            pic_width_in_mbs,
+            pic_height_in_mbs,
+        };
+        deblocking::filter_picture(&deblock_input, &mut current.dpb_pic.picture.frame);
+
+        // Attach motion field for use as a colocated picture in future B
+        // slices. POCs were captured per-slice in `decode_slice_into_current`
+        // before any DPB mutation, so the lookups they enable remain valid
+        // after MMCO runs below.
+        current.dpb_pic.picture.motion_field = self.build_motion_field(&current);
+
+        // Section C.2.3: Mark references + remove dead pictures (before storage).
+        // Per Section 7.4.3, `dec_ref_pic_marking` (and the rest of the
+        // picture-scope slice-header fields) must agree across all slices of
+        // a picture, so applying the first slice's header here is well-defined
+        // for both single- and multi-slice pictures.
+        let (has_mmco5, flushed) = self.dpb.mark_prior_references(
+            &current.first_slice_header,
+            current.disposition,
+            &current.sps,
+            &mut current.dpb_pic,
+        );
+        self.output_pictures.extend(flushed);
+        self.dpb.remove_dead_pictures();
+
+        // Section C.2.4: Store current picture (with bumping if DPB is full).
+        let pictures = self.dpb.store_picture(current.dpb_pic);
+        self.output_pictures.extend(pictures);
+
+        self.poc_state.update_mmco5_state(
+            has_mmco5,
+            current.disposition != ReferenceDisposition::NonReference,
+        );
         Ok(())
     }
 
@@ -356,18 +698,32 @@ impl Decoder {
     /// This should be called at the end of the stream.
     /// Call `retrieve_picture` repeatedly after flushing until it returns `None`.
     pub fn flush(&mut self) -> Result<(), DecodingError> {
+        self.finalize_pending_picture()?;
         let pictures = self.dpb.flush();
         self.output_pictures.extend(pictures.into_iter().map(|p| p.picture));
         Ok(())
     }
 
-    /// Process the decoded slice, performing prediction and reconstruction.
-    /// The current picture's frame is passed separately (it is not yet in the DPB).
-    fn process_slice(
+    /// Finalizes the in-progress picture, if any. No-op when no picture is
+    /// being assembled. Used to drain the boundary state machine on flush,
+    /// `EndOfSeq`, or `EndOfStream`.
+    fn finalize_pending_picture(&mut self) -> Result<(), DecodingError> {
+        if let Some(cur) = self.current_picture.take() {
+            self.finalize_picture(cur)?;
+        }
+        Ok(())
+    }
+
+    /// Performs prediction and reconstruction for the slice, writing samples
+    /// into the in-progress picture's frame and recording per-MB state into
+    /// `current` so later picture-level passes (deblocking, motion field) can
+    /// see all slices of the picture together.
+    fn process_slice_into_picture(
         &mut self,
         slice: &mut Slice,
-        frame: &mut VideoFrame,
+        current: &mut CurrentPicture,
     ) -> Result<(), DecodingError> {
+        let frame = &mut current.dpb_pic.picture.frame;
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
         let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;
@@ -604,7 +960,19 @@ impl Decoder {
             }
         }
 
-        deblocking::filter_slice(slice, frame);
+        // Copy decoded macroblocks into picture-wide state consumed at finalize:
+        // `mb_slice_id` drives cross-slice deblocking suppression and `mb_motion`
+        // / `mb_is_intra` feed the picture-level motion field assembly.
+        let first_mb_addr = slice.header.first_mb_in_slice as usize;
+        for i in 0..slice.get_macroblock_count() {
+            let mb_addr = first_mb_addr + i;
+            if let Some(mb) = slice.get_mb(mb_addr as u32) {
+                current.mb_motion[mb_addr] = mb.get_motion_info();
+                current.mb_is_intra[mb_addr] = matches!(mb, Macroblock::I(_) | Macroblock::PCM(_));
+                current.macroblocks[mb_addr] = Some(mb.clone());
+                current.mb_slice_id[mb_addr] = current.slices_seen;
+            }
+        }
 
         Ok(())
     }
@@ -936,8 +1304,8 @@ impl Decoder {
                 slice.col_pic = Some(slice::ColPicInfo {
                     mb_motion: mf.mb_motion.clone(),
                     mb_is_intra: mf.mb_is_intra.clone(),
-                    ref_pic_l0_pocs: mf.ref_pic_l0_pocs.clone(),
-                    ref_pic_l1_pocs: mf.ref_pic_l1_pocs.clone(),
+                    mb_slice_id: mf.mb_slice_id.clone(),
+                    slice_ref_pocs: mf.slice_ref_pocs.clone(),
                     pic_poc: col_pic.picture.pic_order_cnt,
                     ref_l1_0_is_short_term: col_pic.marking.is_short_term(),
                 });
@@ -945,46 +1313,20 @@ impl Decoder {
         }
     }
 
-    /// Build motion field storage and attach it to the current picture.
-    /// Must be called while DPB indices (from ref lists) are still valid,
-    /// i.e., before mark_prior_references / remove_dead_pictures / store_picture.
-    fn save_motion_field(
-        &self,
-        slice: &Slice,
-        disposition: ReferenceDisposition,
-        dpb_pic: &mut DpbPicture,
-    ) {
-        if disposition == ReferenceDisposition::NonReference {
-            return;
+    /// Assembles the picture's motion field from `current`'s accumulated
+    /// per-MB state, for later use in temporal direct prediction by B slices
+    /// that take this picture as their colocated reference. Returns `None`
+    /// for non-reference pictures.
+    fn build_motion_field(&self, current: &CurrentPicture) -> Option<MotionFieldStorage> {
+        if current.disposition == ReferenceDisposition::NonReference {
+            return None;
         }
-        let mb_count = slice.get_macroblock_count();
-        let mut mb_motion = Vec::with_capacity(mb_count);
-        let mut mb_is_intra = Vec::with_capacity(mb_count);
-        let first_mb_addr = slice.header.first_mb_in_slice;
-        for i in 0..mb_count {
-            let mb_addr = first_mb_addr + i as u32;
-            if let Some(mb) = slice.get_mb(mb_addr) {
-                mb_motion.push(mb.get_motion_info());
-                mb_is_intra.push(matches!(mb, Macroblock::I(_) | Macroblock::PCM(_)));
-            } else {
-                mb_motion.push(macroblock::MbMotion::default());
-                mb_is_intra.push(true);
-            }
-        }
-        // Resolve DPB indices to POCs now, before DPB mutations invalidate indices.
-        let ref_pic_l0_pocs: Vec<i32> = slice
-            .ref_pic_list0
-            .iter()
-            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
-            .collect();
-        let ref_pic_l1_pocs: Vec<i32> = slice
-            .ref_pic_list1
-            .iter()
-            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
-            .collect();
-
-        dpb_pic.picture.motion_field =
-            Some(MotionFieldStorage { mb_motion, mb_is_intra, ref_pic_l0_pocs, ref_pic_l1_pocs });
+        Some(MotionFieldStorage {
+            mb_motion: current.mb_motion.clone(),
+            mb_is_intra: current.mb_is_intra.clone(),
+            mb_slice_id: current.mb_slice_id.clone(),
+            slice_ref_pocs: current.slice_ref_pocs.clone(),
+        })
     }
 }
 

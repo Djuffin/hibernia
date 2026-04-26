@@ -125,11 +125,14 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
             && y_int + (H as i32) <= plane_height
         {
             // Fast path: direct copy
+            let stride = ref_plane.cfg.stride;
+            let data = ref_plane.data_origin();
+            let base = (y_int as usize) * stride + (x_int as usize);
+            assert!(base + (H - 1) * stride + W <= data.len());
             for y in 0..H {
-                let row = ref_plane.row((y_int + (y as i32)) as isize);
-                let src = &row[x_int as usize..x_int as usize + W];
+                let off = base + y * stride;
                 let d = &mut dst[y * dst_stride..y * dst_stride + W];
-                d.copy_from_slice(src);
+                d.copy_from_slice(&data[off..off + W]);
             }
         } else {
             // Slow path: clamping
@@ -160,10 +163,13 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
         && y_int >= 2
         && y_int + (buf_h as i32) - 2 <= plane_height
     {
+        let stride = ref_plane.cfg.stride;
+        let data = ref_plane.data_origin();
+        let base = ((y_int - 2) as usize) * stride + ((x_int - 2) as usize);
+        assert!(base + (buf_h - 1) * stride + buf_w <= data.len());
         for y in 0..buf_h {
-            let row = ref_plane.row((y_int + (y as i32) - 2) as isize);
-            let src = &row[(x_int - 2) as usize..(x_int - 2 + buf_w as i32) as usize];
-            buffer.data[y][..buf_w].copy_from_slice(src);
+            let off = base + y * stride;
+            buffer.data[y][..buf_w].copy_from_slice(&data[off..off + buf_w]);
         }
     } else {
         // Slow path: clamping for boundary pixels (Section 8.4.2.2.1, RefLayerFrame behavior)
@@ -429,53 +435,57 @@ pub fn interpolate_chroma(
         && y_int >= 0
         && y_int + (height as i32) < plane_height
     {
+        let stride = ref_plane.cfg.stride;
+        let data = ref_plane.data_origin();
+        let base = (y_int as usize) * stride + (x_int as usize);
+        // Worst case is the (_, _) bilinear arm, which reads up through row
+        // (y_int + height) at column (x_int + width) inclusive — slice end
+        // = base + height*stride + width + 1.
+        assert!(base + (height as usize) * stride + (width as usize) + 1 <= data.len());
+        if height > 0 {
+            assert!(
+                (height as usize - 1) * dst_stride + (width as usize) <= dst.len()
+            );
+        }
+
         macro_rules! interpolate_chroma_impl {
             ($w:expr) => {
                 match (x_frac, y_frac) {
                     (0, 0) => {
                         for y in 0..height as usize {
-                            let row = ref_plane.row((y_int + y as i32) as isize);
+                            let off = base + y * stride;
                             let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-                            let x_start = x_int as usize;
-                            d.copy_from_slice(&row[x_start..x_start + $w]);
+                            d.copy_from_slice(&data[off..off + $w]);
                         }
                     }
                     (_, 0) => {
                         let w00 = 8 - x_frac;
                         let w10 = x_frac;
-                        let mut row = ref_plane.row(y_int as isize);
                         for y in 0..height as usize {
+                            let off = base + y * stride;
+                            let src = &data[off..off + $w + 1];
                             let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-                            let x_start = x_int as usize;
-                            let src = &row[x_start..x_start + $w + 1];
-                            let dest = &mut d[..$w];
                             for x in 0..$w {
                                 let val_a = src[x] as i16;
                                 let val_b = src[x + 1] as i16;
-                                dest[x] = ((w00 * val_a + w10 * val_b + 4) >> 3) as u8;
-                            }
-                            if y + 1 < height as usize {
-                                row = ref_plane.row((y_int + y as i32 + 1) as isize);
+                                d[x] = ((w00 * val_a + w10 * val_b + 4) >> 3) as u8;
                             }
                         }
                     }
                     (0, _) => {
                         let w00 = 8 - y_frac;
                         let w01 = y_frac;
-                        let mut row = ref_plane.row(y_int as isize);
                         for y in 0..height as usize {
-                            let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
+                            let off0 = base + y * stride;
+                            let off1 = off0 + stride;
+                            let src0 = &data[off0..off0 + $w];
+                            let src1 = &data[off1..off1 + $w];
                             let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-                            let x_start = x_int as usize;
-                            let src0 = &row[x_start..x_start + $w];
-                            let src1 = &row1[x_start..x_start + $w];
-                            let dest = &mut d[..$w];
                             for x in 0..$w {
                                 let val_a = src0[x] as i16;
                                 let val_c = src1[x] as i16;
-                                dest[x] = ((w00 * val_a + w01 * val_c + 4) >> 3) as u8;
+                                d[x] = ((w00 * val_a + w01 * val_c + 4) >> 3) as u8;
                             }
-                            row = row1;
                         }
                     }
                     _ => {
@@ -486,15 +496,12 @@ pub fn interpolate_chroma(
                         let w01 = (8 - x_frac) * y_frac;
                         let w11 = x_frac * y_frac;
 
-                        let mut row = ref_plane.row(y_int as isize);
                         for y in 0..height as usize {
-                            let row1 = ref_plane.row((y_int + y as i32 + 1) as isize);
+                            let off0 = base + y * stride;
+                            let off1 = off0 + stride;
+                            let src0 = &data[off0..off0 + $w + 1];
+                            let src1 = &data[off1..off1 + $w + 1];
                             let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-                            let x_start = x_int as usize;
-
-                            let src0 = &row[x_start..x_start + $w + 1];
-                            let src1 = &row1[x_start..x_start + $w + 1];
-                            let dest = &mut d[..$w];
 
                             for x in 0..$w {
                                 let val_a = src0[x] as i16;
@@ -505,9 +512,8 @@ pub fn interpolate_chroma(
                                 // Equation 8-270:
                                 // predPartLXC[x, y] = ( (8-xFrac)*(8-yFrac)*A + xFrac*(8-yFrac)*B + ... + 32 ) >> 6
                                 let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
-                                dest[x] = prediction as u8;
+                                d[x] = prediction as u8;
                             }
-                            row = row1;
                         }
                     }
                 }

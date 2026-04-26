@@ -1,7 +1,7 @@
 use super::decoder::{DecodingError, VideoFrame};
 use super::dpb::DpbPicture;
 use super::macroblock::{
-    self, get_4x4chroma_block_location, BMb, MbPredictionMode, MotionVector, PMb,
+    self, get_4x4chroma_block_location, BMb, MbPredictionMode, MotionVector, PMb, PartitionInfo,
 };
 use super::slice::{Slice, SliceType};
 use super::residual::Block4x4;
@@ -782,6 +782,98 @@ pub fn render_luma_inter_prediction(
     Ok(())
 }
 
+/// One rectangular region of a 16x16 macroblock's 4x4 motion partition grid
+/// that shares a single (ref_idx, mv) for one prediction direction. Sizes and
+/// positions are in 4x4-grid units (so a full MB is grid_h=grid_w=4).
+#[derive(Clone, Copy, Default)]
+struct PartitionRect {
+    grid_y: u8,
+    grid_x: u8,
+    grid_h: u8,
+    grid_w: u8,
+    ref_idx: u8,
+    mv: MotionVector,
+}
+
+/// Greedy-rectangle scan of the 4x4 motion partition grid. `classify` returns
+/// `Some((ref_idx, mv))` for cells where the requested direction is active and
+/// `None` for cells to skip. Adjacent cells with identical keys are merged
+/// into one maximal rectangle.
+///
+/// The parser fills the grid by replicating the same `PartitionInfo` across
+/// every cell covered by an H.264 partition, so a left-to-right / top-to-bottom
+/// greedy walk recovers the original partition shapes (16x16, 16x8, 8x16, 8x8,
+/// 8x4, 4x8, 4x4) exactly. It also coalesces across partition boundaries when
+/// they happen to share the requested direction's (ref_idx, mv).
+fn collect_pred_rects(
+    partitions: &[[PartitionInfo; 4]; 4],
+    classify: impl Fn(&PartitionInfo) -> Option<(u8, MotionVector)>,
+    out: &mut [PartitionRect; 16],
+) -> usize {
+    let mut visited = [[false; 4]; 4];
+    let mut count = 0;
+    for gy in 0..4 {
+        for gx in 0..4 {
+            if visited[gy][gx] {
+                continue;
+            }
+            let key = match classify(&partitions[gy][gx]) {
+                Some(k) => k,
+                None => {
+                    visited[gy][gx] = true;
+                    continue;
+                }
+            };
+
+            // Extend right while the next column at row gy matches.
+            let mut w = 1;
+            while gx + w < 4 && classify(&partitions[gy][gx + w]) == Some(key) {
+                w += 1;
+            }
+
+            // Extend down while every cell in the next row matches across [gx, gx+w).
+            let mut h = 1;
+            'extend_down: while gy + h < 4 {
+                for dx in 0..w {
+                    if classify(&partitions[gy + h][gx + dx]) != Some(key) {
+                        break 'extend_down;
+                    }
+                }
+                h += 1;
+            }
+
+            for dy in 0..h {
+                for dx in 0..w {
+                    visited[gy + dy][gx + dx] = true;
+                }
+            }
+
+            out[count] = PartitionRect {
+                grid_y: gy as u8,
+                grid_x: gx as u8,
+                grid_h: h as u8,
+                grid_w: w as u8,
+                ref_idx: key.0,
+                mv: key.1,
+            };
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Classifier for B-frame L0 prediction: active iff `pred_mode` includes L0.
+fn classify_b_l0(p: &PartitionInfo) -> Option<(u8, MotionVector)> {
+    matches!(p.pred_mode, MbPredictionMode::Pred_L0 | MbPredictionMode::BiPred)
+        .then_some((p.ref_idx_l0, p.mv_l0))
+}
+
+/// Classifier for B-frame L1 prediction: active iff `pred_mode` includes L1.
+fn classify_b_l1(p: &PartitionInfo) -> Option<(u8, MotionVector)> {
+    matches!(p.pred_mode, MbPredictionMode::Pred_L1 | MbPredictionMode::BiPred)
+        .then_some((p.ref_idx_l1, p.mv_l1))
+}
+
 pub fn render_chroma_inter_prediction(
     slice: &Slice,
     mb: &PMb,
@@ -797,39 +889,61 @@ pub fn render_chroma_inter_prediction(
     let wp_mode = get_weighted_pred_mode(slice);
     let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
 
-    // 1. Prediction (Block by block 2x2)
-    for blk_idx in 0..16 {
-        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
-        let ref_idx = partition.ref_idx_l0;
-        let mv = partition.mv_l0;
-
-        let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
+    // 1. Prediction. Coalesce the 4x4 motion partition grid into maximal
+    // rectangles sharing the same (ref_idx_l0, mv_l0) and call
+    // interpolate_chroma once per partition (16x reduction in the common case
+    // of a single 16x16 P partition).
+    let mut pred_buf = [0u8; 64]; // 8x8 chroma block, row-major, stride 8
+    let mut rects = [PartitionRect::default(); 16];
+    let n_rects = collect_pred_rects(
+        &mb.motion.partitions,
+        |p| Some((p.ref_idx_l0, p.mv_l0)),
+        &mut rects,
+    );
+    for rect in &rects[..n_rects] {
+        let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
             DecodingError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
-                ref_idx,
+                rect.ref_idx,
                 ref_pics_l0.len()
             ))
         })?;
         let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
-
-        let blk_x = (grid_x * 4) >> 1; // 2
-        let blk_y = (grid_y * 4) >> 1; // 2
-
-        let mut dst = [0u8; 4]; // 2x2 = 4 pixels
-
+        let cx = rect.grid_x as usize * 2;
+        let cy = rect.grid_y as usize * 2;
+        let cw = rect.grid_w as usize * 2;
+        let ch = rect.grid_h as usize * 2;
         interpolate_chroma(
             ref_plane,
             mb_x_chroma,
             mb_y_chroma,
-            blk_x as u8,
-            blk_y as u8,
-            2,
-            2,
-            mv,
-            &mut dst,
-            2, // stride
+            cx as u8,
+            cy as u8,
+            cw as u8,
+            ch as u8,
+            rect.mv,
+            &mut pred_buf[cy * 8 + cx..],
+            8,
         );
+    }
+
+    // Per-2x2-cell weighted prediction and write-back. Reads the 2x2 patch
+    // from the staged 8x8 buffer.
+    for blk_idx in 0..16 {
+        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+        let ref_idx = partition.ref_idx_l0;
+
+        let blk_x = (grid_x * 4) >> 1;
+        let blk_y = (grid_y * 4) >> 1;
+        let buf_off = blk_y * 8 + blk_x;
+
+        let mut dst = [
+            pred_buf[buf_off],
+            pred_buf[buf_off + 1],
+            pred_buf[buf_off + 8],
+            pred_buf[buf_off + 9],
+        ];
 
         // Section 8.4.2.3: Apply weighted prediction
         if wp_mode == WeightedPredMode::Explicit {
@@ -1058,7 +1172,71 @@ pub fn render_chroma_inter_prediction_b(
     let wp_mode = get_weighted_pred_mode(slice);
     let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
 
-    // 1. Prediction (2x2 blocks corresponding to each 4x4 luma block)
+    // 1. Prediction. Coalesce the 4x4 motion partition grid into maximal
+    // rectangles per direction and call interpolate_chroma once per partition.
+    // Predictions are staged into 8x8 row-major buffers (stride 8) so the
+    // per-cell weighted-prediction loop below can read each 2x2 patch from a
+    // fixed offset.
+    let mut pred_l0_buf = [0u8; 64];
+    let mut pred_l1_buf = [0u8; 64];
+    let mut rects = [PartitionRect::default(); 16];
+
+    let n_l0 = collect_pred_rects(&mb.motion.partitions, classify_b_l0, &mut rects);
+    for rect in &rects[..n_l0] {
+        let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l0 {} out of bounds (list length {})",
+                rect.ref_idx,
+                ref_pics_l0.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+        let cx = rect.grid_x as usize * 2;
+        let cy = rect.grid_y as usize * 2;
+        let cw = rect.grid_w as usize * 2;
+        let ch = rect.grid_h as usize * 2;
+        interpolate_chroma(
+            ref_plane,
+            mb_x_chroma,
+            mb_y_chroma,
+            cx as u8,
+            cy as u8,
+            cw as u8,
+            ch as u8,
+            rect.mv,
+            &mut pred_l0_buf[cy * 8 + cx..],
+            8,
+        );
+    }
+
+    let n_l1 = collect_pred_rects(&mb.motion.partitions, classify_b_l1, &mut rects);
+    for rect in &rects[..n_l1] {
+        let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l1 {} out of bounds (list length {})",
+                rect.ref_idx,
+                ref_pics_l1.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+        let cx = rect.grid_x as usize * 2;
+        let cy = rect.grid_y as usize * 2;
+        let cw = rect.grid_w as usize * 2;
+        let ch = rect.grid_h as usize * 2;
+        interpolate_chroma(
+            ref_plane,
+            mb_x_chroma,
+            mb_y_chroma,
+            cx as u8,
+            cy as u8,
+            cw as u8,
+            ch as u8,
+            rect.mv,
+            &mut pred_l1_buf[cy * 8 + cx..],
+            8,
+        );
+    }
+
     for blk_idx in 0..16 {
         let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
         let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
@@ -1071,54 +1249,25 @@ pub fn render_chroma_inter_prediction_b(
 
         let blk_x = (grid_x * 4) >> 1;
         let blk_y = (grid_y * 4) >> 1;
+        let buf_off = blk_y * 8 + blk_x;
 
         let mut pred_l0 = [0u8; 4];
         let mut pred_l1 = [0u8; 4];
-
         if has_l0 {
-            let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
-                DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l0 {} out of bounds (list length {})",
-                    partition.ref_idx_l0,
-                    ref_pics_l0.len()
-                ))
-            })?;
-            let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
-            interpolate_chroma(
-                ref_plane,
-                mb_x_chroma,
-                mb_y_chroma,
-                blk_x as u8,
-                blk_y as u8,
-                2,
-                2,
-                partition.mv_l0,
-                &mut pred_l0,
-                2,
-            );
+            pred_l0 = [
+                pred_l0_buf[buf_off],
+                pred_l0_buf[buf_off + 1],
+                pred_l0_buf[buf_off + 8],
+                pred_l0_buf[buf_off + 9],
+            ];
         }
-
         if has_l1 {
-            let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
-                DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l1 {} out of bounds (list length {})",
-                    partition.ref_idx_l1,
-                    ref_pics_l1.len()
-                ))
-            })?;
-            let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
-            interpolate_chroma(
-                ref_plane,
-                mb_x_chroma,
-                mb_y_chroma,
-                blk_x as u8,
-                blk_y as u8,
-                2,
-                2,
-                partition.mv_l1,
-                &mut pred_l1,
-                2,
-            );
+            pred_l1 = [
+                pred_l1_buf[buf_off],
+                pred_l1_buf[buf_off + 1],
+                pred_l1_buf[buf_off + 8],
+                pred_l1_buf[buf_off + 9],
+            ];
         }
 
         // Section 8.4.2.3: Combine predictions according to weighted prediction mode

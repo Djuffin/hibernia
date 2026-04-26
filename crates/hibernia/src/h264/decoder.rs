@@ -526,8 +526,20 @@ impl Decoder {
             pps: slice.pps.clone(),
             macroblocks: vec![None; pic_size],
             mb_slice_id: vec![u16::MAX; pic_size],
-            mb_motion: vec![macroblock::MbMotion::default(); pic_size],
-            mb_is_intra: vec![false; pic_size],
+            // Motion-field arrays are only consulted when this picture is later
+            // used as a colocated reference for B-slice temporal direct
+            // prediction. Non-reference pictures can never be colocated, so
+            // skip the allocation and population work entirely.
+            mb_motion: if disposition == ReferenceDisposition::NonReference {
+                Vec::new()
+            } else {
+                vec![macroblock::MbMotion::default(); pic_size]
+            },
+            mb_is_intra: if disposition == ReferenceDisposition::NonReference {
+                Vec::new()
+            } else {
+                vec![false; pic_size]
+            },
             slice_deblock: Vec::new(),
             slice_ref_pocs: Vec::new(),
             slices_seen: 0,
@@ -672,7 +684,7 @@ impl Decoder {
         // slices. POCs were captured per-slice in `decode_slice_into_current`
         // before any DPB mutation, so the lookups they enable remain valid
         // after MMCO runs below.
-        current.dpb_pic.picture.motion_field = self.build_motion_field(&current);
+        current.dpb_pic.picture.motion_field = self.build_motion_field(&mut current);
 
         // Section C.2.3: Mark references + remove dead pictures (before storage).
         // Per Section 7.4.3, `dec_ref_pic_marking` (and the rest of the
@@ -994,12 +1006,18 @@ impl Decoder {
         // `mb_slice_id` drives cross-slice deblocking suppression and `mb_motion`
         // / `mb_is_intra` feed the picture-level motion field assembly. Drains
         // the slice — nothing reads `slice.macroblocks` after this point.
+        // Motion-field writes are skipped for non-reference pictures; they can
+        // never be used as a colocated reference, so the data would be discarded.
         let first_mb_addr = slice.header.first_mb_in_slice as usize;
         let slices_seen = current.slices_seen;
+        let needs_motion_field = current.disposition != ReferenceDisposition::NonReference;
         for (i, mb) in slice.take_macroblocks().into_iter().enumerate() {
             let mb_addr = first_mb_addr + i;
-            current.mb_motion[mb_addr] = mb.get_motion_info();
-            current.mb_is_intra[mb_addr] = matches!(&mb, Macroblock::I(_) | Macroblock::PCM(_));
+            if needs_motion_field {
+                current.mb_motion[mb_addr] = mb.get_motion_info();
+                current.mb_is_intra[mb_addr] =
+                    matches!(&mb, Macroblock::I(_) | Macroblock::PCM(_));
+            }
             current.mb_slice_id[mb_addr] = slices_seen;
             current.macroblocks[mb_addr] = Some(mb);
         }
@@ -1347,15 +1365,18 @@ impl Decoder {
     /// per-MB state, for later use in temporal direct prediction by B slices
     /// that take this picture as their colocated reference. Returns `None`
     /// for non-reference pictures.
-    fn build_motion_field(&self, current: &CurrentPicture) -> Option<MotionFieldStorage> {
+    /// Drains the per-MB motion arrays out of `current` into the storage
+    /// stashed on the DPB picture. Caller must not access `current.mb_motion`
+    /// etc. after this returns — they're left empty.
+    fn build_motion_field(&self, current: &mut CurrentPicture) -> Option<MotionFieldStorage> {
         if current.disposition == ReferenceDisposition::NonReference {
             return None;
         }
         Some(MotionFieldStorage {
-            mb_motion: current.mb_motion.clone(),
-            mb_is_intra: current.mb_is_intra.clone(),
-            mb_slice_id: current.mb_slice_id.clone(),
-            slice_ref_pocs: current.slice_ref_pocs.clone(),
+            mb_motion: std::mem::take(&mut current.mb_motion),
+            mb_is_intra: std::mem::take(&mut current.mb_is_intra),
+            mb_slice_id: std::mem::take(&mut current.mb_slice_id),
+            slice_ref_pocs: std::mem::take(&mut current.slice_ref_pocs),
         })
     }
 }

@@ -718,6 +718,11 @@ pub fn render_luma_inter_prediction(
     let y_plane = &mut frame.planes[0];
     let wp_mode = get_weighted_pred_mode(slice);
 
+    let y_stride = y_plane.cfg.stride;
+    let mb_origin = (mb_loc.y as usize) * y_stride + (mb_loc.x as usize);
+    let y_data = y_plane.data_origin_mut();
+    assert!(mb_origin + 15 * y_stride + 16 <= y_data.len());
+
     for raster_idx in 0..16 {
         let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
         let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
@@ -775,14 +780,10 @@ pub fn render_luma_inter_prediction(
         }
 
         // Copy to frame
-        let mut plane_slice = y_plane.mut_slice(PlaneOffset {
-            x: (mb_loc.x + blk_x as u32) as isize,
-            y: (mb_loc.y + blk_y as u32) as isize,
-        });
-
-        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
-            let row_data = &dst[y * 4..(y + 1) * 4];
-            row[..4].copy_from_slice(row_data);
+        let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);
+        for y in 0..4 {
+            let row_base = cell_base + y * y_stride;
+            y_data[row_base..row_base + 4].copy_from_slice(&dst[y * 4..y * 4 + 4]);
         }
     }
     Ok(())
@@ -933,6 +934,12 @@ pub fn render_chroma_inter_prediction(
         );
     }
 
+    // Hoist plane-write state out of the per-cell loops below.
+    let chroma_stride = chroma_plane.cfg.stride;
+    let mb_origin = (mb_y_chroma as usize) * chroma_stride + (mb_x_chroma as usize);
+    let chroma_data = chroma_plane.data_origin_mut();
+    assert!(mb_origin + 7 * chroma_stride + 8 <= chroma_data.len());
+
     // Per-2x2-cell weighted prediction and write-back. Reads the 2x2 patch
     // from the staged 8x8 buffer.
     for blk_idx in 0..16 {
@@ -959,33 +966,24 @@ pub fn render_chroma_inter_prediction(
             }
         }
 
-        // Write to frame
-        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
-            x: (mb_x_chroma + blk_x as u32) as isize,
-            y: (mb_y_chroma + blk_y as u32) as isize,
-        });
-
-        for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
-            row[0] = dst[y * 2];
-            row[1] = dst[y * 2 + 1];
-        }
+        let cell_base = mb_origin + blk_y * chroma_stride + blk_x;
+        chroma_data[cell_base] = dst[0];
+        chroma_data[cell_base + 1] = dst[1];
+        chroma_data[cell_base + chroma_stride] = dst[2];
+        chroma_data[cell_base + chroma_stride + 1] = dst[3];
     }
 
     // 2. Residuals (Block by block 4x4)
     for (blk_idx, residual_blk) in residuals.iter().enumerate() {
         let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
-        // blk_loc is relative to MB top-left in chroma samples
-
-        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
-            x: (mb_x_chroma + blk_loc.x) as isize,
-            y: (mb_y_chroma + blk_loc.y) as isize,
-        });
-
-        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+        let blk_base =
+            mb_origin + (blk_loc.y as usize) * chroma_stride + (blk_loc.x as usize);
+        for y in 0..4 {
+            let row_base = blk_base + y * chroma_stride;
             for x in 0..4 {
                 let res = residual_blk.samples[y][x];
-                let pred = row[x] as i32;
-                row[x] = (pred + res).clamp(0, 255) as u8;
+                let pred = chroma_data[row_base + x] as i32;
+                chroma_data[row_base + x] = (pred + res).clamp(0, 255) as u8;
             }
         }
     }
@@ -1004,6 +1002,11 @@ pub fn render_luma_inter_prediction_b(
 ) -> Result<(), DecodingError> {
     let y_plane = &mut frame.planes[0];
     let wp_mode = get_weighted_pred_mode(slice);
+
+    let y_stride = y_plane.cfg.stride;
+    let mb_origin = (mb_loc.y as usize) * y_stride + (mb_loc.x as usize);
+    let y_data = y_plane.data_origin_mut();
+    assert!(mb_origin + 15 * y_stride + 16 <= y_data.len());
 
     for raster_idx in 0..16 {
         let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
@@ -1149,14 +1152,10 @@ pub fn render_luma_inter_prediction_b(
         }
 
         // Copy to frame
-        let mut plane_slice = y_plane.mut_slice(PlaneOffset {
-            x: (mb_loc.x + blk_x as u32) as isize,
-            y: (mb_loc.y + blk_y as u32) as isize,
-        });
-
-        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
-            let row_data = &dst[y * 4..(y + 1) * 4];
-            row[..4].copy_from_slice(row_data);
+        let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);
+        for y in 0..4 {
+            let row_base = cell_base + y * y_stride;
+            y_data[row_base..row_base + 4].copy_from_slice(&dst[y * 4..y * 4 + 4]);
         }
     }
     Ok(())
@@ -1242,6 +1241,13 @@ pub fn render_chroma_inter_prediction_b(
             8,
         );
     }
+
+    let chroma_stride = chroma_plane.cfg.stride;
+    let mb_origin = (mb_y_chroma as usize) * chroma_stride + (mb_x_chroma as usize);
+    let chroma_data = chroma_plane.data_origin_mut();
+    // Both passes write within the 8x8 chroma MB at mb_origin, so a single
+    // worst-case assert dominates every per-pixel store below.
+    assert!(mb_origin + 7 * chroma_stride + 8 <= chroma_data.len());
 
     for blk_idx in 0..16 {
         let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
@@ -1342,32 +1348,26 @@ pub fn render_chroma_inter_prediction_b(
             }
         }
 
-        // Write to frame
-        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
-            x: (mb_x_chroma + blk_x as u32) as isize,
-            y: (mb_y_chroma + blk_y as u32) as isize,
-        });
-
-        for (y, row) in plane_slice.rows_iter_mut().take(2).enumerate() {
-            row[0] = dst[y * 2];
-            row[1] = dst[y * 2 + 1];
-        }
+        // Write to frame: 2x2 block at chroma sample (mb_x_chroma + blk_x,
+        // mb_y_chroma + blk_y) addressed directly via the hoisted base.
+        let cell_base = mb_origin + blk_y * chroma_stride + blk_x;
+        chroma_data[cell_base] = dst[0];
+        chroma_data[cell_base + 1] = dst[1];
+        chroma_data[cell_base + chroma_stride] = dst[2];
+        chroma_data[cell_base + chroma_stride + 1] = dst[3];
     }
 
     // 2. Residuals
     for (blk_idx, residual_blk) in residuals.iter().enumerate() {
         let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
-
-        let mut plane_slice = chroma_plane.mut_slice(PlaneOffset {
-            x: (mb_x_chroma + blk_loc.x) as isize,
-            y: (mb_y_chroma + blk_loc.y) as isize,
-        });
-
-        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
+        let blk_base =
+            mb_origin + (blk_loc.y as usize) * chroma_stride + (blk_loc.x as usize);
+        for y in 0..4 {
+            let row_base = blk_base + y * chroma_stride;
             for x in 0..4 {
                 let res = residual_blk.samples[y][x];
-                let pred = row[x] as i32;
-                row[x] = (pred + res).clamp(0, 255) as u8;
+                let pred = chroma_data[row_base + x] as i32;
+                chroma_data[row_base + x] = (pred + res).clamp(0, 255) as u8;
             }
         }
     }

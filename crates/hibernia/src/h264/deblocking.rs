@@ -404,90 +404,115 @@ fn filter_luma_edge(
         (1, stride, (mb_xy.y as usize + edge_idx * 4) * stride + mb_xy.x as usize)
     };
 
+    // Pre-compute perpendicular step multiples. The 8-sample perpendicular
+    // window for one pixel covers offsets [0..=7*perp_step] — laid out as
+    // p3, p2, p1, p0, q0, q1, q2, q3 at strides perp_step apart.
+    let s1 = perp_step;
+    let s2 = perp_step * 2;
+    let s3 = perp_step * 3;
+    let s4 = perp_step * 4;
+
     let mut q0_idx = base_idx;
 
-    for k in 0..16 {
-        let bs = bs_array[k / 4];
+    // Restructure as 4 4-pixel blocks: bs lookup, tc0 derivation, and the
+    // weak/strong dispatch run once per block instead of once per pixel.
+    for blk in 0..4 {
+        let bs = bs_array[blk];
         if bs == BS_NONE {
-            q0_idx += edge_step;
+            q0_idx += 4 * edge_step;
             continue;
         }
 
-        let p0 = data[q0_idx - perp_step] as i32;
-        let q0 = data[q0_idx] as i32;
-        let p1 = data[q0_idx - 2 * perp_step] as i32;
-        let q1 = data[q0_idx + perp_step] as i32;
+        let strong = bs >= BS_STRONG;
+        let tc0 = if !strong {
+            TC0_TABLE[(bs - 1) as usize][index_a] as i32 // Table 8-17
+        } else {
+            0
+        };
 
-        // Equation 8-460: filter condition
-        if (p0 - q0).abs() < alpha && (p1 - p0).abs() < beta && (q1 - q0).abs() < beta {
-            let p2 = data[q0_idx - 3 * perp_step] as i32;
-            let q2 = data[q0_idx + 2 * perp_step] as i32;
+        for _ in 0..4 {
+            // Slice the 8-sample perpendicular window once per pixel — one
+            // pair of bounds checks for the whole window. All in-window reads
+            // and writes below use offsets `N * perp_step` for N in 0..=7,
+            // which the optimizer can prove are < `win.len() = 7*perp_step+1`
+            // and elide the per-access check.
+            let win = &mut data[q0_idx - s4..q0_idx + s3 + 1];
 
-            if bs < BS_STRONG {
-                // Section 8.7.2.3 — weak filter (bS < 4)
-                let tc0 = TC0_TABLE[(bs - 1) as usize][index_a]; // Table 8-17
-                let mut tc = tc0 as i32;
+            // Layout within `win`:
+            //   off=0      → p3        off=s4     → q0
+            //   off=s1     → p2        off=s4+s1  → q1
+            //   off=s2     → p1        off=s4+s2  → q2
+            //   off=s3     → p0        off=s4+s3  → q3
+            let p0 = win[s3] as i32;
+            let q0 = win[s4] as i32;
+            let p1 = win[s2] as i32;
+            let q1 = win[s4 + s1] as i32;
+
+            // Equation 8-460: filter condition
+            if (p0 - q0).abs() < alpha
+                && (p1 - p0).abs() < beta
+                && (q1 - q0).abs() < beta
+            {
+                let p2 = win[s1] as i32;
+                let q2 = win[s4 + s2] as i32;
                 let ap = (p2 - p0).abs();
                 let aq = (q2 - q0).abs();
-                if ap < beta {
-                    tc += 1;
-                } // Equation 8-465
-                if aq < beta {
-                    tc += 1;
-                }
+                let ap_lt_beta = ap < beta;
+                let aq_lt_beta = aq < beta;
 
-                let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3; // Eq 8-467
-                let delta_c = delta.clamp(-tc, tc);
+                if !strong {
+                    // Section 8.7.2.3 — weak filter (bS < 4)
+                    let tc = tc0 + ap_lt_beta as i32 + aq_lt_beta as i32; // Eq 8-465
 
-                data[q0_idx - perp_step] = (p0 + delta_c).clamp(0, 255) as u8; // Eq 8-468: p0'
-                data[q0_idx] = (q0 - delta_c).clamp(0, 255) as u8; // Eq 8-469: q0'
+                    let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3; // Eq 8-467
+                    let delta_c = delta.clamp(-tc, tc);
 
-                if ap < beta {
-                    // Eq 8-470: p1'
-                    let d = (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1;
-                    data[q0_idx - 2 * perp_step] =
-                        (p1 + d.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
-                }
-                if aq < beta {
-                    // Eq 8-472: q1'
-                    let d = (q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1;
-                    data[q0_idx + perp_step] =
-                        (q1 + d.clamp(-(tc0 as i32), tc0 as i32)).clamp(0, 255) as u8;
-                }
-            } else {
-                // Section 8.7.2.4 — strong filter (bS == 4)
-                let ap = (p2 - p0).abs();
-                let aq = (q2 - q0).abs();
-                let small_diff = (p0 - q0).abs() < ((alpha >> 2) + 2); // Eq 8-476
+                    win[s3] = (p0 + delta_c).clamp(0, 255) as u8; // Eq 8-468: p0'
+                    win[s4] = (q0 - delta_c).clamp(0, 255) as u8; // Eq 8-469: q0'
 
-                // p-side: Equations 8-477..8-479 (strong) or 8-480 (weak fallback)
-                if ap < beta && small_diff {
-                    let p3 = data[q0_idx - 4 * perp_step] as i32;
-                    data[q0_idx - perp_step] =
-                        ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(0, 255) as u8;
-                    data[q0_idx - 2 * perp_step] =
-                        ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
-                    data[q0_idx - 3 * perp_step] =
-                        ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(0, 255) as u8;
+                    if ap_lt_beta {
+                        // Eq 8-470: p1'
+                        let d = (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1;
+                        win[s2] = (p1 + d.clamp(-tc0, tc0)).clamp(0, 255) as u8;
+                    }
+                    if aq_lt_beta {
+                        // Eq 8-472: q1'
+                        let d = (q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1;
+                        win[s4 + s1] = (q1 + d.clamp(-tc0, tc0)).clamp(0, 255) as u8;
+                    }
                 } else {
-                    data[q0_idx - perp_step] = ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
-                }
+                    // Section 8.7.2.4 — strong filter (bS == 4)
+                    let small_diff = (p0 - q0).abs() < ((alpha >> 2) + 2); // Eq 8-476
 
-                // q-side: Equations 8-484..8-486 (strong) or 8-487 (weak fallback)
-                if aq < beta && small_diff {
-                    let q3 = data[q0_idx + 3 * perp_step] as i32;
-                    data[q0_idx] =
-                        ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(0, 255) as u8;
-                    data[q0_idx + perp_step] = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
-                    data[q0_idx + 2 * perp_step] =
-                        ((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3).clamp(0, 255) as u8;
-                } else {
-                    data[q0_idx] = ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
+                    // p-side: Equations 8-477..8-479 (strong) or 8-480 (weak fallback)
+                    if ap_lt_beta && small_diff {
+                        let p3 = win[0] as i32;
+                        win[s3] = ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3)
+                            .clamp(0, 255) as u8;
+                        win[s2] = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
+                        win[s1] = ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3)
+                            .clamp(0, 255) as u8;
+                    } else {
+                        win[s3] = ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
+                    }
+
+                    // q-side: Equations 8-484..8-486 (strong) or 8-487 (weak fallback)
+                    if aq_lt_beta && small_diff {
+                        let q3 = win[s4 + s3] as i32;
+                        win[s4] = ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3)
+                            .clamp(0, 255) as u8;
+                        win[s4 + s1] =
+                            ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
+                        win[s4 + s2] = ((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3)
+                            .clamp(0, 255) as u8;
+                    } else {
+                        win[s4] = ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
+                    }
                 }
             }
-        }
 
-        q0_idx += edge_step;
+            q0_idx += edge_step;
+        }
     }
 }
 
@@ -535,46 +560,70 @@ fn filter_chroma_edge(
             (1, stride, abs_y * stride + abs_x)
         };
 
+        let s1 = perp_step;
+        let s2 = perp_step * 2;
+
         let mut q0_idx = base_idx;
 
-        for k in 0..8 {
-            let bs = bs_array[k / 2];
+        // Restructure as 4 2-pixel blocks. Each chroma 4:2:0 edge has 8 samples
+        // and the bs array has 4 entries (one per 2 chroma samples = 4 luma).
+        for blk in 0..4 {
+            let bs = bs_array[blk];
             if bs == BS_NONE {
-                q0_idx += edge_step;
+                q0_idx += 2 * edge_step;
                 continue;
             }
 
-            let p0 = data[q0_idx - perp_step] as i32;
-            let q0 = data[q0_idx] as i32;
-            let p1 = data[q0_idx - 2 * perp_step] as i32;
-            let q1 = data[q0_idx + perp_step] as i32;
+            let strong = bs >= BS_STRONG;
+            // Section 8.7.2.3 with chromaEdgeFlag = 1.
+            // Equation 8-466: tc = tc0 + 1 for chroma.
+            let tc = if !strong {
+                TC0_TABLE[(bs - 1) as usize][index_a] as i32 + 1
+            } else {
+                0
+            };
 
-            // Equation 8-460: filter condition
-            if (p0 - q0).abs() < alpha && (p1 - p0).abs() < beta && (q1 - q0).abs() < beta {
-                let (p0_new, q0_new) = if bs < BS_STRONG {
-                    // Section 8.7.2.3 with chromaEdgeFlag = 1
-                    let tc0 = TC0_TABLE[(bs - 1) as usize][index_a];
-                    // Equation 8-466: tc = tc0 + 1 for chroma
-                    let tc = tc0 as i32 + 1;
-                    // Equation 8-467: delta
-                    let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3;
-                    let delta_c = delta.clamp(-tc, tc);
-                    // Equations 8-468, 8-469: p0', q0'
-                    ((p0 + delta_c).clamp(0, 255) as u8, (q0 - delta_c).clamp(0, 255) as u8)
-                } else {
-                    // Section 8.7.2.4 with chromaStyleFilteringFlag = 1
-                    // Equations 8-480, 8-487: p0', q0'
-                    (
-                        ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8,
-                        ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8,
-                    )
-                };
+            for _ in 0..2 {
+                // Per-pixel 4-sample perpendicular window: p1, p0, q0, q1 at
+                // strides perp_step. One pair of bounds checks for the whole
+                // window; the constant-stride offsets below LLVM can prove
+                // safe and elide.
+                let win = &mut data[q0_idx - s2..q0_idx + s1 + 1];
+                // Layout: win[0]=p1, win[s1]=p0, win[s2]=q0, win[s2+s1]=q1
+                let p0 = win[s1] as i32;
+                let q0 = win[s2] as i32;
+                let p1 = win[0] as i32;
+                let q1 = win[s2 + s1] as i32;
 
-                data[q0_idx - perp_step] = p0_new;
-                data[q0_idx] = q0_new;
+                // Equation 8-460: filter condition
+                if (p0 - q0).abs() < alpha
+                    && (p1 - p0).abs() < beta
+                    && (q1 - q0).abs() < beta
+                {
+                    let (p0_new, q0_new) = if !strong {
+                        // Equation 8-467: delta
+                        let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3;
+                        let delta_c = delta.clamp(-tc, tc);
+                        // Equations 8-468, 8-469: p0', q0'
+                        (
+                            (p0 + delta_c).clamp(0, 255) as u8,
+                            (q0 - delta_c).clamp(0, 255) as u8,
+                        )
+                    } else {
+                        // Section 8.7.2.4 with chromaStyleFilteringFlag = 1.
+                        // Equations 8-480, 8-487: p0', q0'
+                        (
+                            ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8,
+                            ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8,
+                        )
+                    };
+
+                    win[s1] = p0_new;
+                    win[s2] = q0_new;
+                }
+
+                q0_idx += edge_step;
             }
-
-            q0_idx += edge_step;
         }
     }
 }

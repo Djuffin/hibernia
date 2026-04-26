@@ -681,42 +681,49 @@ pub fn render_luma_16x16_intra_prediction(
     mode: Intra_16x16_SamplePredMode,
     residuals: &[Block4x4],
 ) {
-    let x = loc.x as usize;
-    let y = loc.y as usize;
-    let offset = point_to_plane_offset(loc);
+    // Hoist plane-write state. The reads (top row, left column, top-left
+    // corner for Plane mode) and writes all happen against the same flat
+    // `data` slice so we never go through Plane::row / mut_slice /
+    // rows_iter_mut, eliminating the per-row range computation.
+    let stride = target.cfg.stride;
+    let mb_x = loc.x as usize;
+    let mb_y = loc.y as usize;
+    let mb_origin = mb_y * stride + mb_x;
+    let data = target.data_origin_mut();
+
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
             // Equation 8-116: predL[x, y] = p[x, -1]
-            let mut src_row = [0; 16];
-            src_row.copy_from_slice(&target.row(y as isize - 1)[x..(x + 16)]);
-            let mut target_slice = target.mut_slice(offset);
-            for row in target_slice.rows_iter_mut().take(16) {
-                row[0..16].copy_from_slice(&src_row);
+            let top_base = mb_origin - stride;
+            let mut src_row = [0u8; 16];
+            src_row.copy_from_slice(&data[top_base..top_base + 16]);
+            for y in 0..16 {
+                let row_base = mb_origin + y * stride;
+                data[row_base..row_base + 16].copy_from_slice(&src_row);
             }
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Horizontal => {
             // Section 8.3.3.2 Specification of Intra_16x16_Horizontal prediction mode
             // Equation 8-117: predL[x, y] = p[-1, y]
-            let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
-            for row in target_slice.rows_iter_mut().take(16) {
-                let src = row[0];
-                row[1..=16].fill(src);
+            for y in 0..16 {
+                let row_base = mb_origin + y * stride;
+                let src = data[row_base - 1];
+                data[row_base..row_base + 16].fill(src);
             }
         }
         Intra_16x16_SamplePredMode::Intra_16x16_DC => {
             // Section 8.3.3.3 Specification of Intra_16x16_DC prediction mode
             let sum_a = if slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
-                let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
-                Some(target_slice.rows_iter().take(16).map(|r| r[0] as u32).sum::<u32>())
+                Some((0..16usize).map(|y| data[mb_origin + y * stride - 1] as u32).sum::<u32>())
             } else {
                 None
             };
 
             // Calculate the sum of all the values at the top of the current macroblock
             let sum_b = if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
-                let row = &target.row(y as isize - 1)[x..(x + 16)];
-                Some(row.iter().map(|r| *r as u32).sum::<u32>())
+                let top_base = mb_origin - stride;
+                Some(data[top_base..top_base + 16].iter().map(|r| *r as u32).sum::<u32>())
             } else {
                 None
             };
@@ -730,20 +737,23 @@ pub fn render_luma_16x16_intra_prediction(
             } else {
                 sum = 1 << 7;
             }
+            let dc = sum as u8;
 
-            let mut target_slice = target.mut_slice(offset);
-            for row in target_slice.rows_iter_mut().take(16) {
-                row[0..16].fill(sum as u8);
+            for y in 0..16 {
+                let row_base = mb_origin + y * stride;
+                data[row_base..row_base + 16].fill(dc);
             }
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Plane => {
             // Section 8.3.3.4 Specification of Intra_16x16_Plane prediction mode
-            let slice = target.slice(PlaneOffset { x: offset.x - 1, y: offset.y - 1 });
-            let mut top = [0; 17];
-            top.copy_from_slice(&slice[0][0..17]);
-            let mut left = [0; 17];
-            for (idx, row) in slice.rows_iter().take(17).enumerate() {
-                left[idx] = row[0];
+            // Read 17 top samples (corner + 16 above) and 17 left samples
+            // (corner + 16 to the left) directly from the hoisted `data`.
+            let mut top = [0u8; 17];
+            let top_base = mb_origin - stride - 1;
+            top.copy_from_slice(&data[top_base..top_base + 17]);
+            let mut left = [0u8; 17];
+            for i in 0..17 {
+                left[i] = data[(mb_origin - stride - 1) + i * stride];
             }
 
             // Equations 8-126, 8-127
@@ -760,28 +770,29 @@ pub fn render_luma_16x16_intra_prediction(
             // Equation 8-125: c
             let c = (5 * v + 32) >> 6;
 
-            let mut target_slice = target.mut_slice(offset);
-            for (y, row) in target_slice.rows_iter_mut().take(16).enumerate() {
-                for (x, pixel) in row.iter_mut().take(16).enumerate() {
-                    let x = x as i32;
-                    let y = y as i32;
+            for py in 0..16 {
+                let row_base = mb_origin + py * stride;
+                let py_i = py as i32;
+                for px in 0..16 {
+                    let px_i = px as i32;
                     // Equation 8-122
-                    let value = (a + b * (x - 7) + c * (y - 7) + 16) >> 5;
-                    *pixel = value.clamp(0, 255) as u8;
+                    let value = (a + b * (px_i - 7) + c * (py_i - 7) + 16) >> 5;
+                    data[row_base + px] = value.clamp(0, 255) as u8;
                 }
             }
         }
     }
 
+    // Add residuals — each 4x4 block at its known offset within the MB.
     for (blk_idx, blk) in residuals.iter().enumerate() {
-        let mut blk_loc = get_4x4luma_block_location(blk_idx as u8);
-        blk_loc.x += loc.x;
-        blk_loc.y += loc.y;
-
-        let mut plane_slice = target.mut_slice(point_to_plane_offset(blk_loc));
-        for (y, row) in plane_slice.rows_iter_mut().take(4).enumerate() {
-            for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                *pixel = (*pixel as i32 + blk.samples[y][x]).clamp(0, 255) as u8;
+        let blk_loc = get_4x4luma_block_location(blk_idx as u8);
+        let blk_base =
+            mb_origin + (blk_loc.y as usize) * stride + (blk_loc.x as usize);
+        for ry in 0..4 {
+            let row_base = blk_base + ry * stride;
+            for rx in 0..4 {
+                let v = data[row_base + rx] as i32 + blk.samples[ry][rx];
+                data[row_base + rx] = v.clamp(0, 255) as u8;
             }
         }
     }
@@ -800,33 +811,33 @@ pub fn render_chroma_intra_prediction(
     let loc = Point { x: loc.x >> chroma_shift.width, y: loc.y >> chroma_shift.width };
     let mb_width = MB_WIDTH >> chroma_shift.width;
     let mb_height = MB_HEIGHT >> chroma_shift.height;
-    let offset = point_to_plane_offset(loc);
 
-    #[inline]
-    fn sum(slice: &[u8]) -> u32 {
-        slice.iter().map(|v| *v as u32).sum::<u32>()
-    }
+    // Hoist plane-write state.
+    let stride = target.cfg.stride;
+    let mb_x = loc.x as usize;
+    let mb_y = loc.y as usize;
+    let mb_origin = mb_y * stride + mb_x;
+    let data = target.data_origin_mut();
 
     match mode {
         Intra_Chroma_Pred_Mode::Vertical => {
             // Section 8.3.4.3 Specification of Intra_Chroma_Vertical prediction mode
             // Equation 8-143
-            let x = loc.x as usize;
-            let y = loc.y as usize;
-            let mut src_row = [0; 16];
-            src_row[0..mb_width].copy_from_slice(&target.row(y as isize - 1)[x..(x + mb_width)]);
-            let mut target_slice = target.mut_slice(offset);
-            for row in target_slice.rows_iter_mut().take(mb_height) {
-                row[0..mb_width].copy_from_slice(&src_row[0..mb_width]);
+            let top_base = mb_origin - stride;
+            let mut src_row = [0u8; 16];
+            src_row[0..mb_width].copy_from_slice(&data[top_base..top_base + mb_width]);
+            for y in 0..mb_height {
+                let row_base = mb_origin + y * stride;
+                data[row_base..row_base + mb_width].copy_from_slice(&src_row[0..mb_width]);
             }
         }
         Intra_Chroma_Pred_Mode::Horizontal => {
             // Section 8.3.4.2 Specification of Intra_Chroma_Horizontal prediction mode
             // Equation 8-142
-            let mut target_slice = target.mut_slice(PlaneOffset { x: offset.x - 1, ..offset });
-            for row in target_slice.rows_iter_mut().take(mb_height) {
-                let src = row[0];
-                row[1..=mb_width].fill(src);
+            for y in 0..mb_height {
+                let row_base = mb_origin + y * stride;
+                let src = data[row_base - 1];
+                data[row_base..row_base + mb_width].fill(src);
             }
         }
         Intra_Chroma_Pred_Mode::DC => {
@@ -836,22 +847,22 @@ pub fn render_chroma_intra_prediction(
             let mut top_left = None;
             let mut top_right = None;
             if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
-                let target_slice = target.slice(PlaneOffset { y: offset.y - 1, ..offset });
-                top_left = Some(sum(&target_slice[0][0..4]));
-                top_right = Some(sum(&target_slice[0][4..8]));
+                let top_base = mb_origin - stride;
+                top_left = Some(data[top_base..top_base + 4].iter().map(|v| *v as u32).sum::<u32>());
+                top_right =
+                    Some(data[top_base + 4..top_base + 8].iter().map(|v| *v as u32).sum::<u32>());
             }
 
             // Calculate the sum of all the values at the left of the current block
             let mut left_top = None;
             let mut left_bottom = None;
             if slice.has_mb_neighbor(mb_addr, MbNeighborName::A) {
-                let target_slice = target.slice(PlaneOffset { x: offset.x - 1, ..offset });
                 let mut left_column = [0u8; 8];
-                for (idx, row) in target_slice.rows_iter().take(8).enumerate() {
-                    left_column[idx] = row[0];
+                for i in 0..8 {
+                    left_column[i] = data[mb_origin + i * stride - 1];
                 }
-                left_top = Some(sum(&left_column[0..4]));
-                left_bottom = Some(sum(&left_column[4..8]));
+                left_top = Some(left_column[0..4].iter().map(|v| *v as u32).sum::<u32>());
+                left_bottom = Some(left_column[4..8].iter().map(|v| *v as u32).sum::<u32>());
             }
 
             for blk_idx in 0..4 {
@@ -903,33 +914,35 @@ pub fn render_chroma_intra_prediction(
                     }
                     _ => unreachable!(),
                 };
+                let result = result as u8;
 
-                let mut blk_loc = get_4x4chroma_block_location(blk_idx);
-                blk_loc.x += loc.x;
-                blk_loc.y += loc.y;
-                let mut target_slice = target.mut_slice(point_to_plane_offset(blk_loc));
-                for row in target_slice.rows_iter_mut().take(4) {
-                    row[0..4].fill(result as u8);
+                let blk_loc = get_4x4chroma_block_location(blk_idx);
+                let blk_base = mb_origin + (blk_loc.y as usize) * stride + (blk_loc.x as usize);
+                for ry in 0..4 {
+                    let row_base = blk_base + ry * stride;
+                    data[row_base..row_base + 4].fill(result);
                 }
             }
         }
         Intra_Chroma_Pred_Mode::Plane => {
             // Section 8.3.4.4 Specification of Intra_Chroma_Plane prediction mode
             // yCF = 0 and xCF = 0
-            let target_slice = target.slice(PlaneOffset { x: offset.x - 1, y: offset.y - 1 });
-            let mut h = 0;
+            // Read 9 top samples (corner + 8 above) and 9 left samples
+            // (corner + 8 to the left).
+            let top_base = mb_origin - stride - 1;
             let mut top_row = [0u8; 9];
-            top_row.copy_from_slice(&target_slice[0][0..9]);
+            top_row.copy_from_slice(&data[top_base..top_base + 9]);
+            let mut h = 0isize;
             // Equation 8-148: H
             for x in 0..4usize {
                 h += (x as isize + 1) * (top_row[4 + 1 + x] as isize - top_row[2 + 1 - x] as isize);
             }
 
-            let mut v = 0;
             let mut left_column = [0u8; 9];
-            for (idx, row) in target_slice.rows_iter().take(9).enumerate() {
-                left_column[idx] = row[0];
+            for i in 0..9 {
+                left_column[i] = data[(mb_origin - stride - 1) + i * stride];
             }
+            let mut v = 0isize;
             // Equation 8-149: V
             for y in 0..4usize {
                 v += (y as isize + 1)
@@ -943,26 +956,27 @@ pub fn render_chroma_intra_prediction(
             // Equation 8-147: c
             let c = (34 * v + 32) >> 6;
 
-            let mut target_slice = target.mut_slice(offset);
-            for (y, row) in target_slice.rows_iter_mut().take(mb_height).enumerate() {
-                for (x, pixel) in row.iter_mut().take(mb_width).enumerate() {
-                    let x = x as isize;
-                    let y = y as isize;
+            for py in 0..mb_height {
+                let row_base = mb_origin + py * stride;
+                let py_i = py as isize;
+                for px in 0..mb_width {
+                    let px_i = px as isize;
                     // Equation 8-144
-                    *pixel = ((a + b * (x - 3) + c * (y - 3) + 16) >> 5).clamp(0, 255) as u8;
+                    let value = (a + b * (px_i - 3) + c * (py_i - 3) + 16) >> 5;
+                    data[row_base + px] = value.clamp(0, 255) as u8;
                 }
             }
         }
     }
 
     for (blk_idx, residual) in residuals.iter().enumerate() {
-        let mut blk_loc = get_4x4chroma_block_location(blk_idx as u8);
-        blk_loc.x += loc.x;
-        blk_loc.y += loc.y;
-        let mut target_slice = target.mut_slice(point_to_plane_offset(blk_loc));
-        for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-            for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;
+        let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
+        let blk_base = mb_origin + (blk_loc.y as usize) * stride + (blk_loc.x as usize);
+        for ry in 0..4 {
+            let row_base = blk_base + ry * stride;
+            for rx in 0..4 {
+                let v = data[row_base + rx] as i32 + residual.samples[ry][rx];
+                data[row_base + rx] = v.clamp(0, 255) as u8;
             }
         }
     }

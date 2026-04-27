@@ -295,7 +295,7 @@ mod tests {
 
         let mut frames_decoded = 0;
 
-        let mut check_frame = |frame: hibernia::h264::decoder::VideoFrame| {
+        let mut check_frame = |frame: &hibernia::h264::decoder::VideoFrame| {
             frames_decoded += 1;
             let y_plane = &frame.planes[0];
             let u_plane = &frame.planes[1];
@@ -328,13 +328,13 @@ mod tests {
             let nal_data = nal_result.unwrap();
             decoder.decode(&nal_data).unwrap();
             while let Some(pic) = decoder.retrieve_picture() {
-                check_frame(pic.frame);
+                check_frame(&pic.frame);
             }
         }
 
         decoder.flush().unwrap();
         while let Some(pic) = decoder.retrieve_picture() {
-            check_frame(pic.frame);
+            check_frame(&pic.frame);
         }
 
         assert_eq!(frames_decoded, 1);

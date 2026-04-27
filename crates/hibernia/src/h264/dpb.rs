@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::decoder::{Picture, VideoFrame};
 use super::slice::{MemoryManagementControlOperation, SliceHeader};
 use super::sps::SequenceParameterSet;
@@ -151,9 +153,11 @@ impl DecodedPictureBuffer {
             // Non-reference: remove from DPB (frees space)
             Some(self.pictures.remove(idx).picture)
         } else {
-            // Reference: clone frame, mark not-needed-for-output (doesn't free space)
+            // Reference: share frame via `Arc`, mark not-needed-for-output
+            // (doesn't free DPB slot). Both the output copy and the DPB-resident
+            // copy are read-only from this point on, so sharing is sound.
             let pic = Picture {
-                frame: self.pictures[idx].picture.frame.clone(),
+                frame: Arc::clone(&self.pictures[idx].picture.frame),
                 frame_num: self.pictures[idx].picture.frame_num,
                 pic_order_cnt: self.pictures[idx].picture.pic_order_cnt,
                 motion_field: None,
@@ -454,7 +458,7 @@ mod tests {
 
     fn create_dummy_picture(frame_num: u16, pic_order_cnt: i32) -> Picture {
         Picture {
-            frame: VideoFrame::new_with_padding(16, 16, ChromaSampling::Cs420, 0),
+            frame: Arc::new(VideoFrame::new_with_padding(16, 16, ChromaSampling::Cs420, 0)),
             frame_num,
             pic_order_cnt,
             motion_field: None,

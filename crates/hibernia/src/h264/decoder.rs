@@ -38,7 +38,11 @@ pub type RefPicList<'a> = Vec<&'a DpbPicture>;
 
 #[derive(Clone, Debug)]
 pub struct Picture {
-    pub frame: VideoFrame,
+    /// Decoded sample data. Wrapped in `Arc` so that bumping a reference
+    /// picture for output (`DPB::bump_one`) is a refcount bump rather than
+    /// a multi-MB memcpy. Mutated only during decode of the current picture
+    /// (before any clone exists), via `Arc::get_mut`.
+    pub frame: Arc<VideoFrame>,
     pub frame_num: u16,
     pub pic_order_cnt: i32,
     /// Per-MB motion field, stored after decoding for use in temporal direct
@@ -511,12 +515,12 @@ impl Decoder {
         let sps = &slice.sps;
         let header = &slice.header;
 
-        let frame = VideoFrame::new_with_padding(
+        let frame = Arc::new(VideoFrame::new_with_padding(
             sps.pic_width(),
             sps.pic_height(),
             v_frame::pixel::ChromaSampling::Cs420,
             16,
-        );
+        ));
 
         let disposition = if nal.nal_unit_type == nal::NalUnitType::IDRSlice {
             ReferenceDisposition::Idr
@@ -724,7 +728,11 @@ impl Decoder {
             pic_width_in_mbs,
             pic_height_in_mbs,
         };
-        deblocking::filter_picture(&deblock_input, &mut current.dpb_pic.picture.frame);
+        deblocking::filter_picture(
+            &deblock_input,
+            Arc::get_mut(&mut current.dpb_pic.picture.frame)
+                .expect("frame uniquely owned during deblocking"),
+        );
 
         // Attach motion field for use as a colocated picture in future B
         // slices. POCs were captured per-slice in `decode_slice_into_current`
@@ -811,7 +819,8 @@ impl Decoder {
         slice: &mut Slice,
         current: &mut CurrentPicture,
     ) -> Result<(), DecodingError> {
-        let frame = &mut current.dpb_pic.picture.frame;
+        let frame = Arc::get_mut(&mut current.dpb_pic.picture.frame)
+            .expect("frame uniquely owned during decode");
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
         let qp_bd_offset_c = 6 * slice.sps.bit_depth_chroma_minus8 as i32;
         let mut qp = slice.pps.pic_init_qp_minus26 + 26 + slice.header.slice_qp_delta;

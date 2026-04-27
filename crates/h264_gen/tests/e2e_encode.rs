@@ -120,7 +120,7 @@ fn test_generate_and_decode_video() {
 
     let mut frames_decoded = 0;
 
-    let check_frame = |frame: hibernia::h264::decoder::VideoFrame,
+    let check_frame = |frame: &hibernia::h264::decoder::VideoFrame,
                        frames_decoded: usize,
                        is_flush: bool| {
         let msg = if is_flush {
@@ -184,14 +184,14 @@ fn test_generate_and_decode_video() {
 
         while let Some(pic) = decoder.retrieve_picture() {
             frames_decoded += 1;
-            check_frame(pic.frame, frames_decoded, false);
+            check_frame(&pic.frame, frames_decoded, false);
         }
     }
 
     decoder.flush().unwrap();
     while let Some(pic) = decoder.retrieve_picture() {
         frames_decoded += 1;
-        check_frame(pic.frame, frames_decoded, true);
+        check_frame(&pic.frame, frames_decoded, true);
     }
 
     assert_eq!(frames_decoded, 5);

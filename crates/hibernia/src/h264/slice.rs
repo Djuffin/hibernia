@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::{default, fmt, result};
 
 use num_traits::FromPrimitive;
 
-use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbMotion, MbNeighborName};
+use super::decoder::MotionFieldStorage;
+use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborName};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
 use super::{tables, ColorPlane, Point};
@@ -11,17 +13,9 @@ use super::{tables, ColorPlane, Point};
 /// Information about the colocated picture (refPicList1[0]) needed for temporal direct prediction.
 #[derive(Clone, Debug)]
 pub struct ColPicInfo {
-    /// Motion vectors and ref indices for each MB in the colocated picture,
-    /// indexed by mb_addr.
-    pub mb_motion: Vec<MbMotion>,
-    /// Whether each MB in the colocated picture was intra-coded, indexed by mb_addr.
-    pub mb_is_intra: Vec<bool>,
-    /// Slice index that decoded each MB of the colocated picture, indexed by
-    /// mb_addr. Used to select the correct `slice_ref_pocs` entry per MB.
-    pub mb_slice_id: Vec<u16>,
-    /// `(refPicList0_pocs, refPicList1_pocs)` for each slice of the colocated
-    /// picture, indexed by slice id.
-    pub slice_ref_pocs: Vec<(Vec<i32>, Vec<i32>)>,
+    /// Per-MB motion field of the colocated picture, shared with the DPB
+    /// picture via `Arc`. Read-only after `finalize_picture`.
+    pub motion: Arc<MotionFieldStorage>,
     /// POC of the colocated picture itself.
     pub pic_poc: i32,
     /// Whether RefPicList1[0] is marked as short-term reference (needed for colZeroFlag in spatial direct).

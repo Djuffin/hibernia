@@ -1709,11 +1709,11 @@ fn get_col_zero_flag(
     }
 
     let col_mb_addr = mb_addr as usize;
-    if col_mb_addr >= col_pic.mb_is_intra.len() || col_pic.mb_is_intra[col_mb_addr] {
+    if col_mb_addr >= col_pic.motion.mb_is_intra.len() || col_pic.motion.mb_is_intra.get(col_mb_addr) {
         return false;
     }
 
-    let col_motion = &col_pic.mb_motion[col_mb_addr];
+    let col_motion = &col_pic.motion.mb_motion[col_mb_addr];
     let (cgx, cgy) = if direct_8x8_inference {
         let mb_part_idx = (grid_x / 2) + (grid_y / 2) * 2;
         col_block_for_direct_8x8(mb_part_idx)
@@ -1970,7 +1970,7 @@ fn derive_temporal_direct_partition(
     let col_mb_addr = mb_addr as usize;
 
     // Check if colocated MB exists and is not intra
-    if col_mb_addr >= col_pic.mb_is_intra.len() || col_pic.mb_is_intra[col_mb_addr] {
+    if col_mb_addr >= col_pic.motion.mb_is_intra.len() || col_pic.motion.mb_is_intra.get(col_mb_addr) {
         // Colocated MB is intra: use zero motion with BiPred
         return PartitionInfo {
             pred_mode: MbPredictionMode::BiPred,
@@ -1983,14 +1983,14 @@ fn derive_temporal_direct_partition(
         };
     }
 
-    let col_motion = &col_pic.mb_motion[col_mb_addr];
+    let col_motion = &col_pic.motion.mb_motion[col_mb_addr];
     let col_part = &col_motion.partitions[grid_y][grid_x];
 
     // Each colocated MB's `ref_idx_l0/l1` is interpreted in the context of
     // its own slice's ref pic list. For multi-slice pictures, different MBs
     // of the colocated picture may use different POC tables.
-    let col_slice_id = col_pic.mb_slice_id[col_mb_addr] as usize;
-    let (col_l0_pocs, col_l1_pocs) = &col_pic.slice_ref_pocs[col_slice_id];
+    let col_slice_id = col_pic.motion.mb_slice_id[col_mb_addr] as usize;
+    let (col_l0_pocs, col_l1_pocs) = &col_pic.motion.slice_ref_pocs[col_slice_id];
 
     // Determine mvCol and refIdxCol from the colocated partition
     // Per spec: prefer L0, fallback to L1

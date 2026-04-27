@@ -1,6 +1,7 @@
 use std::cmp::{max, min, Ordering};
 use std::collections::VecDeque;
 use std::io::Read;
+use std::sync::Arc;
 
 use super::slice::{DeblockingFilterIdc, RefPicListModification, Slice, SliceHeader, SliceType};
 use super::tables::mb_type_to_16x16_pred_mode;
@@ -40,19 +41,55 @@ pub struct Picture {
     pub frame: VideoFrame,
     pub frame_num: u16,
     pub pic_order_cnt: i32,
-    /// Per-MB motion field, stored after decoding for use in temporal direct prediction.
-    /// Indexed by mb_addr. Only populated for reference pictures.
-    pub motion_field: Option<MotionFieldStorage>,
+    /// Per-MB motion field, stored after decoding for use in temporal direct
+    /// prediction. Indexed by mb_addr. Only populated for reference pictures.
+    /// Wrapped in `Arc` because the storage is read-only after attachment and
+    /// is shared with each B-slice that picks this picture as colocated.
+    pub motion_field: Option<Arc<MotionFieldStorage>>,
     pub crop: sps::CropDimensions,
+}
+
+/// Compact bit-packed boolean vector.
+#[derive(Clone, Debug, Default)]
+pub struct BitVec {
+    words: Vec<u64>,
+    len: usize,
+}
+
+impl BitVec {
+    pub fn zeros(len: usize) -> Self {
+        Self { words: vec![0u64; len.div_ceil(64)], len }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn get(&self, i: usize) -> bool {
+        self.words[i >> 6] & (1u64 << (i & 63)) != 0
+    }
+
+    pub fn set(&mut self, i: usize, v: bool) {
+        let mask = 1u64 << (i & 63);
+        if v {
+            self.words[i >> 6] |= mask;
+        } else {
+            self.words[i >> 6] &= !mask;
+        }
+    }
 }
 
 /// Stores motion information from a decoded picture, needed for temporal direct prediction in B slices.
 #[derive(Clone, Debug)]
 pub struct MotionFieldStorage {
-    /// Motion vectors and ref indices for each MB, indexed by mb_addr.
+    /// Per-MB motion vectors and reference indices, indexed by mb_addr.
     pub mb_motion: Vec<macroblock::MbMotion>,
-    /// Whether each MB was intra-coded, indexed by mb_addr.
-    pub mb_is_intra: Vec<bool>,
+    /// Per-MB intra flag, indexed by mb_addr.
+    pub mb_is_intra: BitVec,
     /// Slice index that decoded each MB, indexed by mb_addr. Used by
     /// temporal direct prediction to look up the right ref-list POCs in
     /// `slice_ref_pocs` — each MB's `ref_idx_l0/l1` is interpreted in the
@@ -159,9 +196,12 @@ pub struct CurrentPicture {
     // (filter except across slice boundaries). `u16::MAX` means undecoded.
     pub mb_slice_id: Vec<u16>,
     // Per-MB motion info accumulated for `MotionFieldStorage` at finalize.
+    // Empty for non-reference pictures: they can never be a colocated
+    // reference, so the population work is skipped entirely.
     pub mb_motion: Vec<macroblock::MbMotion>,
-    // Per-MB intra flag accumulated for `MotionFieldStorage` at finalize.
-    pub mb_is_intra: Vec<bool>,
+    // Per-MB intra flag, packed 1 bit per MB. Empty for non-reference
+    // pictures (same reason as `mb_motion`).
+    pub mb_is_intra: BitVec,
 
     // Per-slice metadata, indexed by slice_id (0..slices_seen).
     // Deblocking parameters captured at slice-decode time, consumed by the
@@ -537,9 +577,9 @@ impl Decoder {
                 vec![macroblock::MbMotion::default(); pic_size]
             },
             mb_is_intra: if disposition == ReferenceDisposition::NonReference {
-                Vec::new()
+                BitVec::default()
             } else {
-                vec![false; pic_size]
+                BitVec::zeros(pic_size)
             },
             slice_deblock: Vec::new(),
             slice_ref_pocs: Vec::new(),
@@ -685,7 +725,7 @@ impl Decoder {
         // slices. POCs were captured per-slice in `decode_slice_into_current`
         // before any DPB mutation, so the lookups they enable remain valid
         // after MMCO runs below.
-        current.dpb_pic.picture.motion_field = self.build_motion_field(&mut current);
+        current.dpb_pic.picture.motion_field = self.build_motion_field(&mut current).map(Arc::new);
 
         // Section C.2.3: Mark references + remove dead pictures (before storage).
         // Per Section 7.4.3, `dec_ref_pic_marking` (and the rest of the
@@ -1018,8 +1058,9 @@ impl Decoder {
             let mb_addr = first_mb_addr + i;
             if needs_motion_field {
                 current.mb_motion[mb_addr] = mb.get_motion_info();
-                current.mb_is_intra[mb_addr] =
-                    matches!(&mb, Macroblock::I(_) | Macroblock::PCM(_));
+                current
+                    .mb_is_intra
+                    .set(mb_addr, matches!(&mb, Macroblock::I(_) | Macroblock::PCM(_)));
             }
             current.mb_slice_id[mb_addr] = slices_seen;
             current.macroblocks[mb_addr] = Some(mb);
@@ -1355,10 +1396,7 @@ impl Decoder {
         if let Some(col_pic) = self.dpb.pictures.get(col_dpb_idx) {
             if let Some(ref mf) = col_pic.picture.motion_field {
                 slice.col_pic = Some(slice::ColPicInfo {
-                    mb_motion: mf.mb_motion.clone(),
-                    mb_is_intra: mf.mb_is_intra.clone(),
-                    mb_slice_id: mf.mb_slice_id.clone(),
-                    slice_ref_pocs: mf.slice_ref_pocs.clone(),
+                    motion: Arc::clone(mf),
                     pic_poc: col_pic.picture.pic_order_cnt,
                     ref_l1_0_is_short_term: col_pic.marking.is_short_term(),
                 });

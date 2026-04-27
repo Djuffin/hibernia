@@ -1028,7 +1028,9 @@ impl Decoder {
         Ok(())
     }
 
-    // Section 8.2.4.1 Decoding process for picture numbers
+    // Section 8.2.4 Decoding process for reference picture lists construction (List 0):
+    // initialize per 8.2.4.2 then apply ref_pic_list_modification reordering per 8.2.4.3.
+    // Picture numbers (8.2.4.1) are computed inline in the initializers.
     fn construct_ref_pic_list0(
         &self,
         slice: &mut Slice,

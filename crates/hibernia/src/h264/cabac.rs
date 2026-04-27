@@ -1136,7 +1136,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let mapped_val =
             self.parse_unary_bin(SyntaxElement::MbQpDelta, CtxIncParams::Standard(ctx_idx_inc))?;
 
-        // Map back to signed value (Table 9-3)
+        // Reverse the non-negative remap from clause 9.3.2.7.
         let delta = decode_signed_mapping(mapped_val);
 
         trace!("parse_mb_qp_delta_cabac delta={}", delta);
@@ -3402,7 +3402,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 }
 
-/// Map CABAC unsigned value back to signed value (Table 9-3 / clause 9.1.1)
+/// Inverse of the signed→non-negative remap in Table 9-3, used here for the
+/// CABAC mb_qp_delta path. Clause 9.3.2.7 specifies the binarization of
+/// mb_qp_delta as U(v) of the value mapped via Table 9-3; this function
+/// reverses that mapping after the unary bin string is decoded.
 fn decode_signed_mapping(val: u32) -> i32 {
     let val = val as i32;
     if val == 0 {

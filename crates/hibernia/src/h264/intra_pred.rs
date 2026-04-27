@@ -71,7 +71,9 @@ impl Surroundings4x4 {
     }
 }
 
-// Section 8.3.1.1 Derivation process for Intra4x4PredMode
+// Section 8.3.1.2 Intra_4x4 sample prediction. Mode selection per Intra4x4PredMode
+// is the parser's job (8.3.1.1); this routine consumes the resolved mode and
+// produces the predicted luma samples.
 pub fn render_luma_4x4_intra_prediction(
     slice: &Slice,
     mb_addr: MbAddr,
@@ -861,8 +863,11 @@ pub fn render_chroma_intra_prediction(
             }
 
             for blk_idx in 0..4 {
-                // Equations 8-132 to 8-141 (derivation of prediction values based on availability)
-                const DEFAULT_VALUE: u32 = 1 << 7; // = 1 << ( BitDepthC − 1 )
+                // Equations 8-132 to 8-141 (derivation of prediction values based on availability).
+                // The "no neighbor available" branch substitutes 1 << (BitDepthC − 1)
+                // per clause 8.3.4.1; the literal 7 is BitDepthC − 1 with BitDepthC = 8,
+                // matching the u8 chroma plane the renderer writes into.
+                const DEFAULT_VALUE: u32 = 1 << 7;
                 let result = match blk_idx {
                     0 => {
                         // If ( xO, yO ) is equal to ( 0, 0 ) or xO and yO are greater than 0

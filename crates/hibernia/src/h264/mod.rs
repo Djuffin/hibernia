@@ -54,6 +54,8 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// Whether the SPS for this profile contains the chroma/bit-depth/scaling
+    /// extension block (chroma_format_idc, bit_depth_luma_minus8, ...).
     pub fn has_chroma_info(&self) -> bool {
         matches!(
             self,
@@ -63,6 +65,11 @@ impl Profile {
                 | Profile::High444
                 | Profile::ScalableBase
                 | Profile::ScalableHigh
+                | Profile::MultiviewHigh
+                | Profile::StereoHigh
+                | Profile::MFCDepthHigh
+                | Profile::MultiviewDepthHigh
+                | Profile::EnhancedMultiviewDepthHigh
         )
     }
 }

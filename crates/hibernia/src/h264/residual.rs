@@ -219,12 +219,12 @@ impl Residual {
                     dc_scale_4x4_block(&mut dcs_block, weight_scale_4x4[0], qp);
 
                     for blk_idx in 0..16 {
-                        let mut idct_coefficients = [0i32; 16];
+                        let mut coeffs = [0i32; 16];
                         let (dc_row, dc_column) = unscan_4x4(blk_idx);
-                        idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
-                        idct_coefficients[1..].copy_from_slice(&ac[blk_idx]);
-                        level_scale_4x4_block(&mut idct_coefficients, weight_scale_4x4, true, qp);
-                        let mut block = unzip_block_4x4(&idct_coefficients);
+                        coeffs[0] = dcs_block.samples[dc_row][dc_column];
+                        coeffs[1..].copy_from_slice(&ac[blk_idx]);
+                        level_scale_4x4_block(&mut coeffs, weight_scale_4x4, true, qp);
+                        let mut block = unzip_block_4x4(&coeffs);
                         transform_4x4(&mut block);
                         result.push(block);
                     }
@@ -255,10 +255,10 @@ impl Residual {
                 }
                 LumaResidual::Block4x4 { levels, .. } => {
                     for blk_idx in 0..16 {
-                        let mut idct_coefficients = [0i32; 16];
-                        idct_coefficients.copy_from_slice(&levels[blk_idx]);
-                        level_scale_4x4_block(&mut idct_coefficients, weight_scale_4x4, false, qp);
-                        let mut block = unzip_block_4x4(&idct_coefficients);
+                        let mut coeffs = [0i32; 16];
+                        coeffs.copy_from_slice(&levels[blk_idx]);
+                        level_scale_4x4_block(&mut coeffs, weight_scale_4x4, false, qp);
+                        let mut block = unzip_block_4x4(&coeffs);
                         transform_4x4(&mut block);
                         result.push(block);
                     }
@@ -286,12 +286,12 @@ impl Residual {
                     ColorPlane::Cr => &self.chroma_cr_ac_level[blk_idx],
                     _ => unreachable!(),
                 };
-                let mut idct_coefficients = [0i32; 16];
+                let mut coeffs = [0i32; 16];
                 let (dc_row, dc_column) = unscan_2x2(blk_idx);
-                idct_coefficients[0] = dcs_block.samples[dc_row][dc_column];
-                idct_coefficients[1..].copy_from_slice(acs);
-                level_scale_4x4_block(&mut idct_coefficients, weight_scale_4x4, true, qp);
-                let mut block = unzip_block_4x4(&idct_coefficients);
+                coeffs[0] = dcs_block.samples[dc_row][dc_column];
+                coeffs[1..].copy_from_slice(acs);
+                level_scale_4x4_block(&mut coeffs, weight_scale_4x4, true, qp);
+                let mut block = unzip_block_4x4(&coeffs);
                 transform_4x4(&mut block);
                 result.push(block);
             }
@@ -478,7 +478,8 @@ pub fn dc_scale_4x4_block(block: &mut Block4x4, weight_scale_dc: u8, qp: u8) {
     }
 }
 
-// Section 8.5.11.2 Scaling and transformation process for chroma DC transform coefficients.
+// Section 8.5.11.2 Scaling process for chroma DC transform coefficients
+// (the 2x2 transform itself lives in 8.5.11.1 / `transform_chroma_dc`).
 // `weight_scale_dc` is position 0 of the active (Intra or Inter) chroma 4x4 scaling list.
 #[inline(always)]
 pub fn dc_scale_2x2_block(block: &mut Block2x2, weight_scale_dc: u8, qp: u8) {
@@ -630,8 +631,9 @@ pub fn transform_4x4(block: &mut Block4x4) {
     d[3] = h3_final.to_array();
 }
 
-// Table 8-14 — 8x8 inverse zig-zag scan. Maps idx in 0..64 to (row, col).
-// Used for frame macroblocks (non-MBAFF); field scan is a separate table.
+// Table 8-14 — 8x8 inverse zig-zag (frame) scan. Maps idx in 0..64 to (row, col).
+// Field scan (for MBAFF / field-coded pictures) is not implemented here; the
+// CABAC parser rejects field/MBAFF before it gets this far.
 #[inline]
 pub const fn un_zig_zag_8x8(idx: usize) -> (/* row */ usize, /* col */ usize) {
     const TABLE: [(usize, usize); 64] = [

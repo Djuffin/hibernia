@@ -645,6 +645,23 @@ impl Decoder {
             self.setup_colocated_pic_info(slice, pic_order_cnt);
         }
 
+        // Resolve the constructed ref-list indices to POCs while DPB indices
+        // are still valid (MMCO at finalize may invalidate them). L0 lives on
+        // the slice because `map_col_to_list0` consults it during the parse
+        // below; L1 has no in-parse consumer, so it goes straight into a
+        // local that ends up in `current.slice_ref_pocs` for later use by
+        // deblocking and future colocated-picture lookups.
+        slice.ref_pic_list0_pocs = slice
+            .ref_pic_list0
+            .iter()
+            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
+            .collect();
+        let l1_pocs: Vec<i32> = slice
+            .ref_pic_list1
+            .iter()
+            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
+            .collect();
+
         parser::parse_slice_data(input, slice, &mut self.residual_pool)
             .map_err(DecodingError::MisformedData)?;
         let pic_size = current.macroblocks.len();
@@ -659,26 +676,14 @@ impl Decoder {
 
         self.process_slice_into_picture(slice, current)?;
 
-        // Capture per-slice metadata and POC tables for finalize-time
-        // consumers (picture-level deblocking and motion field). Resolving
-        // POCs here while DPB indices are still valid is critical: MMCO at
-        // finalize time may invalidate them.
-        let l0_pocs: Vec<i32> = slice
-            .ref_pic_list0
-            .iter()
-            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
-            .collect();
-        let l1_pocs: Vec<i32> = slice
-            .ref_pic_list1
-            .iter()
-            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
-            .collect();
         current.slice_deblock.push(SliceDeblockParams {
             idc: slice.header.deblocking_filter_idc,
             alpha_c0_offset_div2: slice.header.slice_alpha_c0_offset_div2,
             beta_offset_div2: slice.header.slice_beta_offset_div2,
         });
-        current.slice_ref_pocs.push((l0_pocs, l1_pocs));
+        current
+            .slice_ref_pocs
+            .push((std::mem::take(&mut slice.ref_pic_list0_pocs), l1_pocs));
         current.slices_seen += 1;
         current.next_mb_addr =
             slice.header.first_mb_in_slice + slice.get_macroblock_count() as MbAddr;
@@ -1374,20 +1379,6 @@ impl Decoder {
     /// Set up colocated picture info on the slice for temporal direct prediction.
     fn setup_colocated_pic_info(&self, slice: &mut Slice, current_poc: i32) {
         slice.current_pic_poc = current_poc;
-
-        // Set ref_pic_list0 POCs
-        slice.ref_pic_list0_pocs = slice
-            .ref_pic_list0
-            .iter()
-            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
-            .collect();
-
-        // Set ref_pic_list1 POCs
-        slice.ref_pic_list1_pocs = slice
-            .ref_pic_list1
-            .iter()
-            .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
-            .collect();
 
         if slice.ref_pic_list1.is_empty() {
             return;

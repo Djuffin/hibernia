@@ -354,6 +354,7 @@ pub struct Decoder {
     // finalized.
     current_picture: Option<CurrentPicture>,
     residual_pool: super::residual::ResidualPool,
+    mb_pool: macroblock::MacroblockPool,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -383,6 +384,7 @@ impl Decoder {
             poc_state: PocState::new(),
             current_picture: None,
             residual_pool: super::residual::ResidualPool::default(),
+            mb_pool: macroblock::MacroblockPool::default(),
         }
     }
 
@@ -569,7 +571,7 @@ impl Decoder {
             first_slice_header: header.clone(),
             sps: sps.clone(),
             pps: slice.pps.clone(),
-            macroblocks: vec![None; pic_size],
+            macroblocks: self.mb_pool.acquire(pic_size),
             mb_slice_id: vec![u16::MAX; pic_size],
             // Motion-field arrays are only consulted when this picture is later
             // used as a colocated reference for B-slice temporal direct
@@ -758,9 +760,10 @@ impl Decoder {
         let pictures = self.dpb.store_picture(current.dpb_pic);
         self.output_pictures.extend(pictures);
 
-        // Reclaim per-MB Residual boxes before macroblocks are dropped. The DPB
-        // only keeps the decoded frame and motion field; the macroblock array
-        // dies with `current` at end of scope.
+        // Reclaim per-MB Residual boxes and the macroblock array allocation
+        // before `current` drops. The DPB only keeps the decoded frame and
+        // motion field; the array itself isn't retained, so its capacity
+        // returns to the pool for the next picture.
         for slot in current.macroblocks.iter_mut() {
             if let Some(mb) = slot {
                 let residual = match mb {
@@ -774,6 +777,7 @@ impl Decoder {
                 }
             }
         }
+        self.mb_pool.release(std::mem::take(&mut current.macroblocks));
 
         self.poc_state.update_mmco5_state(
             has_mmco5,

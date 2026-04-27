@@ -966,6 +966,36 @@ impl Macroblock {
     }
 }
 
+/// Recycles the per-picture macroblock array. Single-slot since the decoder
+/// has at most one in-flight `CurrentPicture`.
+#[derive(Default)]
+pub struct MacroblockPool {
+    storage: Option<Vec<Option<Macroblock>>>,
+}
+
+impl MacroblockPool {
+    /// Returns a Vec of `pic_size` `None` slots, reusing pooled storage if
+    /// available. Capacity grows monotonically across pictures of the same
+    /// or larger size; smaller pictures don't shrink it.
+    pub fn acquire(&mut self, pic_size: usize) -> Vec<Option<Macroblock>> {
+        match self.storage.take() {
+            Some(mut v) => {
+                v.resize_with(pic_size, || None);
+                v
+            }
+            None => vec![None; pic_size],
+        }
+    }
+
+    /// Returns a Vec to the pool. Caller must reclaim any heap data inside
+    /// the macroblocks (e.g., `Box<Residual>`) before releasing; `release`
+    /// only retains the outer Vec's allocation.
+    pub fn release(&mut self, mut v: Vec<Option<Macroblock>>) {
+        v.clear();
+        self.storage = Some(v);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     pub use super::*;

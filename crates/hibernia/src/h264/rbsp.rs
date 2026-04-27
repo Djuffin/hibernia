@@ -57,7 +57,11 @@ impl<'a> RbspReader<'a> {
 
     // Mapping process for signed Exp-Golomb codes Section 9.1.1
     pub fn se(&mut self) -> ParseResult<i32> {
-        let value = self.ue(32)?;
+        // Bound to ue(31) so that the unsigned value fits in [0, 2^31 - 1].
+        // After mapping, the signed result fits in i32 without overflow:
+        // ue(32) could yield u32::MAX, where ((MAX >> 1) + 1) as i32 silently
+        // produces i32::MIN.
+        let value = self.ue(31)?;
         let result =
             if value & 1 != 0 { ((value >> 1) + 1) as i32 } else { -((value >> 1) as i32) };
         Ok(result)

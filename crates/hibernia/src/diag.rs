@@ -1,4 +1,5 @@
 use log::{LevelFilter, Metadata, Record};
+use std::sync::Once;
 
 struct SimpleLogger;
 
@@ -17,8 +18,11 @@ impl log::Log for SimpleLogger {
 }
 
 static LOGGER: SimpleLogger = SimpleLogger;
+static INIT: Once = Once::new();
 
 pub fn init(trace: bool) {
-    log::set_logger(&LOGGER).unwrap();
+    INIT.call_once(|| {
+        let _ = log::set_logger(&LOGGER);
+    });
     log::set_max_level(if trace { LevelFilter::Trace } else { LevelFilter::Info });
 }

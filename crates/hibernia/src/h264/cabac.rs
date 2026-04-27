@@ -582,13 +582,18 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     ) -> ParseResult<u32> {
         let max_bin_idx_ctx = props.max_bin_idx_ctx;
         let ctx_idx_offset = props.ctx_idx_offset as usize;
-        let c_max = c_max_override.unwrap_or_else(|| {
-            if let BinarizationType::TU { c_max } = props.binarization {
-                c_max
-            } else {
-                panic!("parse_truncated_unary_bin called on non-TU syntax element without override: {:?}", se);
-            }
-        });
+        let c_max = match c_max_override {
+            Some(v) => v,
+            None => match props.binarization {
+                BinarizationType::TU { c_max } => c_max,
+                _ => {
+                    return Err(format!(
+                        "parse_truncated_unary_bin on non-TU syntax element without override: {:?}",
+                        se
+                    ));
+                }
+            },
+        };
 
         let mut bin_idx = 0;
         while bin_idx < c_max {
@@ -622,12 +627,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         ctx: CtxIncParams,
         props: &CabacTableEntry,
     ) -> ParseResult<i32> {
-        let (u_coff, k_val, signed_val_flag) =
-            if let BinarizationType::UEGk { u_coff, k, signed_val_flag } = props.binarization {
-                (u_coff, k, signed_val_flag)
-            } else {
-                panic!("parse_ueg_k called on non-UEGk syntax element: {:?}", se);
-            };
+        let (u_coff, k_val, signed_val_flag) = match props.binarization {
+            BinarizationType::UEGk { u_coff, k, signed_val_flag } => (u_coff, k, signed_val_flag),
+            _ => {
+                return Err(format!("parse_ueg_k called on non-UEGk syntax element: {:?}", se));
+            }
+        };
 
         // Prefix: TU with cMax = uCoff
         let prefix = self.parse_truncated_unary_bin_with(se, Some(u_coff), ctx, props)?;
@@ -1164,7 +1169,11 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // Suffix: Chroma (2 bits max, TU cMax=2)
         let mut cbp_chroma = 0;
         if slice.sps.ChromaArrayType().is_chroma_subsampled() {
-            let ctx_idx_offset_chroma = props.ctx_idx_offset_suffix.unwrap() as usize;
+            let ctx_idx_offset_chroma = props
+                .ctx_idx_offset_suffix
+                .ok_or_else(|| {
+                    "CodedBlockPattern: missing chroma ctx_idx_offset_suffix".to_string()
+                })? as usize;
 
             let accessor = NeighborAccessor::new(slice, mb_addr, curr_mb);
             let ctx_idx_inc_0 = Self::get_ctx_idx_inc_cbp_chroma(&accessor, 0);
@@ -2111,7 +2120,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn parse_mb_type_p(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<CabacMbType> {
         let props = get_syntax_element_properties(SyntaxElement::MbTypeP);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
-        let ctx_idx_offset_suffix = props.ctx_idx_offset_suffix.unwrap() as usize;
+        let ctx_idx_offset_suffix = props
+            .ctx_idx_offset_suffix
+            .ok_or_else(|| "MbTypeP: missing ctx_idx_offset_suffix".to_string())?
+            as usize;
 
         // Prefix part: ctxIdxOffset 14
         // Bin 0
@@ -2155,7 +2167,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     pub fn parse_mb_type_b(&mut self, slice: &Slice, mb_addr: MbAddr) -> ParseResult<CabacMbType> {
         let props = get_syntax_element_properties(SyntaxElement::MbTypeB);
         let ctx_idx_offset = props.ctx_idx_offset as usize;
-        let ctx_idx_offset_suffix = props.ctx_idx_offset_suffix.unwrap() as usize;
+        let ctx_idx_offset_suffix = props
+            .ctx_idx_offset_suffix
+            .ok_or_else(|| "MbTypeB: missing ctx_idx_offset_suffix".to_string())?
+            as usize;
 
         // Context for bin 0: condTermFlagA + condTermFlagB
         // condTermFlagN = 0 if mbAddrN not available, or if mbN is B_Skip or B_Direct_16x16
@@ -2745,7 +2760,9 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 } else {
                     // Intra_16x16: Derived CBP from mb_type (Table 7-11)
                     mb.coded_block_pattern = super::tables::mb_type_to_coded_block_pattern(i_type)
-                        .expect("Intra_16x16 mb_type should have a valid CBP");
+                        .ok_or_else(|| {
+                            format!("Intra_16x16 mb_type {:?} has no valid CBP", i_type)
+                        })?;
                     curr_mb.coded_block_pattern = mb.coded_block_pattern;
                     mb.mb_qp_delta = self.parse_mb_qp_delta_cabac(slice, mb_addr)?;
                 }

@@ -352,7 +352,7 @@ impl Decoder {
         let parse_error_handler = DecodingError::MisformedData;
 
         let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
-        assert!(input.is_aligned());
+        debug_assert!(input.is_aligned());
         trace!("NAL {:?}", nal);
 
         match nal.nal_unit_type {
@@ -382,10 +382,11 @@ impl Decoder {
                 // `self.current_picture.as_mut()` borrow. Take the picture out,
                 // decode into it, then put it back. On decode error the `?`
                 // drops `current` — partial pictures are not retained.
-                let mut current = self
-                    .current_picture
-                    .take()
-                    .expect("set above when starts_new_picture, otherwise carried over");
+                let mut current = self.current_picture.take().ok_or_else(|| {
+                    DecodingError::MisformedData(
+                        "internal: current_picture missing after start".into(),
+                    )
+                })?;
                 self.decode_slice_into_current(&mut current, &mut slice, &mut input)?;
                 self.current_picture = Some(current);
             }
@@ -812,7 +813,9 @@ impl Decoder {
 
                         let chroma_format = slice.sps.ChromaArrayType();
                         if chroma_format == super::ChromaFormat::Monochrome {
-                            break;
+                            return Err(DecodingError::FeatureNotSupported(
+                                "monochrome chroma format is not supported".into(),
+                            ));
                         }
                         let shift = chroma_format.get_chroma_shift();
                         let chroma_loc =

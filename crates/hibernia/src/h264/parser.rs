@@ -436,10 +436,7 @@ fn parse_slice_group(input: &mut BitReader) -> ParseResult<Option<SliceGroup>> {
                 let change_type = match slice_group_map_type {
                     3 => SliceGroupChangeType::BoxOut,
                     4 => SliceGroupChangeType::RasterScan,
-                    5 => SliceGroupChangeType::WipeOut,
-                    _ => {
-                        unreachable!();
-                    }
+                    _ => SliceGroupChangeType::WipeOut,
                 };
                 let slice_group_change_direction_flag: bool;
                 let slice_group_change_rate_minus1: u32;
@@ -892,8 +889,8 @@ pub fn parse_slice_header(
             let bottom_field_flag: bool;
             read_value!(input, bottom_field_flag, f);
             header.bottom_field_flag = Some(bottom_field_flag);
+            return Err("interlaced video (fields) is not supported".into());
         }
-        return Err("interlaced video (fields) is not supported".into());
     }
 
     if idr_pic_flag {

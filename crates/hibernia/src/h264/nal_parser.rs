@@ -150,7 +150,6 @@ mod tests {
 
     #[test]
     fn test_single_nal() {
-        let data = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00];
         let data = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x80];
         let mut parser = NalParser::new(Cursor::new(data));
         let nal = parser.next().unwrap().unwrap();

@@ -814,7 +814,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             return 0;
         }
 
-        // We need to separate Intra_16x16 check from CBP check
+        // Eq 9-7: condition combines `mb_type != Intra_16x16` with `CBP == 0`,
+        // so the two predicates are derived independently below.
         let is_intra_16x16 = match prev_mb {
             super::macroblock::Macroblock::I(m) => {
                 m.mb_type != super::macroblock::IMbType::I_NxN
@@ -1070,8 +1071,8 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     }
 
     fn get_ctx_idx_inc_cbp_chroma(accessor: &NeighborAccessor, bin_idx: u32) -> usize {
-        // Neighbors A and B (macroblock neighbors)
-        // We can use blk_idx 0 and check A and B
+        // CBP-chroma is a per-MB syntax element, so any blk_idx selects the
+        // same A/B macroblock neighbors.
         let blk_idx = 0;
 
         let check_neighbor = |nb: MbNeighborName| -> usize {

@@ -681,10 +681,6 @@ pub fn render_luma_16x16_intra_prediction(
     mode: Intra_16x16_SamplePredMode,
     residuals: &[Block4x4],
 ) {
-    // Hoist plane-write state. The reads (top row, left column, top-left
-    // corner for Plane mode) and writes all happen against the same flat
-    // `data` slice so we never go through Plane::row / mut_slice /
-    // rows_iter_mut, eliminating the per-row range computation.
     let stride = target.cfg.stride;
     let mb_x = loc.x as usize;
     let mb_y = loc.y as usize;
@@ -812,7 +808,6 @@ pub fn render_chroma_intra_prediction(
     let mb_width = MB_WIDTH >> chroma_shift.width;
     let mb_height = MB_HEIGHT >> chroma_shift.height;
 
-    // Hoist plane-write state.
     let stride = target.cfg.stride;
     let mb_x = loc.x as usize;
     let mb_y = loc.y as usize;

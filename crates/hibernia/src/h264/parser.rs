@@ -1221,20 +1221,18 @@ pub fn predict_mv_l0(
 
     // Median prediction (Section 8.4.1.3.1)
 
-    // Step 1: Availability adjustments
-    // C is replaced by D if C is unavailable (8-214)
+    // Eq 8-214: C is replaced by D if C is unavailable.
     let mut mv_c = c.or(d);
     let mut mv_b = b;
     let mv_a = a;
 
-    // If B and C are unavailable and A is available, use A for everything (8-207)
+    // Eq 8-207: if B and C are unavailable and A is available, use A for all three.
     if mv_b.is_none() && mv_c.is_none() && mv_a.is_some() {
         mv_b = mv_a;
         mv_c = mv_a;
     }
 
-    // Helper to extract values for comparison/calculation.
-    // Unavailable neighbors are treated as zero MV and ref_idx = -1 (MAX).
+    // Unavailable neighbors compare as zero MV with ref_idx = -1 (u8::MAX).
     let get_vals = |info: Option<PartitionInfo>| {
         info.unwrap_or(PartitionInfo {
             ref_idx_l0: u8::MAX,
@@ -1248,9 +1246,7 @@ pub fn predict_mv_l0(
     let val_b = get_vals(mv_b);
     let val_c = get_vals(mv_c);
 
-    // Step 2: Reference index matching
-    // If one and only one of the reference indices is equal to the reference index of the current partition,
-    // use that motion vector (8-211).
+    // Eq 8-211: if exactly one neighbor matches the current ref_idx, use its MV.
     let match_a = val_a.ref_idx_l0 == ref_idx_l0;
     let match_b = val_b.ref_idx_l0 == ref_idx_l0;
     let match_c = val_c.ref_idx_l0 == ref_idx_l0;
@@ -1269,7 +1265,7 @@ pub fn predict_mv_l0(
         }
     }
 
-    // Step 3: Median of components (8-212, 8-213)
+    // Eq 8-212, 8-213: per-component median.
     let median = |a: i16, b: i16, c: i16| a + b + c - a.min(b).min(c) - a.max(b).max(c);
 
     MotionVector {
@@ -1607,7 +1603,7 @@ fn derive_spatial_direct(slice: &Slice, mb_addr: MbAddr, _current_motion: &MbMot
     let b = get_neighbor(x, y - 1);
     let c = get_neighbor(x + 16, y - 1).or_else(|| get_neighbor(x - 1, y - 1));
 
-    // Step 4: Derive refIdxL0, refIdxL1 using MinPositive (Eq 8-184 to 8-187)
+    // Eq 8-184 to 8-187: derive refIdxL0, refIdxL1 using MinPositive.
     let mut ref_idx_l0: i16 = -1;
     let mut ref_idx_l1: i16 = -1;
 
@@ -1626,7 +1622,7 @@ fn derive_spatial_direct(slice: &Slice, mb_addr: MbAddr, _current_motion: &MbMot
         }
     }
 
-    // Step 5: directZeroPredictionFlag — when both refIdx are invalid (Eq 8-188 to 8-190)
+    // Eq 8-188 to 8-190: directZeroPredictionFlag when both refIdx are invalid.
     let direct_zero_prediction = ref_idx_l0 < 0 && ref_idx_l1 < 0;
     if direct_zero_prediction {
         ref_idx_l0 = 0;

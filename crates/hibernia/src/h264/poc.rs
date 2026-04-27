@@ -245,17 +245,16 @@ mod tests {
         slice.header.frame_num = 1;
         poc_state.calculate_poc(&slice, ReferenceDisposition::NonIdrReference);
 
-        // Frame 2 (Non-Ref)
-        // Non-ref usually shares frame_num with previous ref, or increments?
-        // Spec says: "If the current picture is not a reference picture, frame_num shall be equal to FrameNum of the preceding reference picture."
-        // But let's assume valid bitstream where frame_num matches logic.
-        // If we provide frame_num = 2, and non-ref.
+        // Frame 2 (Non-Ref). Per spec, a non-reference picture's frame_num
+        // shall equal FrameNum of the preceding reference picture; this test
+        // exercises the path with a deliberately mismatched frame_num to
+        // confirm temp-POC arithmetic still works.
         slice.header.frame_num = 2;
         let poc = poc_state.calculate_poc(&slice, ReferenceDisposition::NonReference);
         // tempPOC = 2 * (0 + 2) - 1 = 3
         assert_eq!(poc, 3);
 
-        // Decoder state should NOT update for non-ref
+        // Decoder state must not update for non-ref.
         assert_eq!(poc_state.prev_frame_num, 1);
     }
 

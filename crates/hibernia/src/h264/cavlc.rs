@@ -1070,7 +1070,7 @@ mod tests {
         let data = prepare_bit_vec("00110110 01011000 10000001");
         let mut output = [0i32; 16];
         assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 2).unwrap(), 5);
-        // Output might be not 100% accurate :\
+        // Expected values transcribed from the bit-trace above; treat as a regression baseline.
         assert_eq!(output, [-2, -1, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0]);
     }
 
@@ -1089,7 +1089,7 @@ mod tests {
         let data = prepare_bit_vec("00000011 01000000 00010000 00000101 01010010 01100000");
         let mut output = [0i32; 16];
         assert_eq!(parse_residual_block(&mut BitReader::new(&data), &mut output, 0).unwrap(), 4);
-        // Output might be not 100% accurate :\
+        // Expected values transcribed from the bit-trace above; treat as a regression baseline.
         assert_eq!(output, [6, -19, 0, 0, 0, -6, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 

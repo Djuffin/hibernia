@@ -414,8 +414,8 @@ fn filter_luma_edge(
 
     let mut q0_idx = base_idx;
 
-    // Restructure as 4 4-pixel blocks: bs lookup, tc0 derivation, and the
-    // weak/strong dispatch run once per block instead of once per pixel.
+    // Outer loop walks 4 4-pixel blocks: bs lookup, tc0 derivation, and the
+    // weak/strong dispatch are hoisted out of the per-pixel inner loop.
     for blk in 0..4 {
         let bs = bs_array[blk];
         if bs == BS_NONE {
@@ -431,11 +431,9 @@ fn filter_luma_edge(
         };
 
         for _ in 0..4 {
-            // Slice the 8-sample perpendicular window once per pixel — one
-            // pair of bounds checks for the whole window. All in-window reads
-            // and writes below use offsets `N * perp_step` for N in 0..=7,
-            // which the optimizer can prove are < `win.len() = 7*perp_step+1`
-            // and elide the per-access check.
+            // One 8-sample perpendicular slice per pixel: the single bounds
+            // check on `win` dominates the constant-stride accesses below, so
+            // LLVM elides per-access checks.
             let win = &mut data[q0_idx - s4..q0_idx + s3 + 1];
 
             // Layout within `win`:
@@ -584,10 +582,8 @@ fn filter_chroma_edge(
             };
 
             for _ in 0..2 {
-                // Per-pixel 4-sample perpendicular window: p1, p0, q0, q1 at
-                // strides perp_step. One pair of bounds checks for the whole
-                // window; the constant-stride offsets below LLVM can prove
-                // safe and elide.
+                // 4-sample perpendicular window p1..q1 at strides perp_step.
+                // The single slice bound dominates the accesses below.
                 let win = &mut data[q0_idx - s2..q0_idx + s1 + 1];
                 // Layout: win[0]=p1, win[s1]=p0, win[s2]=q0, win[s2+s1]=q1
                 let p0 = win[s1] as i32;

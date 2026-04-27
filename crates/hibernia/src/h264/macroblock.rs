@@ -695,9 +695,8 @@ pub struct PcmMb {
     pub qp: u8,
 }
 
-/// Helper structure to track Coded Block Flags (CBF) for CABAC context modeling.
-/// It stores whether specific blocks (DC or AC) within the macroblock contain non-zero coefficients.
-/// This information is required when deriving context indices for neighboring blocks.
+/// Per-block coded-block-flag bits used by CABAC context selection for the
+/// neighboring-block predicate (clause 9.3.3.1.1.9).
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CbfInfo {
     pub luma_dc: bool,
@@ -735,11 +734,9 @@ pub struct PartitionInfo {
     /// Which prediction lists are active for this partition (Pred_L0, Pred_L1, BiPred, Direct).
     pub pred_mode: MbPredictionMode,
     pub ref_idx_l0: u8,
-    /// Motion Vector (MV) = MVP + MVD
-    /// This is the final vector used for prediction.
+    /// Final motion vector: `mv = mvp + mvd`.
     pub mv_l0: MotionVector,
-    /// Motion Vector Difference (MVD)
-    /// This is the delta value parsed from the bitstream.
+    /// Motion vector delta as parsed from the bitstream.
     pub mvd_l0: MotionVector,
     pub ref_idx_l1: u8,
     pub mv_l1: MotionVector,

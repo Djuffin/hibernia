@@ -396,28 +396,41 @@ pub fn level_scale_4x4_block(
     debug_assert!(block.len() == 16);
     let m = qp % 6;
 
-    // Load scaling factors for each 4x4 position into SIMD vectors.
-    // The spec defines scaling factors depending on the position in the 4x4 block,
-    // the value of `m` (qp % 6), and the active scaling list.
-    // `s0` through `s3` hold the scaling factors for the 4 rows of the 4x4 block.
-    let s0 = i32x4::new([level_scale_4x4(weight_scale[0], m, 0), level_scale_4x4(weight_scale[1], m, 1), level_scale_4x4(weight_scale[2], m, 2), level_scale_4x4(weight_scale[3], m, 3)]);
-    let s1 = i32x4::new([level_scale_4x4(weight_scale[4], m, 4), level_scale_4x4(weight_scale[5], m, 5), level_scale_4x4(weight_scale[6], m, 6), level_scale_4x4(weight_scale[7], m, 7)]);
-    let s2 = i32x4::new([level_scale_4x4(weight_scale[8], m, 8), level_scale_4x4(weight_scale[9], m, 9), level_scale_4x4(weight_scale[10], m, 10), level_scale_4x4(weight_scale[11], m, 11)]);
-    let s3 = i32x4::new([level_scale_4x4(weight_scale[12], m, 12), level_scale_4x4(weight_scale[13], m, 13), level_scale_4x4(weight_scale[14], m, 14), level_scale_4x4(weight_scale[15], m, 15)]);
+    // Per-position scaling factors keyed on (weight_scale[i], m, i). Held as
+    // four i32x4 rows aligned with the block's row layout below.
+    let s0 = i32x4::new([
+        level_scale_4x4(weight_scale[0], m, 0),
+        level_scale_4x4(weight_scale[1], m, 1),
+        level_scale_4x4(weight_scale[2], m, 2),
+        level_scale_4x4(weight_scale[3], m, 3),
+    ]);
+    let s1 = i32x4::new([
+        level_scale_4x4(weight_scale[4], m, 4),
+        level_scale_4x4(weight_scale[5], m, 5),
+        level_scale_4x4(weight_scale[6], m, 6),
+        level_scale_4x4(weight_scale[7], m, 7),
+    ]);
+    let s2 = i32x4::new([
+        level_scale_4x4(weight_scale[8], m, 8),
+        level_scale_4x4(weight_scale[9], m, 9),
+        level_scale_4x4(weight_scale[10], m, 10),
+        level_scale_4x4(weight_scale[11], m, 11),
+    ]);
+    let s3 = i32x4::new([
+        level_scale_4x4(weight_scale[12], m, 12),
+        level_scale_4x4(weight_scale[13], m, 13),
+        level_scale_4x4(weight_scale[14], m, 14),
+        level_scale_4x4(weight_scale[15], m, 15),
+    ]);
 
-    // Load the 4x4 block's coefficients into SIMD vectors.
-    // `b0` through `b3` represent the 4 rows of the 4x4 block.
     let mut b0 = i32x4::new(block[0..4].try_into().unwrap());
     let mut b1 = i32x4::new(block[4..8].try_into().unwrap());
     let mut b2 = i32x4::new(block[8..12].try_into().unwrap());
     let mut b3 = i32x4::new(block[12..16].try_into().unwrap());
 
-    // Save the DC coefficient (the [0][0] element) before scaling, as it might
-    // be handled separately (e.g., if it was already scaled in `dc_scale_4x4_block`).
+    // Preserve DC for `skip_dc` callers that already ran `dc_scale_4x4_block`.
     let dc_val = block[0];
 
-    // Apply the scaling equations from the spec.
-    // The exact equation depends on whether qp >= 24 or not.
     if qp >= 24 {
         // Equation 8-336: d = (c * scale) << (qp / 6 - 4)
         let shift = i32x4::splat((qp / 6 - 4) as i32);
@@ -472,7 +485,7 @@ pub fn dc_scale_2x2_block(block: &mut Block2x2, weight_scale_dc: u8, qp: u8) {
     let m = qp % 6;
     for row in block.samples.iter_mut() {
         for c in row.iter_mut() {
-            // Equation 8-326 (approximated)
+            // Equation 8-326.
             let d = ((*c * level_scale_4x4(weight_scale_dc, m, 0)) << (qp / 6)) >> 5;
             *c = d;
         }
@@ -571,20 +584,17 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
 pub fn transform_4x4(block: &mut Block4x4) {
     let d = &mut block.samples;
 
-    // Load the 4 rows of the 4x4 block into SIMD vectors.
     let row0 = i32x4::new(d[0]);
     let row1 = i32x4::new(d[1]);
     let row2 = i32x4::new(d[2]);
     let row3 = i32x4::new(d[3]);
 
-    // Transpose the rows to get the columns.
-    // The H.264 4x4 IDCT (Inverse Discrete Cosine Transform) is separable,
-    // meaning we first apply 1D transforms along the columns, then along the rows.
+    // The 4x4 inverse integer transform is separable. Run the column pass on
+    // a transposed block so the SIMD lanes line up with columns, then
+    // transpose back for the row pass.
     let [mut c0, mut c1, mut c2, mut c3] = i32x4::transpose([row0, row1, row2, row3]);
 
-    // First pass: 1D transform on the columns.
-    // Operating on `c0..c3` (where each vector holds one row of elements from the transposed block),
-    // we effectively apply Equations (8-338) to (8-345) to all 4 columns simultaneously.
+    // Eq 8-338..8-345 across the 4 columns.
     let e0 = c0 + c2;
     let e1 = c0 - c2;
     let e2 = (c1 >> 1) - c3;
@@ -595,13 +605,9 @@ pub fn transform_4x4(block: &mut Block4x4) {
     c2 = e1 - e2;
     c3 = e0 - e3;
 
-    // Transpose back so the transformed columns become rows again.
-    // This sets us up for the second pass along the original row direction.
     let [r0, r1, r2, r3] = i32x4::transpose([c0, c1, c2, c3]);
 
-    // Second pass: 1D transform on the rows.
-    // Operating on `r0..r3` (where each vector holds one row),
-    // we effectively apply Equations (8-346) to (8-353) to all 4 rows simultaneously.
+    // Eq 8-346..8-353 across the 4 rows.
     let g0 = r0 + r2;
     let g1 = r0 - r2;
     let g2 = (r1 >> 1) - r3;
@@ -612,13 +618,12 @@ pub fn transform_4x4(block: &mut Block4x4) {
     let h2 = g1 - g2;
     let h3 = g0 - g3;
 
-    // Apply the final shift and rounding as per the spec for the 4x4 transform output.
+    // Final +32 round, >>6 per spec.
     let h0_final: i32x4 = (h0 + i32x4::splat(32)) >> 6;
     let h1_final: i32x4 = (h1 + i32x4::splat(32)) >> 6;
     let h2_final: i32x4 = (h2 + i32x4::splat(32)) >> 6;
     let h3_final: i32x4 = (h3 + i32x4::splat(32)) >> 6;
 
-    // Write back the fully transformed values to the block.
     d[0] = h0_final.to_array();
     d[1] = h1_final.to_array();
     d[2] = h2_final.to_array();

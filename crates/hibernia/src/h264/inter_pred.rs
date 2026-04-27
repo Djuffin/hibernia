@@ -20,9 +20,6 @@ use v_frame::plane::{Plane, PlaneOffset};
 /// - `dst`: Destination buffer.
 /// - `dst_stride`: Destination stride.
 /// - `buffer`: Scratch buffer for interpolation.
-///
-/// The process produces fractional sample values 'a' through 'r' (and integer samples 'G')
-/// depending on the fractional part of the motion vector, as described in Table 8-10.
 #[allow(clippy::too_many_arguments)]
 pub fn interpolate_luma(
     ref_plane: &Plane<u8>,
@@ -409,22 +406,12 @@ pub fn interpolate_chroma(
     dst: &mut [u8],
     dst_stride: usize,
 ) {
-    // 1. Derive Chroma Motion Vector
-    // For 4:2:0, the chroma motion vector is derived by scaling the luma motion vector.
-    // Luma MV is in 1/4 pixel units.
-    // 1 chroma pixel = 2 luma pixels.
-    // So 1 unit of Luma MV = 1/4 luma pixel = 1/8 chroma pixel.
-    // This corresponds to Equation 8-227, 8-228, 8-229, 8-230 for 4:2:0:
-    // xIntC = ( xAL / SubWidthC ) + ( mvCLX[ 0 ] >> 3 ) + xC
-    // yIntC = ( yAL / SubHeightC ) + ( mvCLX[ 1 ] >> 3 ) + yC
-    // xFracC = mvCLX[ 0 ] & 7
-    // yFracC = mvCLX[ 1 ] & 7
-
-    // Integer part of the position (in chroma samples)
+    // Eq 8-227..8-230 (4:2:0). `mv` is in quarter-luma-sample units; one
+    // chroma sample spans two luma samples, so quarter-luma == 1/8 chroma.
+    // That makes `mv.x` directly an offset in 1/8-chroma units, split by
+    // `>> 3` (integer chroma samples) and `& 7` (fractional eighths).
     let x_int = (mb_x as i32) + (blk_x as i32) + (mv.x >> 3) as i32;
     let y_int = (mb_y as i32) + (blk_y as i32) + (mv.y >> 3) as i32;
-
-    // Fractional part (0..7), representing 1/8th chroma sample intervals
     let x_frac = (mv.x & 7) as i16;
     let y_frac = (mv.y & 7) as i16;
 
@@ -934,14 +921,14 @@ pub fn render_chroma_inter_prediction(
         );
     }
 
-    // Hoist plane-write state out of the per-cell loops below.
     let chroma_stride = chroma_plane.cfg.stride;
     let mb_origin = (mb_y_chroma as usize) * chroma_stride + (mb_x_chroma as usize);
     let chroma_data = chroma_plane.data_origin_mut();
+    // One worst-case bound check for the 8x8 chroma MB; the per-pixel stores
+    // below stay within it and LLVM elides their checks.
     assert!(mb_origin + 7 * chroma_stride + 8 <= chroma_data.len());
 
-    // Per-2x2-cell weighted prediction and write-back. Reads the 2x2 patch
-    // from the staged 8x8 buffer.
+    // Per-2x2-cell weighted prediction and write-back from the staged 8x8 buffer.
     for blk_idx in 0..16 {
         let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
         let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];

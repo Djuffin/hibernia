@@ -594,10 +594,10 @@ impl Decoder {
             "dec_ref_pic_marking mismatch across slices of the same picture"
         );
 
-        // Section C.2.2: Picture decoding (current picture NOT in DPB).
-        // Construct reference picture lists before parsing, because temporal
-        // direct prediction (used during B-slice parsing) needs the colocated
-        // picture.
+        // Section 8.2.4: reference picture lists are constructed before
+        // parsing — temporal direct prediction (used during B-slice parsing)
+        // needs the colocated picture, and the current picture is not yet in
+        // the DPB.
         self.construct_ref_pic_list0(slice, pic_order_cnt)?;
         if slice.header.slice_type == SliceType::B {
             self.construct_ref_pic_list1(slice, pic_order_cnt)?;
@@ -1002,12 +1002,12 @@ impl Decoder {
             }
         }
 
-        // Move decoded macroblocks into picture-wide state consumed at finalize:
-        // `mb_slice_id` drives cross-slice deblocking suppression and `mb_motion`
-        // / `mb_is_intra` feed the picture-level motion field assembly. Drains
-        // the slice — nothing reads `slice.macroblocks` after this point.
-        // Motion-field writes are skipped for non-reference pictures; they can
-        // never be used as a colocated reference, so the data would be discarded.
+        // Drain decoded macroblocks into picture-wide state consumed at
+        // finalize: `mb_slice_id` drives cross-slice deblocking suppression
+        // and `mb_motion` / `mb_is_intra` feed picture-level motion field
+        // assembly. Nothing reads `slice.macroblocks` after this point.
+        // Motion-field writes are skipped for non-reference pictures; they
+        // can never be used as a colocated reference.
         let first_mb_addr = slice.header.first_mb_in_slice as usize;
         let slices_seen = current.slices_seen;
         let needs_motion_field = current.disposition != ReferenceDisposition::NonReference;
@@ -1155,8 +1155,8 @@ impl Decoder {
                 }
             }
         } else {
-            // If ref_idx is out of bounds, we just push it? Spec implies refIdxL0 starts at 0 and increments.
-            // So it should usually be valid for insertion (possibly at end).
+            // refIdxL0 starts at 0 and increments per spec, so an out-of-bounds
+            // index must be exactly `list.len()` — append.
             list.push(pic_idx);
         }
     }
@@ -1361,13 +1361,10 @@ impl Decoder {
         }
     }
 
-    /// Assembles the picture's motion field from `current`'s accumulated
-    /// per-MB state, for later use in temporal direct prediction by B slices
-    /// that take this picture as their colocated reference. Returns `None`
-    /// for non-reference pictures.
-    /// Drains the per-MB motion arrays out of `current` into the storage
-    /// stashed on the DPB picture. Caller must not access `current.mb_motion`
-    /// etc. after this returns — they're left empty.
+    /// Drains `current`'s per-MB motion arrays into a `MotionFieldStorage`
+    /// stashed on the DPB picture for later use as a colocated reference by
+    /// B-slice temporal direct prediction. Returns `None` for non-reference
+    /// pictures. After return, `current.mb_motion` etc. are empty.
     fn build_motion_field(&self, current: &mut CurrentPicture) -> Option<MotionFieldStorage> {
         if current.disposition == ReferenceDisposition::NonReference {
             return None;

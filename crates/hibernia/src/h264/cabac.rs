@@ -5,7 +5,9 @@ use super::macroblock::{
 use super::parser::{BitReader, ParseResult};
 use super::residual::Residual;
 use super::slice::Slice;
-use super::tables::{get_init_table, RANGE_TAB_LPS, TRANS_IDX_LPS, TRANS_IDX_MPS};
+use super::tables::{
+    get_init_table, NEXT_STATE_LPS_BY_CTX, NEXT_STATE_MPS_BY_CTX, RANGE_TAB_LPS,
+};
 use log::trace;
 use std::cmp::min;
 
@@ -525,10 +527,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if self.n_bits < n {
             self.refill_bits()?;
             if self.n_bits < n {
-                return Err(format!(
-                    "CABAC: needed {} bits, only {} available",
-                    n, self.n_bits
-                ));
+                return Err(read_bits_eof_error(n, self.n_bits));
             }
         }
         let bits = (self.bit_buf >> (64 - n)) as u32;
@@ -689,36 +688,41 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // 9.3.3.2 Arithmetic decoding process
     #[inline(always)]
     pub fn decode_bin(&mut self, ctx_idx: usize) -> ParseResult<u8> {
-        let ctx_state = self.ctx_table[ctx_idx];
-        // Mask with 0x3F tells the optimizer p_state_idx < 64, eliminating
-        // bounds checks on the fixed-size state/range tables below.
-        let mut p_state_idx = ((ctx_state >> 1) & 0x3F) as usize;
-        let mut val_mps = ctx_state & 1;
+        // ctx_idx is bounded by Table 9-39 (max ctxIdxOffset 399 + max ctxIdxInc ~9),
+        // but the compiler can't prove that. Mask to 10 bits so the [u8; 1024]
+        // access compiles to a plain indexed load instead of a cmp+jb+panic.
+        let idx = ctx_idx & 0x3FF;
+        // Top bit of ctx_state is always 0 (we only ever write back values < 128);
+        // masking lets the optimizer drop the bounds check on the 128-entry
+        // NEXT_STATE_*_BY_CTX tables.
+        let ctx_state = self.ctx_table[idx] & 0x7F;
+        let p_state_idx = (ctx_state >> 1) as usize;
+        let val_mps = ctx_state & 1;
 
         let q_cod_i_range_idx = ((self.range >> 6) & 3) as usize;
         let cod_i_range_lps = RANGE_TAB_LPS[p_state_idx][q_cod_i_range_idx] as u32;
 
         self.range -= cod_i_range_lps;
 
-        // Fuse the MPS/LPS decision with the 9.3.3.2.1.1 state transition so
-        // each path only runs its own table lookup.
+        // Fuse the MPS/LPS decision with the 9.3.3.2.1.1 state transition.
+        // NEXT_STATE_*_BY_CTX is keyed on the full 7-bit ctx_state and bakes in
+        // the pStateIdx==0 valMPS-toggle, so each path collapses to one byte
+        // load + store.
         let bin_val;
+        let next_ctx_state;
         if self.offset >= self.range {
             // LPS path
             bin_val = 1 - val_mps;
             self.offset -= self.range;
             self.range = cod_i_range_lps;
-            if p_state_idx == 0 {
-                val_mps = 1 - val_mps;
-            }
-            p_state_idx = TRANS_IDX_LPS[p_state_idx] as usize;
+            next_ctx_state = NEXT_STATE_LPS_BY_CTX[ctx_state as usize];
         } else {
             // MPS path
             bin_val = val_mps;
-            p_state_idx = TRANS_IDX_MPS[p_state_idx] as usize;
+            next_ctx_state = NEXT_STATE_MPS_BY_CTX[ctx_state as usize];
         }
 
-        self.ctx_table[ctx_idx] = (p_state_idx as u8) << 1 | val_mps;
+        self.ctx_table[idx] = next_ctx_state;
 
         self.renorm()?;
         trace!("decode_bin ctxIdx={} bin={}", ctx_idx, bin_val);
@@ -3400,6 +3404,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
         Ok(())
     }
+}
+
+#[cold]
+#[inline(never)]
+fn read_bits_eof_error(needed: u32, available: u32) -> String {
+    format!("CABAC: needed {} bits, only {} available", needed, available)
 }
 
 /// Inverse of the signed→non-negative remap in Table 9-3, used here for the

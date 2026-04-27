@@ -177,6 +177,41 @@ pub const TRANS_IDX_MPS: [u8; 64] = include!("table_9-45_mps.rs");
 #[allow(clippy::all)]
 pub const RANGE_TAB_LPS: [[u8; 4]; 64] = include!("table_9-44.rs");
 
+// Pre-computed next-context-state lookup tables, indexed directly by the packed
+// 7-bit CABAC context state (bit 0 = valMPS, bits 1..=6 = pStateIdx). They fold
+// 9.3.3.2.1.1 (state transition) together with the valMPS-toggle on the
+// pStateIdx==0 LPS edge case so the hot decode_bin loop only does a single
+// byte load per path instead of (decompose, lookup TRANS_IDX_*, conditionally
+// flip valMPS, recompose).
+const fn build_next_state_mps_by_ctx() -> [u8; 128] {
+    let mut table = [0u8; 128];
+    let mut ctx_state: u8 = 0;
+    while ctx_state < 128 {
+        let p_state_idx = (ctx_state >> 1) as usize;
+        let val_mps = ctx_state & 1;
+        table[ctx_state as usize] = (TRANS_IDX_MPS[p_state_idx] << 1) | val_mps;
+        ctx_state += 1;
+    }
+    table
+}
+
+const fn build_next_state_lps_by_ctx() -> [u8; 128] {
+    let mut table = [0u8; 128];
+    let mut ctx_state: u8 = 0;
+    while ctx_state < 128 {
+        let p_state_idx = (ctx_state >> 1) as usize;
+        let val_mps = ctx_state & 1;
+        // 9.3.3.2.1.1: an LPS taken from pStateIdx==0 toggles valMPS.
+        let new_val_mps = if p_state_idx == 0 { 1 - val_mps } else { val_mps };
+        table[ctx_state as usize] = (TRANS_IDX_LPS[p_state_idx] << 1) | new_val_mps;
+        ctx_state += 1;
+    }
+    table
+}
+
+pub const NEXT_STATE_MPS_BY_CTX: [u8; 128] = build_next_state_mps_by_ctx();
+pub const NEXT_STATE_LPS_BY_CTX: [u8; 128] = build_next_state_lps_by_ctx();
+
 /// Initialization values for I slices (Tables 9-12 to 9-33)
 pub const INIT_CTX_I: [(i8, i8); 1024] = include!("tables_9-12to33_i.rs");
 /// Initialization values for P/B slices with cabac_init_idc = 0 (Tables 9-12 to 9-33)

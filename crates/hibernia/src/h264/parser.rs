@@ -2031,7 +2031,13 @@ fn derive_temporal_direct_partition(
             y: clip_i32((dist_scale_factor * (mv_col.y as i32) + 128) >> 8, -32768, 32767)
                 as i16,
         };
-        let mv_l1 = MotionVector { x: mv_l0.x - mv_col.x, y: mv_l0.y - mv_col.y };
+        // Eq 8-204: mvL1 = mvL0 − mvCol. Compute in i32 since the difference of
+        // two i16s can exceed i16 range (e.g. i16::MAX − i16::MIN = 65535), then
+        // clip to i16 to fit the motion-vector storage.
+        let mv_l1 = MotionVector {
+            x: clip_i32(mv_l0.x as i32 - mv_col.x as i32, i16::MIN as i32, i16::MAX as i32) as i16,
+            y: clip_i32(mv_l0.y as i32 - mv_col.y as i32, i16::MIN as i32, i16::MAX as i32) as i16,
+        };
         (mv_l0, mv_l1)
     };
 

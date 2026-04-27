@@ -70,12 +70,13 @@ impl PocState {
             self.prev_pic_order_cnt_msb = msb;
         }
 
-        // TopFieldOrderCnt = PicOrderCntMsb + pic_order_cnt_lsb
-        // TODO: Handle BottomFieldOrderCnt if bottom_field_flag is present (interlaced)
-        // For progressive frames, POC is min(TopFieldOrderCnt, BottomFieldOrderCnt),
-        // but effectively just TopFieldOrderCnt for now.
-
-        msb + lsb
+        // Eq 8-3, 8-4: TopFieldOrderCnt = PicOrderCntMsb + pic_order_cnt_lsb;
+        // BottomFieldOrderCnt = TopFieldOrderCnt + delta_pic_order_cnt_bottom.
+        // For a frame, eq 8-1 picks the min — the bottom can be smaller when
+        // delta_pic_order_cnt_bottom is negative.
+        let top = msb + lsb;
+        let bottom = top + slice.header.delta_pic_order_cnt_bottom.unwrap_or(0);
+        top.min(bottom)
     }
 
     #[inline]
@@ -136,15 +137,21 @@ impl PocState {
             expected_pic_order_cnt
         };
 
-        let top_field_order_cnt = expected_pic_order_cnt + slice.header.delta_pic_order_cnt[0];
-        // TODO: Handle BottomFieldOrderCnt
+        // Eq 8-9, 8-10: TopFieldOrderCnt = expectedPicOrderCnt + delta_pic_order_cnt[0];
+        // BottomFieldOrderCnt = TopFieldOrderCnt + offset_for_top_to_bottom_field
+        //                       + delta_pic_order_cnt[1]. For a frame, eq 8-1 picks
+        // the min — the bottom can be smaller when offset_for_top_to_bottom_field
+        // is negative.
+        let top = expected_pic_order_cnt + slice.header.delta_pic_order_cnt[0];
+        let bottom =
+            top + slice.sps.offset_for_top_to_bottom_field + slice.header.delta_pic_order_cnt[1];
 
         if disposition != ReferenceDisposition::NonReference {
             self.prev_frame_num = slice.header.frame_num as i32;
             self.prev_frame_num_offset = frame_num_offset;
         }
 
-        top_field_order_cnt
+        top.min(bottom)
     }
 
     #[inline]

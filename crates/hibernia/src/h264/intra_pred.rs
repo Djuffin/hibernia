@@ -808,7 +808,7 @@ pub fn render_chroma_intra_prediction(
 ) {
     // Section 8.3.4 Intra prediction process for chroma samples
     let chroma_shift = slice.sps.ChromaArrayType().get_chroma_shift();
-    let loc = Point { x: loc.x >> chroma_shift.width, y: loc.y >> chroma_shift.width };
+    let loc = Point { x: loc.x >> chroma_shift.width, y: loc.y >> chroma_shift.height };
     let mb_width = MB_WIDTH >> chroma_shift.width;
     let mb_height = MB_HEIGHT >> chroma_shift.height;
 

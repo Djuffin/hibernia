@@ -82,18 +82,6 @@ pub fn render_luma_4x4_intra_prediction(
     target: &mut Plane<u8>,
     residuals: &[Block4x4],
 ) {
-    // Equations 8-53, 8-54, etc.: (A + 2*B + C + 2) >> 2
-    #[inline]
-    fn weighted_avg(double: u8, single_a: u8, single_b: u8) -> u8 {
-        ((2 * (double as u16) + (single_a as u16) + (single_b as u16) + 2) >> 2) as u8
-    }
-
-    // Standard average: (A + B + 1) >> 1
-    #[inline]
-    fn avg(a: u8, b: u8) -> u8 {
-        (((a as u16) + (b as u16) + 1) >> 1) as u8
-    }
-
     let mut ctx = Surroundings4x4::default();
     let has_c_mb_neighbor = slice.has_mb_neighbor(mb_addr, MbNeighborName::C);
     for blk_idx in 0..16 {
@@ -166,10 +154,10 @@ pub fn render_luma_4x4_intra_prediction(
                         let i = x + y;
                         *value = if i == 6 {
                             // Equation 8-52
-                            weighted_avg(top_row[7], top_row[7], top_row[6])
+                            weighted_avg3(top_row[6], top_row[7], top_row[7])
                         } else {
                             // Equation 8-53
-                            weighted_avg(top_row[i + 1], top_row[i], top_row[i + 2])
+                            weighted_avg3(top_row[i], top_row[i + 1], top_row[i + 2])
                         };
                     }
                 }
@@ -184,13 +172,13 @@ pub fn render_luma_4x4_intra_prediction(
                         *value = match x.cmp(&y) {
                             Ordering::Greater => {
                                 let i = 1 + x - y;
-                                weighted_avg(top[i - 1], top[i - 2], top[i])
+                                weighted_avg3(top[i - 2], top[i - 1], top[i])
                             }
                             Ordering::Less => {
                                 let i = 1 + y - x;
-                                weighted_avg(left[i - 1], left[i - 2], left[i])
+                                weighted_avg3(left[i - 2], left[i - 1], left[i])
                             }
-                            Ordering::Equal => weighted_avg(top[0], top[1], left[1]),
+                            Ordering::Equal => weighted_avg3(top[1], top[0], left[1]),
                         }
                     }
                 }
@@ -206,11 +194,11 @@ pub fn render_luma_4x4_intra_prediction(
                         let i = 1 + x - (y >> 1);
                         *value = match z {
                             0 | 2 | 4 | 6 => avg(top[i], top[i - 1]),
-                            1 | 3 | 5 => weighted_avg(top[i - 1], top[i - 2], top[i]),
-                            -1 => weighted_avg(top[0], top[1], left[1]),
+                            1 | 3 | 5 => weighted_avg3(top[i - 2], top[i - 1], top[i]),
+                            -1 => weighted_avg3(top[1], top[0], left[1]),
                             _ => {
                                 let y = y + 1;
-                                weighted_avg(left[y - 2], left[y - 1], left[y - 3])
+                                weighted_avg3(left[y - 3], left[y - 2], left[y - 1])
                             }
                         };
                     }
@@ -227,9 +215,9 @@ pub fn render_luma_4x4_intra_prediction(
                         let i = 1 + y - (x >> 1);
                         *value = match z {
                             0 | 2 | 4 | 6 => avg(left[i - 1], left[i]),
-                            1 | 3 | 5 => weighted_avg(left[i - 1], left[i - 2], left[i]),
-                            -1 => weighted_avg(top[0], left[1], top[1]),
-                            _ => weighted_avg(top[x - 1], top[x], top[x - 2]),
+                            1 | 3 | 5 => weighted_avg3(left[i - 2], left[i - 1], left[i]),
+                            -1 => weighted_avg3(left[1], top[0], top[1]),
+                            _ => weighted_avg3(top[x - 2], top[x - 1], top[x]),
                         };
                     }
                 }
@@ -244,7 +232,7 @@ pub fn render_luma_4x4_intra_prediction(
                         *value = if y % 2 == 0 {
                             avg(top_row[i], top_row[i + 1])
                         } else {
-                            weighted_avg(top_row[i + 1], top_row[i + 2], top_row[i])
+                            weighted_avg3(top_row[i], top_row[i + 1], top_row[i + 2])
                         };
                     }
                 }
@@ -259,8 +247,8 @@ pub fn render_luma_4x4_intra_prediction(
                         let i = y + (x >> 1);
                         *value = match z {
                             0 | 2 | 4 => avg(left[i], left[i + 1]),
-                            1 | 3 => weighted_avg(left[i + 1], left[i], left[i + 2]),
-                            5 => weighted_avg(left[3], left[3], left[2]),
+                            1 | 3 => weighted_avg3(left[i], left[i + 1], left[i + 2]),
+                            5 => weighted_avg3(left[2], left[3], left[3]),
                             _ => left[3],
                         };
                     }
@@ -284,9 +272,9 @@ fn weighted_avg3(a: u8, b: u8, c: u8) -> u8 {
     (((a as u16) + 2 * (b as u16) + (c as u16) + 2) >> 2) as u8
 }
 
-// (A + B + 1) >> 1 — 2-tap average used by several Intra_8x8 modes.
+// (A + B + 1) >> 1 — 2-tap average used throughout Intra 4x4 / 8x8.
 #[inline]
-fn avg2(a: u8, b: u8) -> u8 {
+fn avg(a: u8, b: u8) -> u8 {
     (((a as u16) + (b as u16) + 1) >> 1) as u8
 }
 
@@ -588,7 +576,7 @@ fn fill_predicted_8x8(
                     pred[y as usize][x as usize] = match z_vr {
                         0 | 2 | 4 | 6 | 8 | 10 | 12 | 14 => {
                             let i = x - (y >> 1);
-                            avg2(get_t(i - 1), get_t(i))
+                            avg(get_t(i - 1), get_t(i))
                         }
                         1 | 3 | 5 | 7 | 9 | 11 | 13 => {
                             let i = x - (y >> 1);
@@ -621,7 +609,7 @@ fn fill_predicted_8x8(
                     pred[y as usize][x as usize] = match z_hd {
                         0 | 2 | 4 | 6 | 8 | 10 | 12 | 14 => {
                             let i = y - (x >> 1);
-                            avg2(get_l(i - 1), get_l(i))
+                            avg(get_l(i - 1), get_l(i))
                         }
                         1 | 3 | 5 | 7 | 9 | 11 | 13 => {
                             let i = y - (x >> 1);
@@ -645,7 +633,7 @@ fn fill_predicted_8x8(
                 for x in 0..8usize {
                     let i = x + (y >> 1);
                     pred[y][x] = if y % 2 == 0 {
-                        avg2(t[i], t[i + 1])
+                        avg(t[i], t[i + 1])
                     } else {
                         weighted_avg3(t[i], t[i + 1], t[i + 2])
                     };
@@ -660,7 +648,7 @@ fn fill_predicted_8x8(
                     pred[y][x] = match z_hu {
                         0 | 2 | 4 | 6 | 8 | 10 | 12 => {
                             let i = y + (x >> 1);
-                            avg2(l[i], l[i + 1])
+                            avg(l[i], l[i + 1])
                         }
                         1 | 3 | 5 | 7 | 9 | 11 => {
                             let i = y + (x >> 1);

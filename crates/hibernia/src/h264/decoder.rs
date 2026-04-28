@@ -22,7 +22,7 @@ use super::macroblock::{
     MbAddr, MbNeighborName, MbPredictionMode, MotionVector, PartitionInfo,
 };
 use super::poc::PocState;
-use super::residual::{level_scale_4x4_block, unzip_block_4x4};
+use super::residual::{level_scale_4x4_block, unzip_block_4x4, Block4x4, Residual};
 use super::scaling_list::{
     resolve_pic_scaling_matrix, resolve_seq_scaling_matrix, ResolvedScalingMatrix,
 };
@@ -897,14 +897,13 @@ impl Decoder {
                         }
                     }
                     Macroblock::I(imb) => {
-                        qp = (qp + imb.mb_qp_delta + 52 + 2 * qp_bd_offset_y)
-                            % (52 + qp_bd_offset_y)
-                            - qp_bd_offset_y;
-                        let residuals = if let Some(residual) = imb.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp as u8, &active_scaling_matrix)
-                        } else {
-                            SmallVec::new()
-                        };
+                        qp = next_qp(qp, imb.mb_qp_delta, qp_bd_offset_y);
+                        let residuals = restore_residuals(
+                            imb.residual.as_deref(),
+                            ColorPlane::Y,
+                            qp as u8,
+                            &active_scaling_matrix,
+                        );
 
                         let luma_plane = &mut frame.planes[0];
                         let luma_prediction_mode = imb.MbPartPredMode(0);
@@ -951,11 +950,12 @@ impl Decoder {
                                     DecodingError::OutOfRange("chroma QP out of u8 range".into())
                                 })?;
                             let chroma_plane = &mut frame.planes[plane_name as usize];
-                            let residuals = if let Some(residual) = imb.residual.as_ref() {
-                                residual.restore(plane_name, chroma_qp, &active_scaling_matrix)
-                            } else {
-                                SmallVec::new()
-                            };
+                            let residuals = restore_residuals(
+                                imb.residual.as_deref(),
+                                plane_name,
+                                chroma_qp,
+                                &active_scaling_matrix,
+                            );
                             render_chroma_intra_prediction(
                                 slice,
                                 mb_addr,
@@ -967,14 +967,13 @@ impl Decoder {
                         }
                     }
                     Macroblock::P(block) => {
-                        qp = (qp + block.mb_qp_delta + 52 + 2 * qp_bd_offset_y)
-                            % (52 + qp_bd_offset_y)
-                            - qp_bd_offset_y;
-                        let residuals = if let Some(residual) = block.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp as u8, &active_scaling_matrix)
-                        } else {
-                            SmallVec::new()
-                        };
+                        qp = next_qp(qp, block.mb_qp_delta, qp_bd_offset_y);
+                        let residuals = restore_residuals(
+                            block.residual.as_deref(),
+                            ColorPlane::Y,
+                            qp as u8,
+                            &active_scaling_matrix,
+                        );
 
                         render_luma_inter_prediction(
                             slice,
@@ -993,11 +992,12 @@ impl Decoder {
                                 .map_err(|_| {
                                     DecodingError::OutOfRange("chroma QP out of u8 range".into())
                                 })?;
-                            let residuals = if let Some(residual) = block.residual.as_ref() {
-                                residual.restore(plane_name, chroma_qp, &active_scaling_matrix)
-                            } else {
-                                SmallVec::new()
-                            };
+                            let residuals = restore_residuals(
+                                block.residual.as_deref(),
+                                plane_name,
+                                chroma_qp,
+                                &active_scaling_matrix,
+                            );
                             render_chroma_inter_prediction(
                                 slice,
                                 block,
@@ -1010,14 +1010,13 @@ impl Decoder {
                         }
                     }
                     Macroblock::B(block) => {
-                        qp = (qp + block.mb_qp_delta + 52 + 2 * qp_bd_offset_y)
-                            % (52 + qp_bd_offset_y)
-                            - qp_bd_offset_y;
-                        let residuals = if let Some(residual) = block.residual.as_ref() {
-                            residual.restore(ColorPlane::Y, qp as u8, &active_scaling_matrix)
-                        } else {
-                            SmallVec::new()
-                        };
+                        qp = next_qp(qp, block.mb_qp_delta, qp_bd_offset_y);
+                        let residuals = restore_residuals(
+                            block.residual.as_deref(),
+                            ColorPlane::Y,
+                            qp as u8,
+                            &active_scaling_matrix,
+                        );
 
                         render_luma_inter_prediction_b(
                             slice,
@@ -1037,11 +1036,12 @@ impl Decoder {
                                 .map_err(|_| {
                                     DecodingError::OutOfRange("chroma QP out of u8 range".into())
                                 })?;
-                            let residuals = if let Some(residual) = block.residual.as_ref() {
-                                residual.restore(plane_name, chroma_qp, &active_scaling_matrix)
-                            } else {
-                                SmallVec::new()
-                            };
+                            let residuals = restore_residuals(
+                                block.residual.as_deref(),
+                                plane_name,
+                                chroma_qp,
+                                &active_scaling_matrix,
+                            );
                             render_chroma_inter_prediction_b(
                                 slice,
                                 block,
@@ -1105,7 +1105,11 @@ impl Decoder {
         } else {
             self.initialize_ref_pic_list0(slice)
         };
-        self.modify_ref_pic_list0(slice, &mut ref_list0);
+        self.modify_ref_pic_list(
+            slice,
+            &slice.header.ref_pic_list_modification.list0,
+            &mut ref_list0,
+        );
 
         // Truncate to num_ref_idx_l0_active_minus1 + 1
         let len = (slice.header.num_ref_idx_l0_active_minus1 + 1) as usize;
@@ -1153,18 +1157,25 @@ impl Decoder {
         short_term_refs.iter().map(|x| x.0).chain(long_term_refs.iter().map(|x| x.0)).collect()
     }
 
-    // Section 8.2.4.3 Reordering process for reference picture lists
-    fn modify_ref_pic_list0(&self, slice: &Slice, ref_list0: &mut Vec<usize>) {
-        if slice.header.ref_pic_list_modification.list0.is_empty() {
+    // Section 8.2.4.3 Reordering process for reference picture lists. Same
+    // algorithm for list0 and list1 — caller passes the matching modifications
+    // and target list.
+    fn modify_ref_pic_list(
+        &self,
+        slice: &Slice,
+        modifications: &[RefPicListModification],
+        ref_list: &mut Vec<usize>,
+    ) {
+        if modifications.is_empty() {
             return;
         }
 
         let max_frame_num = 1 << (slice.sps.log2_max_frame_num_minus4 + 4);
         let curr_frame_num = slice.header.frame_num as i32;
         let mut pic_num_lx_pred = curr_frame_num;
-        let mut ref_idx_l0 = 0;
+        let mut ref_idx = 0;
 
-        for modification in &slice.header.ref_pic_list_modification.list0 {
+        for modification in modifications {
             match modification {
                 RefPicListModification::RemapShortTermNegative(abs_diff_minus1) => {
                     let abs_diff = (abs_diff_minus1 + 1) as i32;
@@ -1177,8 +1188,8 @@ impl Decoder {
                     pic_num_lx_pred = pic_num_lx;
 
                     if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
-                        self.place_picture_in_list(ref_list0, idx, ref_idx_l0);
-                        ref_idx_l0 += 1;
+                        self.place_picture_in_list(ref_list, idx, ref_idx);
+                        ref_idx += 1;
                     }
                 }
                 RefPicListModification::RemapShortTermPositive(abs_diff_minus1) => {
@@ -1192,14 +1203,14 @@ impl Decoder {
                     pic_num_lx_pred = pic_num_lx;
 
                     if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
-                        self.place_picture_in_list(ref_list0, idx, ref_idx_l0);
-                        ref_idx_l0 += 1;
+                        self.place_picture_in_list(ref_list, idx, ref_idx);
+                        ref_idx += 1;
                     }
                 }
                 RefPicListModification::RemapLongTerm(long_term_pic_num) => {
                     if let Some(idx) = self.find_long_term_in_dpb(*long_term_pic_num) {
-                        self.place_picture_in_list(ref_list0, idx, ref_idx_l0);
-                        ref_idx_l0 += 1;
+                        self.place_picture_in_list(ref_list, idx, ref_idx);
+                        ref_idx += 1;
                     }
                 }
             }
@@ -1325,7 +1336,11 @@ impl Decoder {
             ref_list1.swap(0, 1);
         }
 
-        self.modify_ref_pic_list1(slice, &mut ref_list1);
+        self.modify_ref_pic_list(
+            slice,
+            &slice.header.ref_pic_list_modification.list1,
+            &mut ref_list1,
+        );
 
         let len = (slice.header.num_ref_idx_l1_active_minus1 + 1) as usize;
         if ref_list1.len() > len {
@@ -1334,59 +1349,6 @@ impl Decoder {
 
         slice.ref_pic_list1 = ref_list1;
         Ok(())
-    }
-
-    // Section 8.2.4.3 Reordering process for reference picture lists (list 1)
-    fn modify_ref_pic_list1(&self, slice: &Slice, ref_list1: &mut Vec<usize>) {
-        if slice.header.ref_pic_list_modification.list1.is_empty() {
-            return;
-        }
-
-        let max_frame_num = 1 << (slice.sps.log2_max_frame_num_minus4 + 4);
-        let curr_frame_num = slice.header.frame_num as i32;
-        let mut pic_num_lx_pred = curr_frame_num;
-        let mut ref_idx_l1 = 0;
-
-        for modification in &slice.header.ref_pic_list_modification.list1 {
-            match modification {
-                RefPicListModification::RemapShortTermNegative(abs_diff_minus1) => {
-                    let abs_diff = (abs_diff_minus1 + 1) as i32;
-                    let pic_num_lx_no_wrap = pic_num_lx_pred - abs_diff;
-                    let pic_num_lx = if pic_num_lx_no_wrap < 0 {
-                        pic_num_lx_no_wrap + max_frame_num
-                    } else {
-                        pic_num_lx_no_wrap
-                    };
-                    pic_num_lx_pred = pic_num_lx;
-
-                    if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
-                        self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
-                        ref_idx_l1 += 1;
-                    }
-                }
-                RefPicListModification::RemapShortTermPositive(abs_diff_minus1) => {
-                    let abs_diff = (abs_diff_minus1 + 1) as i32;
-                    let pic_num_lx_no_wrap = pic_num_lx_pred + abs_diff;
-                    let pic_num_lx = if pic_num_lx_no_wrap >= max_frame_num {
-                        pic_num_lx_no_wrap - max_frame_num
-                    } else {
-                        pic_num_lx_no_wrap
-                    };
-                    pic_num_lx_pred = pic_num_lx;
-
-                    if let Some(idx) = self.find_short_term_in_dpb(pic_num_lx) {
-                        self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
-                        ref_idx_l1 += 1;
-                    }
-                }
-                RefPicListModification::RemapLongTerm(long_term_pic_num) => {
-                    if let Some(idx) = self.find_long_term_in_dpb(*long_term_pic_num) {
-                        self.place_picture_in_list(ref_list1, idx, ref_idx_l1);
-                        ref_idx_l1 += 1;
-                    }
-                }
-            }
-        }
     }
 
     /// Set up colocated picture info on the slice for temporal direct prediction.
@@ -1442,6 +1404,26 @@ fn resolve_ref_pic_list<'a>(
             })
         })
         .collect()
+}
+
+// Section 8.5: produce restored residual blocks for one plane, or empty if
+// the macroblock carries no residual (skipped, or all-zero CBP).
+fn restore_residuals(
+    residual: Option<&Residual>,
+    plane: ColorPlane,
+    qp: u8,
+    scaling: &ResolvedScalingMatrix,
+) -> SmallVec<[Block4x4; 16]> {
+    match residual {
+        Some(r) => r.restore(plane, qp, scaling),
+        None => SmallVec::new(),
+    }
+}
+
+// Section 7.4.5.1 / 8.5.10: apply mb_qp_delta with wraparound across the
+// quantizer range [-qp_bd_offset_y, 51].
+fn next_qp(qp: i32, mb_qp_delta: i32, qp_bd_offset_y: i32) -> i32 {
+    (qp + mb_qp_delta + 52 + 2 * qp_bd_offset_y) % (52 + qp_bd_offset_y) - qp_bd_offset_y
 }
 
 // Section 8.5.8 Derivation process for chroma quantization parameters

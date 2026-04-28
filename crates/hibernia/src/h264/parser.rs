@@ -164,7 +164,7 @@ pub(super) fn more_rbsp_data(input: &mut BitReader) -> bool {
     }
 }
 
-// Section E.1.2 hrd_parameters() — read and discard. The decoder doesn't model
+// Section E.1.2 hrd_parameters() -- read and discard. The decoder doesn't model
 // the CPB schedule; we consume the bits only to keep alignment for the rest of
 // the VUI (notably `low_delay_hrd_flag`, which follows the hrd blocks).
 fn skip_hrd_parameters(input: &mut BitReader) -> ParseResult<()> {
@@ -265,7 +265,7 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     Ok(vui)
 }
 
-// Section 7.3.2.1.1.1 / 7.3.2.2.1 — SPS scaling matrix syntax. Iterates over
+// Section 7.3.2.1.1.1 / 7.3.2.2.1 -- SPS scaling matrix syntax. Iterates over
 // the `seq_scaling_list_present_flag[i]` flags and decodes each present list
 // via `scaling_list::parse_scaling_list`. Non-present entries remain
 // `NotPresent` so the resolver can apply fallback rule A later.
@@ -303,7 +303,7 @@ fn parse_seq_scaling_matrix(
     Ok(matrix)
 }
 
-// Section 7.3.2.2.1 — PPS scaling matrix. The 8x8 list count here depends on
+// Section 7.3.2.2.1 -- PPS scaling matrix. The 8x8 list count here depends on
 // both `chroma_format_idc` and `transform_8x8_mode_flag`.
 fn parse_pic_scaling_matrix(
     input: &mut BitReader,
@@ -1039,9 +1039,9 @@ pub fn parse_slice_header(
 // Returns predIntra8x8PredMode = min(intra8x8PredModeA, intra8x8PredModeB).
 // Per Clause 8.3.2.1, if either neighbor macroblock is unavailable, both are set
 // to DC (the min is DC); otherwise the neighbor's contribution is its own 8x8 mode,
-// or — if the neighbor is Intra_4x4 — the mode of the 4x4 block adjacent to the
+// or -- if the neighbor is Intra_4x4 -- the mode of the 4x4 block adjacent to the
 // 8x8 boundary (Eq. 8-72). Intra_4x4 and Intra_8x8 share the same 0..8 mode
-// numbering, so the 4x4→8x8 conversion is a direct u32 round-trip.
+// numbering, so the 4x4->8x8 conversion is a direct u32 round-trip.
 pub fn calc_prev_intra8x8_pred_mode(
     slice: &Slice,
     mb: &IMb,
@@ -1885,14 +1885,8 @@ fn derive_spatial_direct_sub(
 /// Returns the colocated grid (x, y) for direct_8x8_inference_flag=1.
 /// Per spec Section 8.4.1.2.3: luma4x4BlkIdx = 5 * mbPartIdx, then inverse-scanned
 /// to pixel coordinates and converted to 4x4 grid indices.
-/// Results: mbPartIdx 0→(0,0), 1→(3,0), 2→(0,3), 3→(3,3).
 fn col_block_for_direct_8x8(mb_part_idx: usize) -> (usize, usize) {
-    let luma4x4 = 5 * mb_part_idx;
-    let group = luma4x4 / 4;
-    let sub = luma4x4 % 4;
-    let px = (group % 2) * 8 + (sub % 2) * 4;
-    let py = (group / 2) * 8 + (sub / 2) * 4;
-    (px / 4, py / 4)
+    [(0, 0), (3, 0), (0, 3), (3, 3)][mb_part_idx]
 }
 
 // Section 8.4.1.2.3 Temporal direct prediction
@@ -2049,27 +2043,25 @@ fn derive_temporal_direct_partition(
     let ref_idx_l0 = map_col_to_list0(slice, col_ref_poc);
 
     // Temporal scaling
-    let td = clip_i32(col_poc - col_ref_poc, -128, 127);
-    let tb = clip_i32(current_poc - col_ref_poc, -128, 127);
+    let td = (col_poc - col_ref_poc).clamp(-128, 127);
+    let tb = (current_poc - col_ref_poc).clamp(-128, 127);
 
     let (mv_l0, mv_l1) = if td == 0 {
         // No temporal distance in colocated: just copy
         (mv_col, MotionVector::default())
     } else {
         let tx = (16384 + (td.abs() >> 1)) / td;
-        let dist_scale_factor = clip_i32((tb * tx + 32) >> 6, -1024, 1023);
+        let dist_scale_factor = ((tb * tx + 32) >> 6).clamp(-1024, 1023);
         let mv_l0 = MotionVector {
-            x: clip_i32((dist_scale_factor * (mv_col.x as i32) + 128) >> 8, -32768, 32767)
-                as i16,
-            y: clip_i32((dist_scale_factor * (mv_col.y as i32) + 128) >> 8, -32768, 32767)
-                as i16,
+            x: ((dist_scale_factor * (mv_col.x as i32) + 128) >> 8).clamp(-32768, 32767) as i16,
+            y: ((dist_scale_factor * (mv_col.y as i32) + 128) >> 8).clamp(-32768, 32767) as i16,
         };
-        // Eq 8-204: mvL1 = mvL0 − mvCol. Compute in i32 since the difference of
-        // two i16s can exceed i16 range (e.g. i16::MAX − i16::MIN = 65535), then
+        // Eq 8-204: mvL1 = mvL0 - mvCol. Compute in i32 since the difference of
+        // two i16s can exceed i16 range (e.g. i16::MAX - i16::MIN = 65535), then
         // clip to i16 to fit the motion-vector storage.
         let mv_l1 = MotionVector {
-            x: clip_i32(mv_l0.x as i32 - mv_col.x as i32, i16::MIN as i32, i16::MAX as i32) as i16,
-            y: clip_i32(mv_l0.y as i32 - mv_col.y as i32, i16::MIN as i32, i16::MAX as i32) as i16,
+            x: (mv_l0.x as i32 - mv_col.x as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            y: (mv_l0.y as i32 - mv_col.y as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
         };
         (mv_l0, mv_l1)
     };
@@ -2094,10 +2086,6 @@ fn map_col_to_list0(slice: &Slice, col_ref_poc: i32) -> usize {
     }
     // Fallback: if no match found, use 0
     0
-}
-
-fn clip_i32(val: i32, min_val: i32, max_val: i32) -> i32 {
-    val.max(min_val).min(max_val)
 }
 
 pub fn calculate_motion(
@@ -2201,7 +2189,7 @@ pub fn calculate_motion(
 
                 for j in 0..sub_mb.sub_mb_type.NumSubMbPart() {
                     let mvd_info = sub_mb.partitions[j];
-                    // Table 7-17 – Sub-macroblock types in P macroblocks
+                    // Table 7-17 - Sub-macroblock types in P macroblocks
                     let (part_w, part_h, dx, dy) = match (sub_mb.sub_mb_type, j) {
                         (SubMbType::P_L0_8x8, _) => (8, 8, 0, 0),
                         (SubMbType::P_L0_8x4, 0) => (8, 4, 0, 0),
@@ -2235,7 +2223,7 @@ pub fn calculate_motion(
 
             for i in 0..num_mb_part {
                 let mvd_info = partitions[i];
-                // Table 7-13 – Macroblock type values 0 to 4 for P and SP slices
+                // Table 7-13 - Macroblock type values 0 to 4 for P and SP slices
                 let (part_w, part_h, part_x, part_y) = match (mb_type, i) {
                     (PMbType::P_L0_16x16, _) => (16, 16, 0, 0),
                     (PMbType::P_L0_L0_16x8, 0) => (16, 8, 0, 0),
@@ -2520,26 +2508,26 @@ mod tests {
 
     #[test]
     pub fn test_remove_emulation_if_needed() {
-        // No emulation byte present — return must borrow the input verbatim.
+        // No emulation byte present -- return must borrow the input verbatim.
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0f, 0x00, 0x00, 0x00, 0x00];
         let result = remove_emulation_if_needed(&data);
         assert!(matches!(result, Cow::Borrowed(_)));
         assert_eq!(&*result, &data);
 
-        // Two emulation bytes (0x03 after 00 00) — both stripped, owned vec.
+        // Two emulation bytes (0x03 after 00 00) -- both stripped, owned vec.
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0f, 0x00, 0x00, 0x03, 0x00];
         let result = remove_emulation_if_needed(&data);
         assert!(matches!(result, Cow::Owned(_)));
         assert_eq!(&*result, &[0xAA, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00][..]);
 
-        // Trailing 0x03 after only one zero — kept; trailing 0x03 after two zeros
+        // Trailing 0x03 after only one zero -- kept; trailing 0x03 after two zeros
         // at the very end is treated as a prevention byte and dropped.
         let data = [0x00, 0x03, 0x0f, 0x00, 0x00, 0x03];
         let result = remove_emulation_if_needed(&data);
         assert!(matches!(result, Cow::Owned(_)));
         assert_eq!(&*result, &[0x00, 0x03, 0x0f, 0x00, 0x00][..]);
 
-        // Plain bytes — borrowed.
+        // Plain bytes -- borrowed.
         let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4];
         let result = remove_emulation_if_needed(&data);
         assert!(matches!(result, Cow::Borrowed(_)));

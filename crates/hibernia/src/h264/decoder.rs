@@ -96,7 +96,7 @@ pub struct MotionFieldStorage {
     pub mb_is_intra: BitVec,
     /// Slice index that decoded each MB, indexed by mb_addr. Used by
     /// temporal direct prediction to look up the right ref-list POCs in
-    /// `slice_ref_pocs` — each MB's `ref_idx_l0/l1` is interpreted in the
+    /// `slice_ref_pocs` -- each MB's `ref_idx_l0/l1` is interpreted in the
     /// context of *its own slice's* ref pic lists, which can differ across
     /// slices of a multi-slice picture.
     pub mb_slice_id: Vec<u16>,
@@ -177,7 +177,7 @@ pub struct CurrentPicture {
     pub delta_pic_order_cnt_bottom: Option<i32>,
     pub delta_pic_order_cnt: [i32; 2],
 
-    // First slice's header — kept so MMCO / `dec_ref_pic_marking` is applied
+    // First slice's header -- kept so MMCO / `dec_ref_pic_marking` is applied
     // once at finalize time using the picture-defining slice (per Section 7.4.3).
     pub first_slice_header: SliceHeader,
     // SPS active for this picture. Captured so finalize is self-contained:
@@ -249,7 +249,7 @@ fn is_new_picture(
     }
 
     // field_pic_flag differs in value. Field coding is rejected upstream, so
-    // in practice both are always `false` — checked anyway for spec correctness.
+    // in practice both are always `false` -- checked anyway for spec correctness.
     if prev.field_pic_flag != hdr.field_pic_flag {
         return true;
     }
@@ -425,7 +425,7 @@ impl Decoder {
                 // Decoding methods need `&mut self`, which conflicts with a
                 // `self.current_picture.as_mut()` borrow. Take the picture out,
                 // decode into it, then put it back. On decode error the `?`
-                // drops `current` — partial pictures are not retained.
+                // drops `current` -- partial pictures are not retained.
                 let mut current = self.current_picture.take().ok_or_else(|| {
                     DecodingError::MisformedData(
                         "internal: current_picture missing after start".into(),
@@ -595,7 +595,7 @@ impl Decoder {
     /// Builds reference lists, parses the slice's coded data, decodes its
     /// macroblocks into the current picture's frame, and captures per-slice
     /// metadata (deblock parameters, ref-list POCs) while DPB indices are
-    /// still valid — finalize-time consumers (picture-level deblocking and
+    /// still valid -- finalize-time consumers (picture-level deblocking and
     /// motion field) need POCs that reflect the DPB state at decode time.
     fn decode_slice_into_current(
         &mut self,
@@ -607,7 +607,7 @@ impl Decoder {
 
         // Section 7.4.3: `first_mb_in_slice` is strictly increasing across
         // slices of a picture (raster order). Reject streams whose slices
-        // overlap or move backwards — they would silently overwrite already
+        // overlap or move backwards -- they would silently overwrite already
         // decoded MBs.
         if slice.header.first_mb_in_slice < current.next_mb_addr {
             return Err(DecodingError::MisformedData(format!(
@@ -619,7 +619,7 @@ impl Decoder {
         // Section 7.4.1.2.4: picture-scope fields must agree across all slices
         // of a picture. `is_new_picture` would have started a fresh picture
         // when these differ, so a mismatch here means a decoder bug rather
-        // than a bitstream issue — debug-only check.
+        // than a bitstream issue -- debug-only check.
         debug_assert!(
             current.slices_seen == 0
                 || (slice.header.frame_num == current.frame_num
@@ -640,7 +640,7 @@ impl Decoder {
         );
 
         // Section 8.2.4: reference picture lists are constructed before
-        // parsing — temporal direct prediction (used during B-slice parsing)
+        // parsing -- temporal direct prediction (used during B-slice parsing)
         // needs the colocated picture, and the current picture is not yet in
         // the DPB.
         self.construct_ref_pic_list0(slice, pic_order_cnt)?;
@@ -942,11 +942,7 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c)
-                                .try_into()
-                                .map_err(|_| {
-                                    DecodingError::OutOfRange("chroma QP out of u8 range".into())
-                                })?;
+                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c);
                             let chroma_plane = &mut frame.planes[plane_name as usize];
                             let residuals = restore_residuals(
                                 imb.residual.as_deref(),
@@ -985,11 +981,7 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c)
-                                .try_into()
-                                .map_err(|_| {
-                                    DecodingError::OutOfRange("chroma QP out of u8 range".into())
-                                })?;
+                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c);
                             let residuals = restore_residuals(
                                 block.residual.as_deref(),
                                 plane_name,
@@ -1029,11 +1021,7 @@ impl Decoder {
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c)
-                                .try_into()
-                                .map_err(|_| {
-                                    DecodingError::OutOfRange("chroma QP out of u8 range".into())
-                                })?;
+                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c);
                             let residuals = restore_residuals(
                                 block.residual.as_deref(),
                                 plane_name,
@@ -1156,7 +1144,7 @@ impl Decoder {
     }
 
     // Section 8.2.4.3 Reordering process for reference picture lists. Same
-    // algorithm for list0 and list1 — caller passes the matching modifications
+    // algorithm for list0 and list1 -- caller passes the matching modifications
     // and target list.
     fn modify_ref_pic_list(
         &self,
@@ -1229,7 +1217,7 @@ impl Decoder {
             }
         } else {
             // refIdxL0 starts at 0 and increments per spec, so an out-of-bounds
-            // index must be exactly `list.len()` — append.
+            // index must be exactly `list.len()` -- append.
             list.push(pic_idx);
         }
     }
@@ -1426,38 +1414,19 @@ fn next_qp(qp: i32, mb_qp_delta: i32, qp_bd_offset_y: i32) -> i32 {
     (qp + mb_qp_delta + 52 + 2 * qp_bd_offset_y) % (52 + qp_bd_offset_y) - qp_bd_offset_y
 }
 
-// Section 8.5.8 Derivation process for chroma quantization parameters
-pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -> i32 {
+// Section 8.5.8 Derivation process for chroma quantization parameters.
+// The result is statically in u8 range: qp_c is in [-qp_bd_offset_c, 51], and
+// qp_bd_offset_c = 6 * bit_depth_chroma_minus8 in [0, 36], so qp_c + qp_bd_offset_c
+// in [0, 87].
+pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -> u8 {
+    // Table 8-15: identity for qp_i in 0..30, then the spec mapping for 30..52.
+    const TABLE: [u8; 52] = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36, 36, 37, 37, 38, 38, 38, 39,
+        39, 39, 39, 39,
+    ];
     let qp_i = (luma_qp + chroma_qp_offset).clamp(-qp_bd_offset_c, 51);
-
-    // 2. Look up qP_C from qP_I using Table 8-15
-    let qp_c = match qp_i {
-        i if i < 30 => i,
-        30 => 29,
-        31 => 30,
-        32 => 31,
-        33 => 32,
-        34 => 32,
-        35 => 33,
-        36 => 34,
-        37 => 34,
-        38 => 35,
-        39 => 35,
-        40 => 36,
-        41 => 36,
-        42 => 37,
-        43 => 37,
-        44 => 38,
-        45 => 38,
-        46 => 38,
-        47 => 39,
-        48 => 39,
-        49 => 39,
-        50 => 39,
-        51 => 39,
-        _ => unreachable!(),
-    };
-
-    qp_c + qp_bd_offset_c
+    let qp_c = if qp_i < 0 { qp_i } else { TABLE[qp_i as usize] as i32 };
+    (qp_c + qp_bd_offset_c) as u8
 }
 

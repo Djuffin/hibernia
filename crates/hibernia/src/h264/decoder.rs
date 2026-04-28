@@ -391,10 +391,8 @@ impl Decoder {
     pub fn decode(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
         use nal::NalUnitType;
 
-        let nal_vec = parser::remove_emulation_if_needed(nal_data);
-        let rbsp_data = if nal_vec.is_empty() { nal_data } else { nal_vec.as_slice() };
-
-        let mut input = parser::BitReader::new(rbsp_data);
+        let rbsp_data = parser::remove_emulation_if_needed(nal_data);
+        let mut input = parser::BitReader::new(&rbsp_data);
         let parse_error_handler = DecodingError::MisformedData;
 
         let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;

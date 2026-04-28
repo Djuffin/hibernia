@@ -76,11 +76,8 @@ fn prepare_cabac_slice_data(stream: &[u8]) -> (DecoderContext, Vec<Vec<u8>>) {
 
     for nal_result in nal_parser {
         let nal_data = nal_result.expect("NAL parse failed during CABAC bench setup");
-        let nal_vec = remove_emulation_if_needed(&nal_data);
-        let rbsp_data: &[u8] =
-            if nal_vec.is_empty() { nal_data.as_slice() } else { nal_vec.as_slice() };
-
-        let mut reader = BitReader::new(rbsp_data);
+        let rbsp_data = remove_emulation_if_needed(&nal_data);
+        let mut reader = BitReader::new(&rbsp_data);
         let nal_header =
             parse_nal_header(&mut reader).expect("NAL header parse failed during CABAC bench setup");
 
@@ -96,7 +93,7 @@ fn prepare_cabac_slice_data(stream: &[u8]) -> (DecoderContext, Vec<Vec<u8>>) {
             NalUnitType::NonIDRSlice => {
                 // Re-read from the start of the rbsp so the bench always sees the
                 // slice header bits in the same position as when it runs.
-                let mut hdr_reader = BitReader::new(rbsp_data);
+                let mut hdr_reader = BitReader::new(&rbsp_data);
                 let nal_header_again =
                     parse_nal_header(&mut hdr_reader).expect("NAL header re-parse failed");
                 let slice = parse_slice_header(&ctx, &nal_header_again, &mut hdr_reader)

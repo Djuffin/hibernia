@@ -1,4 +1,6 @@
 #![macro_use]
+use std::borrow::Cow;
+
 use super::decoder;
 use super::macroblock;
 use super::nal;
@@ -571,7 +573,10 @@ pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
     None
 }
 
-pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
+/// Strip emulation_prevention_three_byte (0x03 inserted after `0x00 0x00`) per
+/// section 7.4.1.1. Borrows the input when no prevention bytes are present, so
+/// the no-emulation path is allocation-free.
+pub fn remove_emulation_if_needed(input: &[u8]) -> Cow<'_, [u8]> {
     let mut zeros = 0;
     let mut result = Vec::<u8>::new();
     for (byte_index, byte) in input.iter().enumerate() {
@@ -601,7 +606,11 @@ pub fn remove_emulation_if_needed(input: &[u8]) -> Vec<u8> {
             }
         }
     }
-    result
+    if result.is_empty() {
+        Cow::Borrowed(input)
+    } else {
+        Cow::Owned(result)
+    }
 }
 
 pub fn parse_nal_header(input: &mut BitReader) -> ParseResult<NalHeader> {
@@ -2511,19 +2520,29 @@ mod tests {
 
     #[test]
     pub fn test_remove_emulation_if_needed() {
+        // No emulation byte present — return must borrow the input verbatim.
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0f, 0x00, 0x00, 0x00, 0x00];
-        assert!(remove_emulation_if_needed(&data).is_empty());
+        let result = remove_emulation_if_needed(&data);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&*result, &data);
 
+        // Two emulation bytes (0x03 after 00 00) — both stripped, owned vec.
         let data = [0xAA, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0f, 0x00, 0x00, 0x03, 0x00];
-        assert_eq!(
-            remove_emulation_if_needed(&data),
-            vec![0xAA, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00]
-        );
+        let result = remove_emulation_if_needed(&data);
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(&*result, &[0xAA, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00][..]);
 
+        // Trailing 0x03 after only one zero — kept; trailing 0x03 after two zeros
+        // at the very end is treated as a prevention byte and dropped.
         let data = [0x00, 0x03, 0x0f, 0x00, 0x00, 0x03];
-        assert_eq!(remove_emulation_if_needed(&data), vec![0x00, 0x03, 0x0f, 0x00, 0x00]);
+        let result = remove_emulation_if_needed(&data);
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(&*result, &[0x00, 0x03, 0x0f, 0x00, 0x00][..]);
 
+        // Plain bytes — borrowed.
         let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4];
-        assert!(remove_emulation_if_needed(&data).is_empty());
+        let result = remove_emulation_if_needed(&data);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&*result, &data);
     }
 }

@@ -829,7 +829,7 @@ fn test_ffmpeg_high_custom_scaling_matrix() -> Result<(), String> {
             // Strip emulation-prevention bytes before parsing (same path as
             // the real decoder takes in decoder.rs).
             let stripped = crate::h264::parser::remove_emulation_if_needed(&raw);
-            let bytes: &[u8] = if stripped.is_empty() { &raw } else { &stripped };
+            let bytes: &[u8] = &stripped;
             let nal_type = bytes[0] & 0x1F;
             let rbsp = &bytes[1..];
             let mut reader = crate::h264::rbsp::RbspReader::new(rbsp);

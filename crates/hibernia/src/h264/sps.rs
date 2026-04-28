@@ -1,12 +1,6 @@
 use super::scaling_list::SeqScalingMatrix;
 use super::{tables, ChromaFormat, Profile};
 
-/// Hypothetical Reference Decoder (HRD) parameters.
-#[derive(
-    serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema,
-)]
-pub struct HdrParameters {}
-
 /// Video Usability Information (VUI) parameters.
 #[derive(
     serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default, schemars::JsonSchema,
@@ -37,8 +31,11 @@ pub struct VuiParameters {
     pub time_scale: u32,
     pub fixed_frame_rate_flag: bool,
 
-    pub nal_hrd_parameters: Option<HdrParameters>,
-    pub vcl_hrd_parameters: Option<HdrParameters>,
+    /// Set when the SPS signals NAL HRD parameters. The body is consumed and
+    /// discarded by the parser; the decoder doesn't model the CPB schedule.
+    pub nal_hrd_parameters_present_flag: bool,
+    /// Set when the SPS signals VCL HRD parameters. See `nal_hrd_parameters_present_flag`.
+    pub vcl_hrd_parameters_present_flag: bool,
     pub low_delay_hrd_flag: bool,
 
     pub pic_struct_present_flag: bool,

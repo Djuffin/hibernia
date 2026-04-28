@@ -127,13 +127,13 @@ pub fn write_vui_parameters(vui: &VuiParameters, writer: &mut RbspWriter) -> Wri
         writer.f(vui.fixed_frame_rate_flag)?;
     }
 
-    writer.f(vui.nal_hrd_parameters.is_some())?;
-    if vui.nal_hrd_parameters.is_some() {
+    writer.f(vui.nal_hrd_parameters_present_flag)?;
+    if vui.nal_hrd_parameters_present_flag {
         todo!("NAL HRD write");
     }
 
-    writer.f(vui.vcl_hrd_parameters.is_some())?;
-    if vui.vcl_hrd_parameters.is_some() {
+    writer.f(vui.vcl_hrd_parameters_present_flag)?;
+    if vui.vcl_hrd_parameters_present_flag {
         todo!("VCL HRD write");
     }
 

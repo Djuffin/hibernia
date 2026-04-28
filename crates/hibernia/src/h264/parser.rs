@@ -162,6 +162,35 @@ pub(super) fn more_rbsp_data(input: &mut BitReader) -> bool {
     }
 }
 
+// Section E.1.2 hrd_parameters() — read and discard. The decoder doesn't model
+// the CPB schedule; we consume the bits only to keep alignment for the rest of
+// the VUI (notably `low_delay_hrd_flag`, which follows the hrd blocks).
+fn skip_hrd_parameters(input: &mut BitReader) -> ParseResult<()> {
+    let cpb_cnt_minus1: u32;
+    read_value!(input, cpb_cnt_minus1, ue, 8, 0, 31);
+    let _bit_rate_scale: u8;
+    read_value!(input, _bit_rate_scale, u, 4);
+    let _cpb_size_scale: u8;
+    read_value!(input, _cpb_size_scale, u, 4);
+    for _ in 0..=cpb_cnt_minus1 {
+        let _bit_rate_value_minus1: u32;
+        read_value!(input, _bit_rate_value_minus1, ue, 32);
+        let _cpb_size_value_minus1: u32;
+        read_value!(input, _cpb_size_value_minus1, ue, 32);
+        let _cbr_flag: bool;
+        read_value!(input, _cbr_flag, f);
+    }
+    let _initial_cpb_removal_delay_length_minus1: u8;
+    read_value!(input, _initial_cpb_removal_delay_length_minus1, u, 5);
+    let _cpb_removal_delay_length_minus1: u8;
+    read_value!(input, _cpb_removal_delay_length_minus1, u, 5);
+    let _dpb_output_delay_length_minus1: u8;
+    read_value!(input, _dpb_output_delay_length_minus1, u, 5);
+    let _time_offset_length: u8;
+    read_value!(input, _time_offset_length, u, 5);
+    Ok(())
+}
+
 fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
     let mut vui = VuiParameters::default();
 
@@ -205,16 +234,18 @@ fn parse_vui(input: &mut BitReader) -> ParseResult<VuiParameters> {
         read_value!(input, vui.fixed_frame_rate_flag, f);
     }
 
-    let nal_hrd_parameters_present: bool;
-    read_value!(input, nal_hrd_parameters_present, f);
-    if nal_hrd_parameters_present {
-        return Err("NAL HRD parameters are not supported".into());
+    read_value!(input, vui.nal_hrd_parameters_present_flag, f);
+    if vui.nal_hrd_parameters_present_flag {
+        skip_hrd_parameters(input)?;
     }
 
-    let vcl_hrd_parameters_present: bool;
-    read_value!(input, vcl_hrd_parameters_present, f);
-    if vcl_hrd_parameters_present {
-        return Err("VCL HRD parameters are not supported".into());
+    read_value!(input, vui.vcl_hrd_parameters_present_flag, f);
+    if vui.vcl_hrd_parameters_present_flag {
+        skip_hrd_parameters(input)?;
+    }
+
+    if vui.nal_hrd_parameters_present_flag || vui.vcl_hrd_parameters_present_flag {
+        read_value!(input, vui.low_delay_hrd_flag, f);
     }
 
     read_value!(input, vui.pic_struct_present_flag, f);
@@ -2408,6 +2439,21 @@ mod tests {
         assert_eq!(vui.max_dec_frame_buffering, 1);
         assert!(vui.motion_vectors_over_pic_boundaries_flag);
         assert!(vui.bitstream_restriction_flag);
+    }
+
+    // Section E.1.1: when nal_hrd / vcl_hrd flags are set, the parser must
+    // consume the spec'd hrd_parameters() body and then read low_delay_hrd_flag
+    // before pic_struct_present_flag. Synthetic VUI: all flags off until
+    // nal_hrd, minimal hrd_parameters() (cpb_cnt_minus1 = 0, all length fields
+    // 23/24), then low_delay = 1, pic_struct = 1, bitstream_restriction = 0.
+    #[test]
+    pub fn test_vui_with_hrd_skips_body_and_aligns() {
+        let data = [0x06, 0x01, 0xAF, 0x7B, 0xE1, 0x80];
+        let mut input = reader(&data);
+        let vui = parse_vui(&mut input).expect("VUI parsing failed");
+        assert!(vui.low_delay_hrd_flag);
+        assert!(vui.pic_struct_present_flag);
+        assert!(!vui.bitstream_restriction_flag);
     }
 
     #[test]

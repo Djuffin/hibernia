@@ -11,6 +11,10 @@
 //!  10: Sl_8x8_Intra_Cr   11: Sl_8x8_Inter_Cr     (only when chroma_format_idc == 3)
 
 use super::rbsp::{ParseResult, RbspReader};
+use super::tables::{
+    DEFAULT_SCALING_LIST_4X4_INTER, DEFAULT_SCALING_LIST_4X4_INTRA, DEFAULT_SCALING_LIST_8X8_INTER,
+    DEFAULT_SCALING_LIST_8X8_INTRA,
+};
 use super::{ChromaFormat, ColorPlane};
 
 /// 16 coefficients in zig-zag scan order.
@@ -24,28 +28,6 @@ pub const FLAT_4X4_16: ScalingList4x4 = [16; 16];
 
 /// Flat_8x8_16 — all values 16 (spec equation 7-9).
 pub const FLAT_8X8_16: ScalingList8x8 = [16; 64];
-
-/// Table 7-3 — Default_4x4_Intra scaling list.
-pub const DEFAULT_4X4_INTRA: ScalingList4x4 =
-    [6, 13, 13, 20, 20, 20, 28, 28, 28, 28, 32, 32, 32, 37, 37, 42];
-
-/// Table 7-3 — Default_4x4_Inter scaling list.
-pub const DEFAULT_4X4_INTER: ScalingList4x4 =
-    [10, 14, 14, 20, 20, 20, 24, 24, 24, 24, 27, 27, 27, 30, 30, 34];
-
-/// Table 7-4 — Default_8x8_Intra scaling list.
-pub const DEFAULT_8X8_INTRA: ScalingList8x8 = [
-    6, 10, 10, 13, 11, 13, 16, 16, 16, 16, 18, 18, 18, 18, 18, 23, 23, 23, 23, 23, 23, 25, 25, 25,
-    25, 25, 25, 25, 27, 27, 27, 27, 27, 27, 27, 27, 29, 29, 29, 29, 29, 29, 29, 31, 31, 31, 31, 31,
-    31, 33, 33, 33, 33, 33, 36, 36, 36, 36, 38, 38, 38, 40, 40, 42,
-];
-
-/// Table 7-4 — Default_8x8_Inter scaling list.
-pub const DEFAULT_8X8_INTER: ScalingList8x8 = [
-    9, 13, 13, 15, 13, 15, 17, 17, 17, 17, 19, 19, 19, 19, 19, 21, 21, 21, 21, 21, 21, 22, 22, 22,
-    22, 22, 22, 22, 24, 24, 24, 24, 24, 24, 24, 24, 25, 25, 25, 25, 25, 25, 25, 27, 27, 27, 27, 27,
-    27, 28, 28, 28, 28, 28, 30, 30, 30, 30, 32, 32, 32, 33, 33, 35,
-];
 
 /// A single scaling list entry as it appears in a raw SPS or PPS. Preserved
 /// exactly for round-trip encoding.
@@ -201,14 +183,14 @@ pub fn resolve_seq_scaling_matrix(
             ScalingList4x4Entry::Explicit(v) => vec_to_list_4x4(v),
             ScalingList4x4Entry::UseDefault => {
                 if i == 0 || i == 1 || i == 2 {
-                    DEFAULT_4X4_INTRA
+                    DEFAULT_SCALING_LIST_4X4_INTRA
                 } else {
-                    DEFAULT_4X4_INTER
+                    DEFAULT_SCALING_LIST_4X4_INTER
                 }
             }
             ScalingList4x4Entry::NotPresent => match i {
-                0 => DEFAULT_4X4_INTRA,
-                3 => DEFAULT_4X4_INTER,
+                0 => DEFAULT_SCALING_LIST_4X4_INTRA,
+                3 => DEFAULT_SCALING_LIST_4X4_INTER,
                 _ => out.lists_4x4[i - 1],
             },
         };
@@ -231,14 +213,14 @@ pub fn resolve_seq_scaling_matrix(
                 // For indices 6..11 (i.e. our i=0..5), intra = even index,
                 // inter = odd index per Table 7-2.
                 if i % 2 == 0 {
-                    DEFAULT_8X8_INTRA
+                    DEFAULT_SCALING_LIST_8X8_INTRA
                 } else {
-                    DEFAULT_8X8_INTER
+                    DEFAULT_SCALING_LIST_8X8_INTER
                 }
             }
             ScalingList8x8Entry::NotPresent => match i {
-                0 => DEFAULT_8X8_INTRA,
-                1 => DEFAULT_8X8_INTER,
+                0 => DEFAULT_SCALING_LIST_8X8_INTRA,
+                1 => DEFAULT_SCALING_LIST_8X8_INTER,
                 _ => out.lists_8x8[i - 2],
             },
         };
@@ -295,9 +277,9 @@ pub fn resolve_pic_scaling_matrix(
             ScalingList4x4Entry::Explicit(v) => vec_to_list_4x4(v),
             ScalingList4x4Entry::UseDefault => {
                 if i < 3 {
-                    DEFAULT_4X4_INTRA
+                    DEFAULT_SCALING_LIST_4X4_INTRA
                 } else {
-                    DEFAULT_4X4_INTER
+                    DEFAULT_SCALING_LIST_4X4_INTER
                 }
             }
             ScalingList4x4Entry::NotPresent => match i {
@@ -305,14 +287,14 @@ pub fn resolve_pic_scaling_matrix(
                     if sps_has_matrix {
                         sps_resolved.lists_4x4[0]
                     } else {
-                        DEFAULT_4X4_INTRA
+                        DEFAULT_SCALING_LIST_4X4_INTRA
                     }
                 }
                 3 => {
                     if sps_has_matrix {
                         sps_resolved.lists_4x4[3]
                     } else {
-                        DEFAULT_4X4_INTER
+                        DEFAULT_SCALING_LIST_4X4_INTER
                     }
                 }
                 _ => out.lists_4x4[i - 1],
@@ -332,9 +314,9 @@ pub fn resolve_pic_scaling_matrix(
             ScalingList8x8Entry::Explicit(v) => vec_to_list_8x8(&v),
             ScalingList8x8Entry::UseDefault => {
                 if i % 2 == 0 {
-                    DEFAULT_8X8_INTRA
+                    DEFAULT_SCALING_LIST_8X8_INTRA
                 } else {
-                    DEFAULT_8X8_INTER
+                    DEFAULT_SCALING_LIST_8X8_INTER
                 }
             }
             ScalingList8x8Entry::NotPresent => match i {
@@ -342,14 +324,14 @@ pub fn resolve_pic_scaling_matrix(
                     if sps_has_matrix {
                         sps_resolved.lists_8x8[0]
                     } else {
-                        DEFAULT_8X8_INTRA
+                        DEFAULT_SCALING_LIST_8X8_INTRA
                     }
                 }
                 1 => {
                     if sps_has_matrix {
                         sps_resolved.lists_8x8[1]
                     } else {
-                        DEFAULT_8X8_INTER
+                        DEFAULT_SCALING_LIST_8X8_INTER
                     }
                 }
                 _ => out.lists_8x8[i - 2],
@@ -409,12 +391,12 @@ mod tests {
     #[test]
     fn test_defaults_not_confused() {
         // Sanity check: the four default matrices are all distinct.
-        assert_ne!(DEFAULT_4X4_INTRA, DEFAULT_4X4_INTER);
-        assert_ne!(DEFAULT_8X8_INTRA, DEFAULT_8X8_INTER);
-        assert_eq!(DEFAULT_4X4_INTRA.len(), 16);
-        assert_eq!(DEFAULT_4X4_INTER.len(), 16);
-        assert_eq!(DEFAULT_8X8_INTRA.len(), 64);
-        assert_eq!(DEFAULT_8X8_INTER.len(), 64);
+        assert_ne!(DEFAULT_SCALING_LIST_4X4_INTRA, DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_ne!(DEFAULT_SCALING_LIST_8X8_INTRA, DEFAULT_SCALING_LIST_8X8_INTER);
+        assert_eq!(DEFAULT_SCALING_LIST_4X4_INTRA.len(), 16);
+        assert_eq!(DEFAULT_SCALING_LIST_4X4_INTER.len(), 16);
+        assert_eq!(DEFAULT_SCALING_LIST_8X8_INTRA.len(), 64);
+        assert_eq!(DEFAULT_SCALING_LIST_8X8_INTER.len(), 64);
     }
 
     #[test]
@@ -436,15 +418,15 @@ mod tests {
         };
         let r = resolve_seq_scaling_matrix(Some(&matrix), ChromaFormat::YUV420);
         // i=0 -> Default_4x4_Intra, i=1 -> list 0 = Default_4x4_Intra, i=2 -> same
-        assert_eq!(r.lists_4x4[0], DEFAULT_4X4_INTRA);
-        assert_eq!(r.lists_4x4[1], DEFAULT_4X4_INTRA);
-        assert_eq!(r.lists_4x4[2], DEFAULT_4X4_INTRA);
+        assert_eq!(r.lists_4x4[0], DEFAULT_SCALING_LIST_4X4_INTRA);
+        assert_eq!(r.lists_4x4[1], DEFAULT_SCALING_LIST_4X4_INTRA);
+        assert_eq!(r.lists_4x4[2], DEFAULT_SCALING_LIST_4X4_INTRA);
         // i=3 -> Default_4x4_Inter, i=4,5 cascade
-        assert_eq!(r.lists_4x4[3], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_4x4[4], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_4x4[5], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_8x8[0], DEFAULT_8X8_INTRA);
-        assert_eq!(r.lists_8x8[1], DEFAULT_8X8_INTER);
+        assert_eq!(r.lists_4x4[3], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_4x4[4], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_4x4[5], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_8x8[0], DEFAULT_SCALING_LIST_8X8_INTRA);
+        assert_eq!(r.lists_8x8[1], DEFAULT_SCALING_LIST_8X8_INTER);
     }
 
     #[test]
@@ -455,21 +437,21 @@ mod tests {
         };
         let r = resolve_seq_scaling_matrix(Some(&matrix), ChromaFormat::YUV420);
         // Indices 0..3 are "intra variants" per table 7-2.
-        assert_eq!(r.lists_4x4[0], DEFAULT_4X4_INTRA);
-        assert_eq!(r.lists_4x4[1], DEFAULT_4X4_INTRA);
-        assert_eq!(r.lists_4x4[2], DEFAULT_4X4_INTRA);
-        assert_eq!(r.lists_4x4[3], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_4x4[4], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_4x4[5], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_8x8[0], DEFAULT_8X8_INTRA);
-        assert_eq!(r.lists_8x8[1], DEFAULT_8X8_INTER);
+        assert_eq!(r.lists_4x4[0], DEFAULT_SCALING_LIST_4X4_INTRA);
+        assert_eq!(r.lists_4x4[1], DEFAULT_SCALING_LIST_4X4_INTRA);
+        assert_eq!(r.lists_4x4[2], DEFAULT_SCALING_LIST_4X4_INTRA);
+        assert_eq!(r.lists_4x4[3], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_4x4[4], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_4x4[5], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_8x8[0], DEFAULT_SCALING_LIST_8X8_INTRA);
+        assert_eq!(r.lists_8x8[1], DEFAULT_SCALING_LIST_8X8_INTER);
     }
 
     #[test]
     fn test_resolve_pps_no_matrix_copies_sps() {
         let sps = ResolvedScalingMatrix {
-            lists_4x4: [DEFAULT_4X4_INTRA; 6],
-            lists_8x8: [DEFAULT_8X8_INTRA; 6],
+            lists_4x4: [DEFAULT_SCALING_LIST_4X4_INTRA; 6],
+            lists_8x8: [DEFAULT_SCALING_LIST_8X8_INTRA; 6],
         };
         let r = resolve_pic_scaling_matrix(&sps, true, None, true, ChromaFormat::YUV420);
         assert_eq!(r, sps);
@@ -590,7 +572,7 @@ mod tests {
             lists_8x8: vec![ScalingList8x8Entry::NotPresent; 2],
         };
         let r = resolve_seq_scaling_matrix(Some(&matrix), ChromaFormat::YUV420);
-        assert_eq!(r.lists_4x4[0], DEFAULT_4X4_INTRA);
+        assert_eq!(r.lists_4x4[0], DEFAULT_SCALING_LIST_4X4_INTRA);
     }
 
     #[test]
@@ -611,14 +593,14 @@ mod tests {
             true, // transform_8x8_mode_flag
             ChromaFormat::YUV420,
         );
-        assert_eq!(r.lists_4x4[0], DEFAULT_4X4_INTRA);
-        assert_eq!(r.lists_4x4[1], DEFAULT_4X4_INTRA); // cascade via prior
-        assert_eq!(r.lists_4x4[2], DEFAULT_4X4_INTRA);
-        assert_eq!(r.lists_4x4[3], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_4x4[4], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_4x4[5], DEFAULT_4X4_INTER);
-        assert_eq!(r.lists_8x8[0], DEFAULT_8X8_INTRA);
-        assert_eq!(r.lists_8x8[1], DEFAULT_8X8_INTER);
+        assert_eq!(r.lists_4x4[0], DEFAULT_SCALING_LIST_4X4_INTRA);
+        assert_eq!(r.lists_4x4[1], DEFAULT_SCALING_LIST_4X4_INTRA); // cascade via prior
+        assert_eq!(r.lists_4x4[2], DEFAULT_SCALING_LIST_4X4_INTRA);
+        assert_eq!(r.lists_4x4[3], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_4x4[4], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_4x4[5], DEFAULT_SCALING_LIST_4X4_INTER);
+        assert_eq!(r.lists_8x8[0], DEFAULT_SCALING_LIST_8X8_INTRA);
+        assert_eq!(r.lists_8x8[1], DEFAULT_SCALING_LIST_8X8_INTER);
     }
 
     #[test]

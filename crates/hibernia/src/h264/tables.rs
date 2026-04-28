@@ -16,6 +16,18 @@ pub const DEFAULT_SCALING_LIST_4X4_INTRA: [u8; 16] =
 pub const DEFAULT_SCALING_LIST_4X4_INTER: [u8; 16] =
     [10, 14, 14, 20, 20, 20, 24, 24, 24, 24, 27, 27, 27, 30, 30, 34];
 
+// Table 7-4 – Specification of default scaling lists Default_8x8_Intra and Default_8x8_Inter
+pub const DEFAULT_SCALING_LIST_8X8_INTRA: [u8; 64] = [
+    6, 10, 10, 13, 11, 13, 16, 16, 16, 16, 18, 18, 18, 18, 18, 23, 23, 23, 23, 23, 23, 25, 25, 25,
+    25, 25, 25, 25, 27, 27, 27, 27, 27, 27, 27, 27, 29, 29, 29, 29, 29, 29, 29, 31, 31, 31, 31, 31,
+    31, 33, 33, 33, 33, 33, 36, 36, 36, 36, 38, 38, 38, 40, 40, 42,
+];
+pub const DEFAULT_SCALING_LIST_8X8_INTER: [u8; 64] = [
+    9, 13, 13, 15, 13, 15, 17, 17, 17, 17, 19, 19, 19, 19, 19, 21, 21, 21, 21, 21, 21, 22, 22, 22,
+    22, 22, 22, 22, 24, 24, 24, 24, 24, 24, 24, 24, 25, 25, 25, 25, 25, 25, 25, 27, 27, 27, 27, 27,
+    27, 28, 28, 28, 28, 28, 30, 30, 30, 30, 32, 32, 32, 33, 33, 35,
+];
+
 // Table 9-4 – Assignment of codeNum to values of coded_block_pattern for
 // macroblock prediction modes
 const CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN: [u8; 48] = [

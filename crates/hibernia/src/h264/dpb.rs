@@ -169,7 +169,6 @@ impl DecodedPictureBuffer {
     }
 
     /// Outputs all non-reference pictures that are needed for output, sorted by POC.
-    /// Used by flush_on_idr after marking all pictures as unused.
     pub fn get_pictures_for_output(&mut self) -> Vec<Picture> {
         let mut output = Vec::new();
         let mut i = 0;
@@ -186,26 +185,6 @@ impl DecodedPictureBuffer {
         output.sort_by_key(|p| p.pic_order_cnt);
 
         output
-    }
-
-    pub fn flush_on_idr(&mut self) -> Vec<Picture> {
-        for pic in self.pictures.iter_mut() {
-            pic.marking = DpbMarking::UnusedForReference;
-        }
-        let output = self.get_pictures_for_output();
-        self.pictures.clear();
-        output
-    }
-
-    pub fn find_short_term_ref(&self, pic_num: u16) -> Option<&DpbPicture> {
-        self.pictures.iter().find(|p| p.marking.is_short_term() && p.picture.frame_num == pic_num)
-    }
-
-    pub fn find_long_term_ref(&self, long_term_pic_num: u32) -> Option<&DpbPicture> {
-        self.pictures.iter().find(|p| match p.marking {
-            DpbMarking::UsedForLongTermReference(idx) => idx == long_term_pic_num,
-            _ => false,
-        })
     }
 
     /// Section C.2.3 / 8.2.5: Mark prior references and set current picture's marking.
@@ -544,57 +523,6 @@ mod tests {
         assert_eq!(output_pics[0].pic_order_cnt, 2);
         assert_eq!(output_pics[1].pic_order_cnt, 4);
         assert_eq!(output_pics[2].pic_order_cnt, 6);
-    }
-
-    #[test]
-    fn test_dpb_flush_on_idr() {
-        let mut dpb = DecodedPictureBuffer::new();
-        dpb.set_max_size(3);
-
-        let pic1 = create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference);
-        let pic2 = create_dummy_dpb_picture(2, 4, DpbMarking::UsedForLongTermReference(0));
-        // Lower POC, but needed for output
-        let pic3 = create_dummy_dpb_picture(3, 0, DpbMarking::UnusedForReference);
-
-        dpb.store_picture(pic1);
-        dpb.store_picture(pic2);
-        dpb.store_picture(pic3);
-
-        let output_pics = dpb.flush_on_idr();
-
-        assert_eq!(output_pics.len(), 3);
-        assert_eq!(output_pics[0].pic_order_cnt, 0); // Check if sorted by POC
-        assert_eq!(output_pics[1].pic_order_cnt, 2);
-        assert_eq!(output_pics[2].pic_order_cnt, 4);
-        assert!(dpb.pictures.is_empty());
-    }
-
-    #[test]
-    fn test_find_reference_pictures() {
-        let mut dpb = DecodedPictureBuffer::new();
-        dpb.set_max_size(3);
-
-        let pic1 = create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference);
-        let pic2 = create_dummy_dpb_picture(2, 4, DpbMarking::UsedForLongTermReference(0));
-        let pic3 = create_dummy_dpb_picture(3, 6, DpbMarking::UnusedForReference);
-
-        dpb.store_picture(pic1);
-        dpb.store_picture(pic2);
-        dpb.store_picture(pic3);
-
-        // Find short-term reference
-        let st_ref = dpb.find_short_term_ref(1);
-        assert!(st_ref.is_some());
-        assert_eq!(st_ref.unwrap().picture.frame_num, 1);
-
-        // Find long-term reference
-        let lt_ref = dpb.find_long_term_ref(0);
-        assert!(lt_ref.is_some());
-        assert_eq!(lt_ref.unwrap().picture.frame_num, 2);
-
-        // Find non-existent references
-        assert!(dpb.find_short_term_ref(99).is_none());
-        assert!(dpb.find_long_term_ref(99).is_none());
     }
 
     #[test]

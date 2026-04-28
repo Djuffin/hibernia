@@ -787,6 +787,20 @@ pub fn transform_8x8(block: &mut Block8x8) {
     }
 }
 
+/// Adds a 4x4 residual block to a flat sample buffer at `origin` with row stride
+/// `stride`, saturating to u8 range. Section 8.5.14: residuals are added to
+/// predicted samples after inverse transform/scaling.
+#[inline]
+pub(super) fn add_residual_4x4(buf: &mut [u8], origin: usize, stride: usize, residual: &Block4x4) {
+    for y in 0..4 {
+        let row_base = origin + y * stride;
+        for x in 0..4 {
+            let v = buf[row_base + x] as i32 + residual.samples[y][x];
+            buf[row_base + x] = v.clamp(0, 255) as u8;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

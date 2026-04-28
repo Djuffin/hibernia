@@ -4,7 +4,7 @@ use super::macroblock::{
     self, get_4x4chroma_block_location, BMb, MbPredictionMode, MotionVector, PMb, PartitionInfo,
 };
 use super::slice::{Slice, SliceType};
-use super::residual::Block4x4;
+use super::residual::{add_residual_4x4, Block4x4};
 use super::{ColorPlane, Point};
 use v_frame::plane::{Plane, PlaneOffset};
 
@@ -757,13 +757,7 @@ pub fn render_luma_inter_prediction(
         let blk_idx =
             macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
         if let Some(residual_blk) = residuals.get(blk_idx as usize) {
-            for y in 0..4 {
-                for x in 0..4 {
-                    let res = residual_blk.samples[y][x];
-                    let pred = dst[y * 4 + x] as i32;
-                    dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
-                }
-            }
+            add_residual_4x4(&mut dst, 0, 4, residual_blk);
         }
 
         // Copy to frame
@@ -965,14 +959,7 @@ pub fn render_chroma_inter_prediction(
         let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
         let blk_base =
             mb_origin + (blk_loc.y as usize) * chroma_stride + (blk_loc.x as usize);
-        for y in 0..4 {
-            let row_base = blk_base + y * chroma_stride;
-            for x in 0..4 {
-                let res = residual_blk.samples[y][x];
-                let pred = chroma_data[row_base + x] as i32;
-                chroma_data[row_base + x] = (pred + res).clamp(0, 255) as u8;
-            }
-        }
+        add_residual_4x4(chroma_data, blk_base, chroma_stride, residual_blk);
     }
     Ok(())
 }
@@ -1129,13 +1116,7 @@ pub fn render_luma_inter_prediction_b(
         let blk_idx =
             macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
         if let Some(residual_blk) = residuals.get(blk_idx as usize) {
-            for y in 0..4 {
-                for x in 0..4 {
-                    let res = residual_blk.samples[y][x];
-                    let pred = dst[y * 4 + x] as i32;
-                    dst[y * 4 + x] = (pred + res).clamp(0, 255) as u8;
-                }
-            }
+            add_residual_4x4(&mut dst, 0, 4, residual_blk);
         }
 
         // Copy to frame
@@ -1349,14 +1330,7 @@ pub fn render_chroma_inter_prediction_b(
         let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
         let blk_base =
             mb_origin + (blk_loc.y as usize) * chroma_stride + (blk_loc.x as usize);
-        for y in 0..4 {
-            let row_base = blk_base + y * chroma_stride;
-            for x in 0..4 {
-                let res = residual_blk.samples[y][x];
-                let pred = chroma_data[row_base + x] as i32;
-                chroma_data[row_base + x] = (pred + res).clamp(0, 255) as u8;
-            }
-        }
+        add_residual_4x4(chroma_data, blk_base, chroma_stride, residual_blk);
     }
     Ok(())
 }

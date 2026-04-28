@@ -1408,6 +1408,7 @@ fn resolve_ref_pic_list<'a>(
 
 // Section 8.5: produce restored residual blocks for one plane, or empty if
 // the macroblock carries no residual (skipped, or all-zero CBP).
+#[inline]
 fn restore_residuals(
     residual: Option<&Residual>,
     plane: ColorPlane,
@@ -1422,6 +1423,7 @@ fn restore_residuals(
 
 // Section 7.4.5.1 / 8.5.10: apply mb_qp_delta with wraparound across the
 // quantizer range [-qp_bd_offset_y, 51].
+#[inline]
 fn next_qp(qp: i32, mb_qp_delta: i32, qp_bd_offset_y: i32) -> i32 {
     (qp + mb_qp_delta + 52 + 2 * qp_bd_offset_y) % (52 + qp_bd_offset_y) - qp_bd_offset_y
 }

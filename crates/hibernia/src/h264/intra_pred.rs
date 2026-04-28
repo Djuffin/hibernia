@@ -7,7 +7,7 @@ use super::macroblock::{
     get_8x8luma_block_location, IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode,
     Intra_8x8_SamplePredMode, Intra_Chroma_Pred_Mode, MbAddr, MbNeighborName,
 };
-use super::residual::Block4x4;
+use super::residual::{add_residual_4x4, Block4x4};
 use super::slice::Slice;
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::Point;
@@ -257,11 +257,9 @@ pub fn render_luma_4x4_intra_prediction(
         }
 
         if let Some(residual) = residuals.get(blk_idx as usize) {
-            for (y, row) in target_slice.rows_iter_mut().take(4).enumerate() {
-                for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                    *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;
-                }
-            }
+            let stride = target.cfg.stride;
+            let origin = ctx.offset.y as usize * stride + ctx.offset.x as usize;
+            add_residual_4x4(target.data_origin_mut(), origin, stride, residual);
         }
     }
 }
@@ -451,20 +449,15 @@ pub fn render_luma_8x8_intra_prediction(
                 *pixel = pred[y][x];
             }
         }
+        let stride = target.cfg.stride;
+        let mb_origin = ctx.offset.y as usize * stride + ctx.offset.x as usize;
+        let buf = target.data_origin_mut();
         for i4x4 in 0..4 {
             let sub_idx = (blk_idx as usize) * 4 + i4x4;
             let Some(residual) = residuals.get(sub_idx) else { continue };
             let sub_x = (i4x4 & 1) * 4;
             let sub_y = (i4x4 >> 1) * 4;
-            let mut sub_slice = target.mut_slice(PlaneOffset {
-                x: ctx.offset.x + sub_x as isize,
-                y: ctx.offset.y + sub_y as isize,
-            });
-            for (y, row) in sub_slice.rows_iter_mut().take(4).enumerate() {
-                for (x, pixel) in row.iter_mut().take(4).enumerate() {
-                    *pixel = (*pixel as i32 + residual.samples[y][x]).clamp(0, 255) as u8;
-                }
-            }
+            add_residual_4x4(buf, mb_origin + sub_y * stride + sub_x, stride, residual);
         }
     }
 }
@@ -960,13 +953,7 @@ pub fn render_chroma_intra_prediction(
     for (blk_idx, residual) in residuals.iter().enumerate() {
         let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
         let blk_base = mb_origin + (blk_loc.y as usize) * stride + (blk_loc.x as usize);
-        for ry in 0..4 {
-            let row_base = blk_base + ry * stride;
-            for rx in 0..4 {
-                let v = data[row_base + rx] as i32 + residual.samples[ry][rx];
-                data[row_base + rx] = v.clamp(0, 255) as u8;
-            }
-        }
+        add_residual_4x4(data, blk_base, stride, residual);
     }
 }
 

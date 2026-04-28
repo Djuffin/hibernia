@@ -463,7 +463,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     // one 32-bit read to amortise `bitstream_io` call overhead over many
     // CABAC bins; the cold path walks byte-by-byte (and then bit-by-bit)
     // near EOF. We only ask the reader for N bits when we know N bits are
-    // available — `bitstream_io` poisons the reader on a failed read, which
+    // available -- `bitstream_io` poisons the reader on a failed read, which
     // would otherwise swallow any leftover bits.
     #[inline]
     fn refill_bits(&mut self) -> ParseResult<()> {
@@ -1272,7 +1272,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     /// Cached variant of `get_ctx_idx_inc_coded_block_flag`. Reads neighbor
     /// MB-level state from a `ResidualNeighborCache` precomputed at the start of
     /// `parse_residual_cabac` instead of re-walking `slice.get_mb_neighbor` and
-    /// pattern-matching the neighbor `Macroblock` on every cbf decode (28× per
+    /// pattern-matching the neighbor `Macroblock` on every cbf decode (28x per
     /// MB in the worst case). Behavior must match `get_ctx_idx_inc_coded_block_flag`.
     fn get_ctx_idx_inc_coded_block_flag_cached(
         cache: &ResidualNeighborCache,
@@ -1351,7 +1351,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 return 0;
             }
 
-            // get_cbp — for the internal case the caller-side branch in the
+            // get_cbp -- for the internal case the caller-side branch in the
             // original used Some(curr_mb.coded_block_pattern), so cbp is always
             // available once we reach this point.
             let cbp = if internal {
@@ -1439,7 +1439,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             // Eq 9-22: Min( levelListIdx / NumC8x8, 2 )
             min(scanning_pos, 2)
         } else if matches!(ctx_block_cat, 5 | 9 | 13) {
-            // Table 9-43 (frame scan). Field scan is unsupported — callers reject
+            // Table 9-43 (frame scan). Field scan is unsupported -- callers reject
             // field_pic_flag upstream in parse_residual_block_cabac.
             super::tables::SIG_COEFF_FLAG_CTX_IDX_INC_8X8_FRAME[scanning_pos] as usize
         } else {
@@ -1595,7 +1595,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 }
             }
             (SyntaxElement::MbSkipFlagB, _) => {
-                // Same as MbSkipFlagP — ctxIdxInc passed via Standard
+                // Same as MbSkipFlagP -- ctxIdxInc passed via Standard
                 unreachable!("MbSkipFlagB should not call get_ctx_idx_inc");
             }
             (SyntaxElement::MbTypeB, CtxIncParams::Standard(initial)) => {
@@ -2236,7 +2236,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
             let idx = (bp0 * 2 + bp1) as u32;
             let mb_type = if b3 == 0 {
-                // 1,1,0,0,xx → types 3-6
+                // 1,1,0,0,xx -> types 3-6
                 match idx {
                     0 => super::macroblock::BMbType::B_Bi_16x16,
                     1 => super::macroblock::BMbType::B_L0_L0_16x8,
@@ -2245,7 +2245,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     _ => unreachable!(),
                 }
             } else {
-                // 1,1,0,1,xx → types 7-10
+                // 1,1,0,1,xx -> types 7-10
                 match idx {
                     0 => super::macroblock::BMbType::B_L1_L1_8x16,
                     1 => super::macroblock::BMbType::B_L0_L1_16x8,
@@ -2261,7 +2261,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // b0=1, b1=1, b2=1
         let b3 = self.decode_bin(ctx_idx_offset + inc3)?;
         if b3 == 0 {
-            // 1,1,1,0,xxx → 3 context-coded bins → types 12-19
+            // 1,1,1,0,xxx -> 3 context-coded bins -> types 12-19
             // All use ctxIdxInc=5 (same as bin 3), matching reference decoder ctx[6]
             let bp0 = self.decode_bin(ctx_idx_offset + inc3)?;
             let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
@@ -2288,7 +2288,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if bp0 == 0 {
             let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
             if bp1 == 0 {
-                // 1,1,1,1,0,0,x → types 20-21
+                // 1,1,1,1,0,0,x -> types 20-21
                 let bp2 = self.decode_bin(ctx_idx_offset + inc3)?;
                 let mb_type = if bp2 == 0 {
                     super::macroblock::BMbType::B_Bi_Bi_16x8
@@ -2298,7 +2298,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 trace!("parse_mb_type_b type={:?}", mb_type);
                 Ok(CabacMbType::B(mb_type))
             } else {
-                // 1,1,1,1,0,1 → Intra MB in B slice (types 23-48)
+                // 1,1,1,1,0,1 -> Intra MB in B slice (types 23-48)
                 let i_mb_type =
                     self.parse_mb_type_i_suffix(ctx_idx_offset_suffix, slice, mb_addr)?;
                 trace!("parse_mb_type_b type=I({:?})", i_mb_type);
@@ -2307,10 +2307,10 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         } else {
             let bp1 = self.decode_bin(ctx_idx_offset + inc3)?;
             let mb_type = if bp1 == 0 {
-                // 1,1,1,1,1,0 → B_L1_L0_8x16 (type 11)
+                // 1,1,1,1,1,0 -> B_L1_L0_8x16 (type 11)
                 super::macroblock::BMbType::B_L1_L0_8x16
             } else {
-                // 1,1,1,1,1,1 → B_8x8 (type 22)
+                // 1,1,1,1,1,1 -> B_8x8 (type 22)
                 super::macroblock::BMbType::B_8x8
             };
             trace!("parse_mb_type_b type={:?}", mb_type);
@@ -2393,7 +2393,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // Bin 1 (ctxIdxInc=1)
         let b1 = self.decode_bin(ctx_idx_offset + 1)?;
         if b1 == 0 {
-            // Bin 2 (Table 9-41: b1=0 → ctxIdxInc=3)
+            // Bin 2 (Table 9-41: b1=0 -> ctxIdxInc=3)
             let b2 = self.decode_bin(ctx_idx_offset + 3)?;
             if b2 == 0 {
                 trace!("parse_sub_mb_type_b type=B_L0_8x8");
@@ -2405,12 +2405,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // b0=1, b1=1
-        // Bin 2 (Table 9-41: b1=1 → ctxIdxInc=2)
+        // Bin 2 (Table 9-41: b1=1 -> ctxIdxInc=2)
         let b2 = self.decode_bin(ctx_idx_offset + 2)?;
         if b2 == 0 {
             // Bin 3 (ctxIdxInc=3)
             let b3 = self.decode_bin(ctx_idx_offset + 3)?;
-            // Bin 4 (ctxIdxInc=3, same as bin 3 — reference uses ctx[3] for all bins 3+)
+            // Bin 4 (ctxIdxInc=3, same as bin 3 -- reference uses ctx[3] for all bins 3+)
             let bp0 = self.decode_bin(ctx_idx_offset + 3)?;
             let idx = b3 * 2 + bp0;
             let sub_type = match idx {
@@ -2428,7 +2428,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // Bin 3 (ctxIdxInc=3)
         let b3 = self.decode_bin(ctx_idx_offset + 3)?;
         if b3 == 0 {
-            // Bins 4,5 (ctxIdxInc=3, same as bin 3 — reference uses ctx[3] for all bins 3+)
+            // Bins 4,5 (ctxIdxInc=3, same as bin 3 -- reference uses ctx[3] for all bins 3+)
             let bp0 = self.decode_bin(ctx_idx_offset + 3)?;
             let bp1 = self.decode_bin(ctx_idx_offset + 3)?;
             let idx = bp0 * 2 + bp1;
@@ -2444,7 +2444,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         }
 
         // b0=1, b1=1, b2=1, b3=1
-        // Bin 4 (ctxIdxInc=3, same as bin 3 — reference uses ctx[3] for all bins 3+)
+        // Bin 4 (ctxIdxInc=3, same as bin 3 -- reference uses ctx[3] for all bins 3+)
         let bp0 = self.decode_bin(ctx_idx_offset + 3)?;
         if bp0 == 0 {
             trace!("parse_sub_mb_type_b type=B_L1_4x4");
@@ -3017,7 +3017,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 let mut sub_mbs = [super::macroblock::BSubMacroblock::default(); 4];
 
                 if b_type == super::macroblock::BMbType::B_Direct_16x16 {
-                    // No ref_idx or mvd parsed — direct prediction
+                    // No ref_idx or mvd parsed -- direct prediction
                 } else if b_type == super::macroblock::BMbType::B_8x8 {
                     // Parse sub-macroblock types
                     for i in 0..4 {
@@ -3412,7 +3412,7 @@ fn read_bits_eof_error(needed: u32, available: u32) -> String {
     format!("CABAC: needed {} bits, only {} available", needed, available)
 }
 
-/// Inverse of the signed→non-negative remap in Table 9-3, used here for the
+/// Inverse of the signed->non-negative remap in Table 9-3, used here for the
 /// CABAC mb_qp_delta path. Clause 9.3.2.7 specifies the binarization of
 /// mb_qp_delta as U(v) of the value mapped via Table 9-3; this function
 /// reverses that mapping after the unary bin string is decoded.
@@ -3518,7 +3518,7 @@ mod tests {
     }
 
     /// `decode_bypass_bits(n)` must produce the same bin sequence as calling
-    /// `decode_bypass()` in a loop `n` times — both the returned bits AND
+    /// `decode_bypass()` in a loop `n` times -- both the returned bits AND
     /// the final `offset` state must match.
     #[test]
     fn test_decode_bypass_bits_matches_loop() {

@@ -142,7 +142,7 @@ fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
     TOTAL_ZEROS_CHROMA_LUT[vlc_idx as usize][index]
 }
 
-// Naive implementation of Table 9-10 – Tables for run_before
+// Naive implementation of Table 9-10 - Tables for run_before
 fn lookup_run_before(bits: u16, zeros_left: u8) -> (u8, u8) {
     for row in tables::TABLE9_10 {
         let (pattern, pattern_len) = match zeros_left {
@@ -432,7 +432,7 @@ pub fn parse_residual(
             for plane in [ColorPlane::Cb, ColorPlane::Cr] {
                 let levels = residual.get_dc_levels_for(plane);
                 trace!(" chroma {:?} DC", plane);
-                let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = −1,
+                let nc = -1; // Section 9.2.1, If ChromaArrayType is 1, nC = -1,
                 parse_residual_block(input, levels, nc)?;
             }
         }
@@ -627,7 +627,7 @@ pub fn parse_b_macroblock(
     let mut sub_macroblocks = [BSubMacroblock::default(); 4];
 
     if mb_type == BMbType::B_Direct_16x16 {
-        // No ref_idx or mvd parsed — motion derived via direct prediction
+        // No ref_idx or mvd parsed -- motion derived via direct prediction
     } else if mb_type == BMbType::B_8x8 {
         // Section 7.3.5.1: sub_mb_pred for B_8x8
         // Parse 4 sub-macroblock types

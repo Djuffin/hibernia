@@ -72,7 +72,7 @@ impl PocState {
 
         // Eq 8-3, 8-4: TopFieldOrderCnt = PicOrderCntMsb + pic_order_cnt_lsb;
         // BottomFieldOrderCnt = TopFieldOrderCnt + delta_pic_order_cnt_bottom.
-        // For a frame, eq 8-1 picks the min — the bottom can be smaller when
+        // For a frame, eq 8-1 picks the min -- the bottom can be smaller when
         // delta_pic_order_cnt_bottom is negative.
         let top = msb + lsb;
         let bottom = top + slice.header.delta_pic_order_cnt_bottom.unwrap_or(0);
@@ -140,7 +140,7 @@ impl PocState {
         // Eq 8-9, 8-10: TopFieldOrderCnt = expectedPicOrderCnt + delta_pic_order_cnt[0];
         // BottomFieldOrderCnt = TopFieldOrderCnt + offset_for_top_to_bottom_field
         //                       + delta_pic_order_cnt[1]. For a frame, eq 8-1 picks
-        // the min — the bottom can be smaller when offset_for_top_to_bottom_field
+        // the min -- the bottom can be smaller when offset_for_top_to_bottom_field
         // is negative.
         let top = expected_pic_order_cnt + slice.header.delta_pic_order_cnt[0];
         let bottom =

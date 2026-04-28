@@ -252,7 +252,7 @@ pub fn test_CAWP5_TOSHIBA_E() -> Result<(), String> {
 #[test]
 pub fn test_SVA_Base_B() -> Result<(), String> {
     // Multi-slice picture, 3 slices per picture. CAVLC. IP slices, POC type 2,
-    // 5 ref frames. disable_deblocking_filter_idc=0 — picture-level deblocking
+    // 5 ref frames. disable_deblocking_filter_idc=0 -- picture-level deblocking
     // filters across slice boundaries.
     test_decoding_against_gold(
         "data/SVA_Base_B/SVA_Base_B.264",
@@ -674,7 +674,7 @@ fn test_ffmpeg_all_intra() -> Result<(), String> {
     // All-intra stream: every frame is an IDR I-frame.
     // -g 1:                        GOP size of 1 forces an IDR frame every frame.
     // -bf 0:                       Disable B-frames (no inter-prediction at all).
-    // keyint=1:min-keyint=1:       Belt-and-braces — tell x264 directly that every
+    // keyint=1:min-keyint=1:       Belt-and-braces -- tell x264 directly that every
     //                              frame must be a keyframe, overriding any scenecut
     //                              heuristics that might otherwise emit P-frames.
     // scenecut=0:                  Disable scenecut detection since it's irrelevant

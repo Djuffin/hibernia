@@ -62,7 +62,7 @@ impl ResidualPool {
         }
     }
 
-    /// Returns a box to the pool. Drops it on the floor if the pool is full —
+    /// Returns a box to the pool. Drops it on the floor if the pool is full --
     /// bound prevents pathological streams from holding ~MB*frames of state.
     pub fn release(&mut self, b: Box<Residual>) {
         const MAX_POOLED: usize = 8192;
@@ -264,7 +264,7 @@ impl Residual {
                     }
                 }
                 LumaResidual::Empty => {
-                    // No luma residual data — leave `result` empty so the caller
+                    // No luma residual data -- leave `result` empty so the caller
                     // adds nothing on top of the prediction.
                 }
             }
@@ -301,7 +301,7 @@ impl Residual {
     }
 }
 
-// Figure 8-6 – Assignment of the indices of dcY to luma4x4BlkIdx
+// Figure 8-6 - Assignment of the indices of dcY to luma4x4BlkIdx
 #[inline]
 pub const fn unscan_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
     const TABLE: [(usize, usize); 16] = [
@@ -330,14 +330,14 @@ pub const fn scan_4x4(row: usize, col: usize) -> usize {
     (row / 2) * 8 + (col / 2) * 4 + (row % 2) * 2 + (col % 2)
 }
 
-// Figure 8-7 – Assignment of the indices of dcC to chroma4x4BlkIdx
+// Figure 8-7 - Assignment of the indices of dcC to chroma4x4BlkIdx
 #[inline]
 pub const fn unscan_2x2(idx: usize) -> (/* row */ usize, /* column */ usize) {
     const TABLE: [(usize, usize); 4] = [(0, 0), (0, 1), (1, 0), (1, 1)];
     TABLE[idx]
 }
 
-// Table 8-13 – Specification of mapping of idx to Cij for zig-zag scan
+// Table 8-13 - Specification of mapping of idx to Cij for zig-zag scan
 #[inline]
 pub const fn un_zig_zag_4x4(idx: usize) -> (/* row */ usize, /* column */ usize) {
     const TABLE: [(usize, usize); 16] = [
@@ -631,7 +631,7 @@ pub fn transform_4x4(block: &mut Block4x4) {
     d[3] = h3_final.to_array();
 }
 
-// Table 8-14 — 8x8 inverse zig-zag (frame) scan. Maps idx in 0..64 to (row, col).
+// Table 8-14 -- 8x8 inverse zig-zag (frame) scan. Maps idx in 0..64 to (row, col).
 // Field scan (for MBAFF / field-coded pictures) is not implemented here; the
 // CABAC parser rejects field/MBAFF before it gets this far.
 #[inline]
@@ -659,7 +659,7 @@ pub fn unzip_block_8x8(block: &[i32; 64]) -> Block8x8 {
     result
 }
 
-// Eq. 8-318 — V matrix for 8x8 inverse quantization. Row = qp % 6 (m). Column =
+// Eq. 8-318 -- V matrix for 8x8 inverse quantization. Row = qp % 6 (m). Column =
 // position class (vm0..vm5). Column assignment per Eq. 8-317 partitions all 64
 // (i, j) positions into 6 classes based on (i mod 4, j mod 4) / (i mod 2, j mod 2).
 #[inline]

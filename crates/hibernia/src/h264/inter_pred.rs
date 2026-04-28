@@ -426,7 +426,7 @@ pub fn interpolate_chroma(
         let data = ref_plane.data_origin();
         let base = (y_int as usize) * stride + (x_int as usize);
         // Worst case is the (_, _) bilinear arm, which reads up through row
-        // (y_int + height) at column (x_int + width) inclusive — slice end
+        // (y_int + height) at column (x_int + width) inclusive -- slice end
         // = base + height*stride + width + 1.
         assert!(base + (height as usize) * stride + (width as usize) + 1 <= data.len());
         if height > 0 {
@@ -672,7 +672,7 @@ fn get_implicit_weights(
     let poc_l0 = ref_pic_l0.picture.pic_order_cnt;
     let poc_l1 = ref_pic_l1.picture.pic_order_cnt;
 
-    // DiffPicOrderCnt(pic1, pic0) — Eq 8-197/8-198
+    // DiffPicOrderCnt(pic1, pic0) -- Eq 8-197/8-198
     let diff_poc_l1_l0 = poc_l1 - poc_l0;
     if diff_poc_l1_l0 == 0 {
         return default;

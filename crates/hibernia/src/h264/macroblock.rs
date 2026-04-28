@@ -200,7 +200,7 @@ pub fn get_4x4chroma_block_neighbor(idx: u8, n: MbNeighborName) -> (u8, Option<M
     }
 }
 
-// Table 7-11 – Macroblock types for I slices
+// Table 7-11 - Macroblock types for I slices
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum IMbType {
@@ -240,7 +240,7 @@ impl TryFrom<u32> for IMbType {
     }
 }
 
-// Table 7-13 – Macroblock type values 0 to 4 for P and SP slices
+// Table 7-13 - Macroblock type values 0 to 4 for P and SP slices
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum PMbType {
@@ -271,7 +271,7 @@ impl PMbType {
     }
 }
 
-// Table 7-14 – Macroblock type values 0 to 22 for B slices
+// Table 7-14 - Macroblock type values 0 to 22 for B slices
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum BMbType {
@@ -422,7 +422,7 @@ impl BMbType {
     }
 }
 
-// Table 7-18 – Sub-macroblock types in B macroblocks
+// Table 7-18 - Sub-macroblock types in B macroblocks
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]
 pub enum BSubMbType {
@@ -588,7 +588,7 @@ impl TryFrom<u32> for Intra_4x4_SamplePredMode {
     }
 }
 
-// Section 8.3.2 Intra_8x8 sample prediction — same mode numbering as Intra_4x4.
+// Section 8.3.2 Intra_8x8 sample prediction -- same mode numbering as Intra_4x4.
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive, PartialOrd, Ord)]
 pub enum Intra_8x8_SamplePredMode {
@@ -770,7 +770,7 @@ impl TryFrom<u32> for SubMbType {
 
 #[allow(non_camel_case_types)]
 impl SubMbType {
-    // Table 7-17 – Sub-macroblock types in P macroblocks
+    // Table 7-17 - Sub-macroblock types in P macroblocks
     pub fn NumSubMbPart(&self) -> usize {
         match self {
             SubMbType::P_L0_8x8 => 1,

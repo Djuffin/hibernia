@@ -46,7 +46,7 @@ const TC0_TABLE: [[u8; 52]; 3] = [
     ],
 ];
 
-/// Section 8.7.2.2 — filter thresholds derived from QP values.
+/// Section 8.7.2.2 -- filter thresholds derived from QP values.
 struct FilterThresholds {
     alpha: i32,
     beta: i32,
@@ -113,7 +113,7 @@ impl PictureDeblockInput<'_> {
     }
 }
 
-/// Section 8.7 — picture-level deblocking pass. Replaces the per-slice
+/// Section 8.7 -- picture-level deblocking pass. Replaces the per-slice
 /// `filter_slice` so a multi-slice picture is filtered as one frame and
 /// per-MB slice ownership is honoured for `disable_deblocking_filter_idc=2`
 /// and for boundary-strength reference comparisons across slice boundaries.
@@ -124,7 +124,7 @@ pub fn filter_picture(input: &PictureDeblockInput, frame: &mut VideoFrame) {
     }
 }
 
-/// Section 8.7, steps 1–3 — Filter all edges of a single macroblock.
+/// Section 8.7, steps 1-3 -- Filter all edges of a single macroblock.
 /// BS values are precomputed once per MB and reused across luma and chroma
 /// to avoid redundant derivation (Section 8.7.2.1).
 fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_addr: MbAddr) {
@@ -147,7 +147,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
     let mb_xy = input.mb_xy(mb_addr);
     let q_qp = get_qp(mb);
 
-    // Section 8.7, step 2.c / 2.d — determine filterLeftMbEdgeFlag / filterTopMbEdgeFlag
+    // Section 8.7, step 2.c / 2.d -- determine filterLeftMbEdgeFlag / filterTopMbEdgeFlag
     let filter_left = should_filter_edge(input, mb_addr, MbNeighborName::A);
     let filter_top = should_filter_edge(input, mb_addr, MbNeighborName::B);
 
@@ -158,7 +158,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
         Macroblock::PCM(_) => false,
     };
 
-    // Section 8.7, step 1 — locate neighbor macroblocks A (left) and B (top)
+    // Section 8.7, step 1 -- locate neighbor macroblocks A (left) and B (top)
     let left_info: Option<(&Macroblock, u8, u16)> = if filter_left {
         input.neighbor_addr(mb_addr, MbNeighborName::A).and_then(|addr| {
             input.get_mb(addr).map(|p_mb| (p_mb, get_qp(p_mb), input.slice_id(addr)))
@@ -186,7 +186,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
 
     let has_nonzero_bs = |bs: &[u8; 4]| bs[0] | bs[1] | bs[2] | bs[3] != 0;
 
-    // Section 8.7, step 3.a/3.b — luma vertical edges
+    // Section 8.7, step 3.a/3.b -- luma vertical edges
     if let Some((_, p_qp, _)) = left_info {
         if has_nonzero_bs(&bs_vert[0]) {
             filter_luma_edge(
@@ -232,7 +232,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
         );
     }
 
-    // Section 8.7, step 3.c/3.d — luma horizontal edges
+    // Section 8.7, step 3.c/3.d -- luma horizontal edges
     if let Some((_, p_qp, _)) = top_info {
         if has_nonzero_bs(&bs_horz[0]) {
             filter_luma_edge(
@@ -342,7 +342,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
     }
 }
 
-/// Section 8.7, steps 2.c/2.d — determine whether to filter an MB boundary edge.
+/// Section 8.7, steps 2.c/2.d -- determine whether to filter an MB boundary edge.
 /// `neighbor` is `MbNeighborName::A` for the left edge, `MbNeighborName::B` for the top edge.
 fn should_filter_edge(
     input: &PictureDeblockInput,
@@ -375,7 +375,7 @@ fn should_filter_edge(
     true
 }
 
-/// Sections 8.7.1/8.7.2 — Filtering process for a single luma block edge.
+/// Sections 8.7.1/8.7.2 -- Filtering process for a single luma block edge.
 fn filter_luma_edge(
     frame: &mut VideoFrame,
     mb_xy: Point,
@@ -405,7 +405,7 @@ fn filter_luma_edge(
     };
 
     // Pre-compute perpendicular step multiples. The 8-sample perpendicular
-    // window for one pixel covers offsets [0..=7*perp_step] — laid out as
+    // window for one pixel covers offsets [0..=7*perp_step] -- laid out as
     // p3, p2, p1, p0, q0, q1, q2, q3 at strides perp_step apart.
     let s1 = perp_step;
     let s2 = perp_step * 2;
@@ -437,10 +437,10 @@ fn filter_luma_edge(
             let win = &mut data[q0_idx - s4..q0_idx + s3 + 1];
 
             // Layout within `win`:
-            //   off=0      → p3        off=s4     → q0
-            //   off=s1     → p2        off=s4+s1  → q1
-            //   off=s2     → p1        off=s4+s2  → q2
-            //   off=s3     → p0        off=s4+s3  → q3
+            //   off=0      -> p3        off=s4     -> q0
+            //   off=s1     -> p2        off=s4+s1  -> q1
+            //   off=s2     -> p1        off=s4+s2  -> q2
+            //   off=s3     -> p0        off=s4+s3  -> q3
             let p0 = win[s3] as i32;
             let q0 = win[s4] as i32;
             let p1 = win[s2] as i32;
@@ -459,7 +459,7 @@ fn filter_luma_edge(
                 let aq_lt_beta = aq < beta;
 
                 if !strong {
-                    // Section 8.7.2.3 — weak filter (bS < 4)
+                    // Section 8.7.2.3 -- weak filter (bS < 4)
                     let tc = tc0 + ap_lt_beta as i32 + aq_lt_beta as i32; // Eq 8-465
 
                     let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3; // Eq 8-467
@@ -479,7 +479,7 @@ fn filter_luma_edge(
                         win[s4 + s1] = (q1 + d.clamp(-tc0, tc0)).clamp(0, 255) as u8;
                     }
                 } else {
-                    // Section 8.7.2.4 — strong filter (bS == 4)
+                    // Section 8.7.2.4 -- strong filter (bS == 4)
                     let small_diff = (p0 - q0).abs() < ((alpha >> 2) + 2); // Eq 8-476
 
                     // p-side: Equations 8-477..8-479 (strong) or 8-480 (weak fallback)
@@ -514,7 +514,7 @@ fn filter_luma_edge(
     }
 }
 
-/// Sections 8.7.1/8.7.2 — Filtering process for a single chroma block edge (4:2:0).
+/// Sections 8.7.1/8.7.2 -- Filtering process for a single chroma block edge (4:2:0).
 #[allow(clippy::too_many_arguments)]
 fn filter_chroma_edge(
     pps: &PicParameterSet,
@@ -531,11 +531,11 @@ fn filter_chroma_edge(
     let chroma_shift_x = 1u32; // 4:2:0
     let chroma_shift_y = 1u32;
 
-    // Section 8.7.2.2 — chroma threshold derivation using QPc from Table 8-15
+    // Section 8.7.2.2 -- chroma threshold derivation using QPc from Table 8-15
     let chroma_thresh = [ColorPlane::Cb, ColorPlane::Cr].map(|plane_idx| {
         let qp_index_offset = pps.get_chroma_qp_index_offset(plane_idx);
-        let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0) as u8;
-        let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0) as u8;
+        let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
+        let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0);
         FilterThresholds::from_qp(qp_p_c, qp_q_c, alpha_offset, beta_offset)
     });
 
@@ -624,7 +624,7 @@ fn filter_chroma_edge(
     }
 }
 
-/// Section 8.7.2.1 — Precompute boundary strength arrays for all edges of a macroblock.
+/// Section 8.7.2.1 -- Precompute boundary strength arrays for all edges of a macroblock.
 /// Returns `(bs_vert, bs_horz)` where each is `[[u8; 4]; 4]` indexed by `[edge_idx][block_idx]`.
 fn compute_bs_arrays(
     input: &PictureDeblockInput,
@@ -639,7 +639,7 @@ fn compute_bs_arrays(
 
     let (q_l0, q_l1) = input.ref_pocs(q_slice_id);
 
-    // External edges (MB boundary) — use neighbor MB as p
+    // External edges (MB boundary) -- use neighbor MB as p
     if let Some((p_mb, p_slice_id)) = left {
         let (p_l0, p_l1) = input.ref_pocs(p_slice_id);
         for b in 0..4 {
@@ -653,7 +653,7 @@ fn compute_bs_arrays(
         }
     }
 
-    // Internal edges — p and q are both within this MB (same slice → same POCs).
+    // Internal edges -- p and q are both within this MB (same slice -> same POCs).
     if !transform_8x8 {
         for edge in 1..4 {
             for b in 0..4 {
@@ -676,7 +676,7 @@ fn compute_bs_arrays(
 fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
     // Section 8.7.2.1: bS=2 is derived from the transform block containing the
     // sample, whose size depends on transform_size_8x8_flag. For 8x8 transforms
-    // the "block" is the enclosing 8x8 group — its four 4x4 sub-sections share a
+    // the "block" is the enclosing 8x8 group -- its four 4x4 sub-sections share a
     // single coded status for deblocking purposes.
     use super::residual::LumaResidual;
     let Some(res) = mb.get_residual() else { return false };
@@ -750,7 +750,7 @@ fn get_bs(
         (Some(pp), Some(qq)) => {
             // P-slice context for q (refPicList1 is empty in P-slices). If
             // p comes from a B-slice partition that uses BiPred or Pred_L1,
-            // only its L0 entry is consulted here — the q-side P-slice rules
+            // only its L0 entry is consulted here -- the q-side P-slice rules
             // don't describe how to interpret p's L1 reference. Acceptable
             // in practice because mixing P and B slices within one picture
             // is uncommon, and uniform-type pictures are unaffected.
@@ -863,12 +863,12 @@ mod tests {
         let input =
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
-        // MB 0 is at the top-left corner — both A (left) and B (top) are out of picture.
+        // MB 0 is at the top-left corner -- both A (left) and B (top) are out of picture.
         assert!(!should_filter_edge(&input, 0, MbNeighborName::A));
         assert!(!should_filter_edge(&input, 0, MbNeighborName::B));
-        // MB 4 is at the left edge — A is out of picture.
+        // MB 4 is at the left edge -- A is out of picture.
         assert!(!should_filter_edge(&input, 4, MbNeighborName::A));
-        // MB 3 is at the top edge — B is out of picture.
+        // MB 3 is at the top edge -- B is out of picture.
         assert!(!should_filter_edge(&input, 3, MbNeighborName::B));
     }
 
@@ -926,7 +926,7 @@ mod tests {
         let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
-        // Top row → slice 0, bottom row → slice 1.
+        // Top row -> slice 0, bottom row -> slice 1.
         let mb_slice_id = vec![0, 0, 0, 0, 1, 1, 1, 1];
         let slice_deblock = [
             deblock(DeblockingFilterIdc::On),
@@ -936,10 +936,10 @@ mod tests {
         let input =
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
-        // MB 5 is in slice 1; its B neighbor is MB 1 (slice 0) — cross-slice.
+        // MB 5 is in slice 1; its B neighbor is MB 1 (slice 0) -- cross-slice.
         // Still filtered because idc=On disregards slice boundaries.
         assert!(should_filter_edge(&input, 5, MbNeighborName::B));
-        // MB 5's A neighbor is MB 4 (slice 1) — same slice, also filtered.
+        // MB 5's A neighbor is MB 4 (slice 1) -- same slice, also filtered.
         assert!(should_filter_edge(&input, 5, MbNeighborName::A));
     }
 
@@ -959,13 +959,13 @@ mod tests {
         let input =
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
-        // MB 4: B neighbor is MB 0 (slice 0) — cross-slice → suppressed.
+        // MB 4: B neighbor is MB 0 (slice 0) -- cross-slice -> suppressed.
         assert!(!should_filter_edge(&input, 4, MbNeighborName::B));
-        // MB 5: B neighbor is MB 1 (slice 0) — cross-slice → suppressed.
+        // MB 5: B neighbor is MB 1 (slice 0) -- cross-slice -> suppressed.
         assert!(!should_filter_edge(&input, 5, MbNeighborName::B));
-        // MB 5: A neighbor is MB 4 (slice 1) — same slice → filtered.
+        // MB 5: A neighbor is MB 4 (slice 1) -- same slice -> filtered.
         assert!(should_filter_edge(&input, 5, MbNeighborName::A));
-        // MB 1: A neighbor is MB 0 (slice 0) — same slice → filtered.
+        // MB 1: A neighbor is MB 0 (slice 0) -- same slice -> filtered.
         assert!(should_filter_edge(&input, 1, MbNeighborName::A));
     }
 
@@ -987,10 +987,10 @@ mod tests {
         let input =
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
-        // q = MB 5 (slice 1, idc=On) → edges filter regardless of p's slice.
+        // q = MB 5 (slice 1, idc=On) -> edges filter regardless of p's slice.
         assert!(should_filter_edge(&input, 5, MbNeighborName::A));
         assert!(should_filter_edge(&input, 5, MbNeighborName::B));
-        // q = MB 1 (slice 0, idc=Off) → no filtering.
+        // q = MB 1 (slice 0, idc=Off) -> no filtering.
         assert!(!should_filter_edge(&input, 1, MbNeighborName::A));
     }
 }

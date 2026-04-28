@@ -34,7 +34,7 @@ impl Surroundings4x4 {
         if offset.y > 0 {
             if substitute_right {
                 // Section 8.3.1.2 Intra_4x4 sample prediction
-                // When samples p[ x, −1 ], with x = 4..7, are marked as "not available" ...
+                // When samples p[ x, -1 ], with x = 4..7, are marked as "not available" ...
                 self.top_row[0..5].copy_from_slice(&target_slice[0][0..5]);
                 let filler = self.top_row[4];
                 self.top_row[5..9].fill(filler);
@@ -264,13 +264,13 @@ pub fn render_luma_4x4_intra_prediction(
     }
 }
 
-// (A + 2*B + C + 2) >> 2 — 3-tap low-pass used throughout Intra 4x4/8x8.
+// (A + 2*B + C + 2) >> 2 -- 3-tap low-pass used throughout Intra 4x4/8x8.
 #[inline]
 fn weighted_avg3(a: u8, b: u8, c: u8) -> u8 {
     (((a as u16) + 2 * (b as u16) + (c as u16) + 2) >> 2) as u8
 }
 
-// (A + B + 1) >> 1 — 2-tap average used throughout Intra 4x4 / 8x8.
+// (A + B + 1) >> 1 -- 2-tap average used throughout Intra 4x4 / 8x8.
 #[inline]
 fn avg(a: u8, b: u8) -> u8 {
     (((a as u16) + (b as u16) + 1) >> 1) as u8
@@ -474,7 +474,7 @@ fn fill_predicted_8x8(
 
     match mode {
         Intra_8x8_SamplePredMode::Vertical => {
-            // Section 8.3.2.2.2 — Eq. 8-89: pred8x8L[x, y] = p'[x, -1]
+            // Section 8.3.2.2.2 -- Eq. 8-89: pred8x8L[x, y] = p'[x, -1]
             for y in 0..8 {
                 for x in 0..8 {
                     pred[y][x] = t[x];
@@ -482,7 +482,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::Horizontal => {
-            // Section 8.3.2.2.3 — Eq. 8-90: pred8x8L[x, y] = p'[-1, y]
+            // Section 8.3.2.2.3 -- Eq. 8-90: pred8x8L[x, y] = p'[-1, y]
             for y in 0..8 {
                 for x in 0..8 {
                     pred[y][x] = l[y];
@@ -490,7 +490,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::DC => {
-            // Section 8.3.2.2.4 — Eqs. 8-91 to 8-94.
+            // Section 8.3.2.2.4 -- Eqs. 8-91 to 8-94.
             let v = match (ctx.top_available, ctx.left_available) {
                 (true, true) => {
                     let s: u32 = t[0..8].iter().map(|v| *v as u32).sum::<u32>()
@@ -514,7 +514,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::Diagonal_Down_Left => {
-            // Section 8.3.2.2.5 — Eqs. 8-95, 8-96. Uses p'[0..=15, -1].
+            // Section 8.3.2.2.5 -- Eqs. 8-95, 8-96. Uses p'[0..=15, -1].
             for y in 0..8usize {
                 for x in 0..8usize {
                     pred[y][x] = if x == 7 && y == 7 {
@@ -526,7 +526,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::Diagonal_Down_Right => {
-            // Section 8.3.2.2.6 — Eqs. 8-97 to 8-99.
+            // Section 8.3.2.2.6 -- Eqs. 8-97 to 8-99.
             for y in 0..8usize {
                 for x in 0..8usize {
                     pred[y][x] = match x.cmp(&y) {
@@ -553,7 +553,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::Vertical_Right => {
-            // Section 8.3.2.2.7 — Eqs. 8-100 to 8-103.
+            // Section 8.3.2.2.7 -- Eqs. 8-100 to 8-103.
             for y in 0..8i32 {
                 for x in 0..8i32 {
                     let z_vr = 2 * x - y;
@@ -588,7 +588,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::Horizontal_Down => {
-            // Section 8.3.2.2.8 — Eqs. 8-104 to 8-107.
+            // Section 8.3.2.2.8 -- Eqs. 8-104 to 8-107.
             for y in 0..8i32 {
                 for x in 0..8i32 {
                     let z_hd = 2 * y - x;
@@ -621,7 +621,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::Vertical_Left => {
-            // Section 8.3.2.2.9 — Eqs. 8-108, 8-109. Uses p'[0..=15, -1].
+            // Section 8.3.2.2.9 -- Eqs. 8-108, 8-109. Uses p'[0..=15, -1].
             for y in 0..8usize {
                 for x in 0..8usize {
                     let i = x + (y >> 1);
@@ -634,7 +634,7 @@ fn fill_predicted_8x8(
             }
         }
         Intra_8x8_SamplePredMode::Horizontal_Up => {
-            // Section 8.3.2.2.10 — Eqs. 8-110 to 8-113.
+            // Section 8.3.2.2.10 -- Eqs. 8-110 to 8-113.
             for y in 0..8usize {
                 for x in 0..8usize {
                     let z_hu = x + 2 * y;
@@ -762,7 +762,7 @@ pub fn render_luma_16x16_intra_prediction(
         }
     }
 
-    // Add residuals — each 4x4 block at its known offset within the MB.
+    // Add residuals -- each 4x4 block at its known offset within the MB.
     for (blk_idx, blk) in residuals.iter().enumerate() {
         let blk_loc = get_4x4luma_block_location(blk_idx as u8);
         let blk_base =
@@ -845,8 +845,8 @@ pub fn render_chroma_intra_prediction(
 
             for blk_idx in 0..4 {
                 // Equations 8-132 to 8-141 (derivation of prediction values based on availability).
-                // The "no neighbor available" branch substitutes 1 << (BitDepthC − 1)
-                // per clause 8.3.4.1; the literal 7 is BitDepthC − 1 with BitDepthC = 8,
+                // The "no neighbor available" branch substitutes 1 << (BitDepthC - 1)
+                // per clause 8.3.4.1; the literal 7 is BitDepthC - 1 with BitDepthC = 8,
                 // matching the u8 chroma plane the renderer writes into.
                 const DEFAULT_VALUE: u32 = 1 << 7;
                 let result = match blk_idx {
@@ -1066,7 +1066,7 @@ mod tests_intra_8x8 {
     #[test]
     fn flat_input_produces_flat_output_all_modes() {
         // If every reference sample is the same constant K, every prediction mode
-        // must produce a block filled with K — the weighted averages and 2-tap
+        // must produce a block filled with K -- the weighted averages and 2-tap
         // means are all identity on a constant, and the diagonal/vertical modes
         // read only from the flat reference row/column.
         const K: u8 = 42;

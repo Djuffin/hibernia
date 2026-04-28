@@ -23,17 +23,17 @@ pub type ScalingList4x4 = [u8; 16];
 /// 64 coefficients in zig-zag scan order.
 pub type ScalingList8x8 = [u8; 64];
 
-/// Flat_4x4_16 — all values 16 (spec equation 7-8). Used when no custom matrix.
+/// Flat_4x4_16 -- all values 16 (spec equation 7-8). Used when no custom matrix.
 pub const FLAT_4X4_16: ScalingList4x4 = [16; 16];
 
-/// Flat_8x8_16 — all values 16 (spec equation 7-9).
+/// Flat_8x8_16 -- all values 16 (spec equation 7-9).
 pub const FLAT_8X8_16: ScalingList8x8 = [16; 64];
 
 /// A single scaling list entry as it appears in a raw SPS or PPS. Preserved
 /// exactly for round-trip encoding.
 ///
 /// The `Explicit` variant carries the list values as `Vec<u8>` purely to sidestep
-/// serde's 32-element built-in array support cap — the vector is always exactly
+/// serde's 32-element built-in array support cap -- the vector is always exactly
 /// 16 elements long in well-formed inputs.
 #[derive(
     serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema,
@@ -306,7 +306,7 @@ pub fn resolve_pic_scaling_matrix(
     let n_pps = num_pps_8x8_lists(chroma_format, transform_8x8_mode_flag);
     for i in 0..6 {
         if i >= n_pps {
-            // Not signalled in PPS — keep SPS-resolved value.
+            // Not signalled in PPS -- keep SPS-resolved value.
             continue;
         }
         let entry = matrix.lists_8x8.get(i).cloned().unwrap_or(ScalingList8x8Entry::NotPresent);
@@ -579,8 +579,8 @@ mod tests {
     fn test_resolve_pps_without_sps_matrix_falls_back_to_defaults() {
         // When the PPS has `pic_scaling_matrix_present_flag = 1` but all the
         // list flags are 0 AND the SPS had no scaling matrix, rule A (not B)
-        // applies: list 0 → Default_4x4_Intra, list 3 → Default_4x4_Inter,
-        // list 6 → Default_8x8_Intra, list 7 → Default_8x8_Inter.
+        // applies: list 0 -> Default_4x4_Intra, list 3 -> Default_4x4_Inter,
+        // list 6 -> Default_8x8_Intra, list 7 -> Default_8x8_Inter.
         let sps_flat = ResolvedScalingMatrix::default();
         let pps_matrix = PicScalingMatrix {
             lists_4x4: core::array::from_fn(|_| ScalingList4x4Entry::NotPresent),

@@ -115,7 +115,7 @@ pub struct DecRefPicMarking {
     pub memory_management_operations: Vec<MemoryManagementControlOperation>,
 }
 
-// Table 7-7 – modification_of_pic_nums_idc operations for modification of reference picture lists
+// Table 7-7 - modification_of_pic_nums_idc operations for modification of reference picture lists
 /// Reference picture list modification operation.
 #[derive(
     serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema,
@@ -264,17 +264,20 @@ impl Slice {
         self.ref_pic_list1 = list1;
     }
 
+    #[inline]
     pub fn slice_qp_y(&self) -> i32 {
         26 + self.pps.pic_init_qp_minus26 + self.header.slice_qp_delta
     }
 
+    #[inline]
     pub fn MbaffFrameFlag(&self) -> bool {
         self.sps.mb_adaptive_frame_field_flag && !self.header.field_pic_flag
     }
 
+    #[inline]
     pub fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
         // `mb_addr` may be below this slice's range when a caller probes a
-        // neighbor that belongs to a previous slice of the same picture —
+        // neighbor that belongs to a previous slice of the same picture --
         // return `None` rather than overflowing.
         let index = mb_addr.checked_sub(self.header.first_mb_in_slice)?;
         self.macroblocks.get(index as usize)
@@ -285,6 +288,7 @@ impl Slice {
         self.macroblocks.get_mut(index as usize)
     }
 
+    #[inline]
     pub fn get_mb_neighbor(
         &self,
         mb_addr: MbAddr,
@@ -336,6 +340,7 @@ impl Slice {
         Point { x, y }
     }
 
+    #[inline]
     pub fn get_mb_addr_from_coords(&self, x: i32, y: i32) -> MbAddr {
         let mb_x = x / tables::MB_WIDTH as i32;
         let mb_y = y / tables::MB_HEIGHT as i32;

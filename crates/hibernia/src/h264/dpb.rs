@@ -606,7 +606,7 @@ mod tests {
         dpb.store_picture(create_dummy_dpb_picture(1, 2, DpbMarking::UsedForShortTermReference));
         dpb.store_picture(create_dummy_dpb_picture(2, 4, DpbMarking::UsedForShortTermReference));
 
-        // Current picture (NOT stored in DPB yet — per spec C.2.3 before C.2.4)
+        // Current picture (NOT stored in DPB yet -- per spec C.2.3 before C.2.4)
         let mut current = create_dummy_dpb_picture(3, 6, DpbMarking::UsedForShortTermReference);
 
         let mut header = SliceHeader::default();

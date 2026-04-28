@@ -10,13 +10,13 @@ pub const MB_WIDTH: usize = 16;
 pub const MB_HEIGHT: usize = 16;
 pub const BIT_DEPTH: usize = 8;
 
-// Table 7-3 – Specification of default scaling lists Default_4x4_Intra and Default_4x4_Inter
+// Table 7-3 - Specification of default scaling lists Default_4x4_Intra and Default_4x4_Inter
 pub const DEFAULT_SCALING_LIST_4X4_INTRA: [u8; 16] =
     [6, 13, 13, 20, 20, 20, 28, 28, 28, 28, 32, 32, 32, 37, 37, 42];
 pub const DEFAULT_SCALING_LIST_4X4_INTER: [u8; 16] =
     [10, 14, 14, 20, 20, 20, 24, 24, 24, 24, 27, 27, 27, 30, 30, 34];
 
-// Table 7-4 – Specification of default scaling lists Default_8x8_Intra and Default_8x8_Inter
+// Table 7-4 - Specification of default scaling lists Default_8x8_Intra and Default_8x8_Inter
 pub const DEFAULT_SCALING_LIST_8X8_INTRA: [u8; 64] = [
     6, 10, 10, 13, 11, 13, 16, 16, 16, 16, 18, 18, 18, 18, 18, 23, 23, 23, 23, 23, 23, 25, 25, 25,
     25, 25, 25, 25, 27, 27, 27, 27, 27, 27, 27, 27, 29, 29, 29, 29, 29, 29, 29, 31, 31, 31, 31, 31,
@@ -28,7 +28,7 @@ pub const DEFAULT_SCALING_LIST_8X8_INTER: [u8; 64] = [
     27, 28, 28, 28, 28, 28, 30, 30, 30, 30, 32, 32, 32, 33, 33, 35,
 ];
 
-// Table 9-4 – Assignment of codeNum to values of coded_block_pattern for
+// Table 9-4 - Assignment of codeNum to values of coded_block_pattern for
 // macroblock prediction modes
 const CODE_NUM_TO_INTRA_CODED_BLOCK_PATTERN: [u8; 48] = [
     47, 31, 15, 0, 23, 27, 29, 30, 7, 11, 13, 14, 39, 43, 45, 46, 16, 3, 5, 10, 12, 19, 21, 26, 28,
@@ -54,7 +54,7 @@ pub fn code_num_to_inter_coded_block_pattern(x: u8) -> Option<CodedBlockPattern>
     result
 }
 
-// Table 7-11 – Macroblock types for I slices
+// Table 7-11 - Macroblock types for I slices
 pub const fn mb_type_to_coded_block_pattern(mb_type: IMbType) -> Option<CodedBlockPattern> {
     match mb_type {
         IMbType::I_16x16_0_0_0 => Some(CodedBlockPattern::new(0, 0)),
@@ -85,7 +85,7 @@ pub const fn mb_type_to_coded_block_pattern(mb_type: IMbType) -> Option<CodedBlo
     }
 }
 
-// Table 7-11 – Macroblock types for I slices
+// Table 7-11 - Macroblock types for I slices
 pub const fn mb_type_to_16x16_pred_mode(mb_type: IMbType) -> Option<Intra_16x16_SamplePredMode> {
     match mb_type {
         IMbType::I_16x16_0_0_0 => Some(Intra_16x16_SamplePredMode::Intra_16x16_Vertical),
@@ -174,17 +174,17 @@ pub const TABLE9_10: [(
     BitPattern,
 ); 15] = include!("table_9-10.rs");
 
-/// Table 9-45 – State transition table
+/// Table 9-45 - State transition table
 #[rustfmt::skip]
 #[allow(clippy::all)]
 pub const TRANS_IDX_LPS: [u8; 64] = include!("table_9-45_lps.rs");
 
-/// Table 9-45 – State transition table
+/// Table 9-45 - State transition table
 #[rustfmt::skip]
 #[allow(clippy::all)]
 pub const TRANS_IDX_MPS: [u8; 64] = include!("table_9-45_mps.rs");
 
-/// Table 9-44 – Specification of rangeTabLPS depending on pStateIdx and qCodIRangeIdx
+/// Table 9-44 - Specification of rangeTabLPS depending on pStateIdx and qCodIRangeIdx
 #[rustfmt::skip]
 #[allow(clippy::all)]
 pub const RANGE_TAB_LPS: [[u8; 4]; 64] = include!("table_9-44.rs");
@@ -262,7 +262,7 @@ pub const LAST_SIG_COEFF_OFFSETS: [u32; 14] =
 pub const COEFF_ABS_OFFSETS: [u32; 14] =
     [227, 237, 247, 257, 266, 426, 952, 962, 972, 708, 982, 992, 1002, 766];
 
-/// Table 9-43 — ctxIdxInc for `significant_coeff_flag` in 8x8 luma/Cb/Cr blocks
+/// Table 9-43 -- ctxIdxInc for `significant_coeff_flag` in 8x8 luma/Cb/Cr blocks
 /// (ctxBlockCat 5, 9, 13) with frame-coded macroblocks. Indexed by levelListIdx
 /// in 0..=62.
 pub const SIG_COEFF_FLAG_CTX_IDX_INC_8X8_FRAME: [u8; 63] = [
@@ -272,7 +272,7 @@ pub const SIG_COEFF_FLAG_CTX_IDX_INC_8X8_FRAME: [u8; 63] = [
     12, 13, 11, 6, 9, 14, 10, 9, 11, 12, 13, 11, 14, 10, 12,
 ];
 
-/// Table 9-43 — ctxIdxInc for `last_significant_coeff_flag` in 8x8 luma/Cb/Cr
+/// Table 9-43 -- ctxIdxInc for `last_significant_coeff_flag` in 8x8 luma/Cb/Cr
 /// blocks (ctxBlockCat 5, 9, 13). The frame/field columns collapse to the same
 /// mapping. Indexed by levelListIdx in 0..=62.
 pub const LAST_SIG_COEFF_FLAG_CTX_IDX_INC_8X8: [u8; 63] = [

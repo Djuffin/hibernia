@@ -1,4 +1,4 @@
-use hibernia::h264::pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
+use hibernia::h264::pps::{PicParameterSet, SliceGroup, SliceRect};
 use hibernia::h264::slice::{
     DeblockingFilterIdc, DecRefPicMarking, MemoryManagementControlOperation, PredWeightTable,
     RefPicListModification, RefPicListModifications, SliceHeader, SliceType, WeightingFactors,

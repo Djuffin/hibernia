@@ -1,5 +1,4 @@
 use bitstream_io::{BigEndian, BitRead, BitReader};
-use log::trace;
 use std::io::{self, Cursor, SeekFrom};
 
 pub type ParseResult<T> = std::result::Result<T, String>;

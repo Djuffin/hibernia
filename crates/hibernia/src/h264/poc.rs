@@ -199,7 +199,7 @@ mod tests {
     use super::*;
     use crate::h264::pps::PicParameterSet;
     use crate::h264::slice::SliceHeader;
-    use crate::h264::sps::{SequenceParameterSet, VuiParameters};
+    use crate::h264::sps::SequenceParameterSet;
     use crate::h264::{ChromaFormat, Profile};
 
     fn prepare_slice() -> Slice {

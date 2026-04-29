@@ -16,7 +16,6 @@ num-traits = { workspace = true }
 num-derive = { workspace = true }
 v_frame = { workspace = true }
 log = { workspace = true }
-y4m = { workspace = true }
 smallvec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,6 +24,7 @@ wide = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+y4m = { workspace = true }
 
 [[bench]]
 name = "decoding"

@@ -171,18 +171,3 @@ pub struct Size {
     pub height: u32,
 }
 
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    schemars::JsonSchema,
-)]
-pub struct Rect {
-    pub origin: Point,
-    pub size: Size,
-}

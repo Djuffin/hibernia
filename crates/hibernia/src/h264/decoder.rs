@@ -1,6 +1,5 @@
-use std::cmp::{max, min, Ordering};
+use std::cmp::max;
 use std::collections::VecDeque;
-use std::io::Read;
 use std::sync::Arc;
 
 use super::slice::{DeblockingFilterIdc, RefPicListModification, Slice, SliceHeader, SliceType};
@@ -17,24 +16,19 @@ use super::intra_pred::{
     render_luma_4x4_intra_prediction, render_luma_8x8_intra_prediction,
 };
 use super::macroblock::{
-    self, get_4x4chroma_block_neighbor, get_4x4luma_block_location, get_4x4luma_block_neighbor,
-    IMb, Intra_16x16_SamplePredMode, Intra_4x4_SamplePredMode, Intra_Chroma_Pred_Mode, Macroblock,
-    MbAddr, MbNeighborName, MbPredictionMode, MotionVector, PartitionInfo,
+    self, Macroblock, MbAddr, MbPredictionMode,
 };
 use super::poc::PocState;
-use super::residual::{level_scale_4x4_block, unzip_block_4x4, Block4x4, Residual};
+use super::residual::{Block4x4, Residual};
 use super::scaling_list::{
     resolve_pic_scaling_matrix, resolve_seq_scaling_matrix, ResolvedScalingMatrix,
 };
-use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::{info, trace};
 use smallvec::SmallVec;
 use v_frame::frame;
-use v_frame::plane::{self, PlaneOffset, PlaneSlice};
 
 pub type VideoFrame = frame::Frame<u8>;
-pub type RefPicList<'a> = Vec<&'a DpbPicture>;
 
 #[derive(Clone, Debug)]
 pub struct Picture {
@@ -1087,7 +1081,7 @@ impl Decoder {
         }
 
         let mut ref_list0 = if slice.header.slice_type == SliceType::B {
-            self.initialize_ref_pic_list0_b(slice, current_poc)
+            self.initialize_ref_pic_list0_b(current_poc)
         } else {
             self.initialize_ref_pic_list0(slice)
         };
@@ -1241,7 +1235,7 @@ impl Decoder {
 
     // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
     // List 0 for B slices: short-term with POC <= current (desc), then POC > current (asc), then long-term (asc)
-    fn initialize_ref_pic_list0_b(&self, slice: &Slice, current_poc: i32) -> SmallVec<[usize; 16]> {
+    fn initialize_ref_pic_list0_b(&self, current_poc: i32) -> SmallVec<[usize; 16]> {
         let mut short_term_le: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC <= current
         let mut short_term_gt: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC > current
         let mut long_term_refs: SmallVec<[(usize, usize); 16]> = SmallVec::new();
@@ -1276,7 +1270,7 @@ impl Decoder {
 
     // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
     // List 1 for B slices: short-term with POC > current (asc), then POC <= current (desc), then long-term (asc)
-    fn initialize_ref_pic_list1(&self, slice: &Slice, current_poc: i32) -> SmallVec<[usize; 16]> {
+    fn initialize_ref_pic_list1(&self, current_poc: i32) -> SmallVec<[usize; 16]> {
         let mut short_term_gt: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC > current
         let mut short_term_le: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC <= current
         let mut long_term_refs: SmallVec<[(usize, usize); 16]> = SmallVec::new();
@@ -1315,7 +1309,7 @@ impl Decoder {
         current_poc: i32,
     ) -> Result<(), DecodingError> {
         let ref_list0 = &slice.ref_pic_list0;
-        let mut ref_list1 = self.initialize_ref_pic_list1(slice, current_poc);
+        let mut ref_list1 = self.initialize_ref_pic_list1(current_poc);
 
         // Section 8.2.4.2.3: When list1 is identical to list0 and has more than one entry, swap first two
         if ref_list1.len() > 1 && ref_list1.as_slice() == slice.ref_pic_list0.as_slice() {
@@ -1377,7 +1371,7 @@ fn resolve_ref_pic_list<'a>(
     ref_list: &[usize],
     dpb_pictures: &'a [DpbPicture],
     list_name: &str,
-) -> Result<RefPicList<'a>, DecodingError> {
+) -> Result<Vec<&'a DpbPicture>, DecodingError> {
     ref_list
         .iter()
         .enumerate()

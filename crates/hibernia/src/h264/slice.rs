@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::{default, fmt, result};
+use std::fmt;
 
 use num_traits::FromPrimitive;
 
@@ -259,11 +258,6 @@ impl Slice {
         }
     }
 
-    pub fn set_ref_pic_lists(&mut self, list0: Vec<usize>, list1: Vec<usize>) {
-        self.ref_pic_list0 = list0;
-        self.ref_pic_list1 = list1;
-    }
-
     #[inline]
     pub fn slice_qp_y(&self) -> i32 {
         26 + self.pps.pic_init_qp_minus26 + self.header.slice_qp_delta
@@ -350,7 +344,7 @@ impl Slice {
 
 #[cfg(test)]
 mod tests {
-    use crate::h264::{macroblock::PcmMb, sps::VuiParameters, ChromaFormat, Profile};
+    use crate::h264::{macroblock::PcmMb, ChromaFormat, Profile};
 
     pub use super::*;
 

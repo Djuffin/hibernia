@@ -1681,7 +1681,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             // ctxBlockCat = 0
             self.parse_residual_block_cabac(
                 slice,
-                mb_addr,
                 curr_mb,
                 &neighbor_cache,
                 residual,
@@ -1700,7 +1699,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 if residual.coded_block_pattern.luma() & (1 << i8x8) != 0 {
                     self.parse_residual_block_cabac(
                         slice,
-                        mb_addr,
                         curr_mb,
                         &neighbor_cache,
                         residual,
@@ -1724,7 +1722,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 if residual.coded_block_pattern.luma() & (1 << (i / 4)) != 0 {
                     self.parse_residual_block_cabac(
                         slice,
-                        mb_addr,
                         curr_mb,
                         &neighbor_cache,
                         residual,
@@ -1747,7 +1744,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             // Cb DC: Cat 3, comp_idx 0
             self.parse_residual_block_cabac(
                 slice,
-                mb_addr,
                 curr_mb,
                 &neighbor_cache,
                 residual,
@@ -1759,7 +1755,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             // Cr DC: Cat 3, comp_idx 1
             self.parse_residual_block_cabac(
                 slice,
-                mb_addr,
                 curr_mb,
                 &neighbor_cache,
                 residual,
@@ -1780,7 +1775,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 // Cb AC: Cat 4, comp_idx 0
                 self.parse_residual_block_cabac(
                     slice,
-                    mb_addr,
                     curr_mb,
                     &neighbor_cache,
                     residual,
@@ -1794,7 +1788,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 // Cr AC: Cat 4, comp_idx 1
                 self.parse_residual_block_cabac(
                     slice,
-                    mb_addr,
                     curr_mb,
                     &neighbor_cache,
                     residual,
@@ -1813,7 +1806,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
     fn parse_residual_block_cabac(
         &mut self,
         slice: &Slice,
-        mb_addr: MbAddr,
         curr_mb: &mut CurrentMbInfo,
         neighbor_cache: &ResidualNeighborCache,
         residual: &mut super::residual::Residual,

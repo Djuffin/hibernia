@@ -1,13 +1,10 @@
-use std::result;
-
-use log::info;
 use smallvec::SmallVec;
 use wide::i32x4;
 
 use super::{
-    macroblock::{self, CodedBlockPattern, MbPredictionMode},
-    scaling_list::{weight_scale_8x8_2d, ResolvedScalingMatrix, FLAT_4X4_16, FLAT_8X8_16},
-    tables, ColorPlane,
+    macroblock::{CodedBlockPattern, MbPredictionMode},
+    scaling_list::{weight_scale_8x8_2d, ResolvedScalingMatrix},
+    ColorPlane,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -193,10 +190,6 @@ impl Residual {
             ColorPlane::Cb => self.chroma_cb_level4x4_nc[blk_idx],
             ColorPlane::Cr => self.chroma_cr_level4x4_nc[blk_idx],
         }
-    }
-
-    pub fn has_separate_luma_dc(&self) -> bool {
-        self.prediction_mode == MbPredictionMode::Intra_16x16
     }
 
     pub fn restore(
@@ -804,6 +797,7 @@ pub(super) fn add_residual_4x4(buf: &mut [u8], origin: usize, stride: usize, res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::h264::scaling_list::{FLAT_4X4_16, FLAT_8X8_16};
 
     #[test]
     pub fn test_norm_adjust_4x4() {

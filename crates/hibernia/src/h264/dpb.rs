@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::decoder::{Picture, VideoFrame};
+use super::decoder::Picture;
 use super::slice::{MemoryManagementControlOperation, SliceHeader};
 use super::sps::SequenceParameterSet;
 
@@ -432,6 +432,7 @@ fn calculate_pic_num_x(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::h264::decoder::VideoFrame;
     use crate::h264::slice::DecRefPicMarking;
     use v_frame::pixel::ChromaSampling;
 

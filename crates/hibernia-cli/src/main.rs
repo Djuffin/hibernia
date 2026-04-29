@@ -13,7 +13,6 @@ use hibernia::diag;
 use hibernia::h264;
 
 use std::env;
-use std::fmt::Error;
 use std::fs;
 use std::io;
 use std::time::Instant;
@@ -21,7 +20,6 @@ use std::time::Instant;
 use hibernia::h264::nal_parser::NalParser;
 use log::info;
 use std::io::BufReader;
-use v_frame::plane::PlaneOffset;
 
 fn main() {
     diag::init(false);

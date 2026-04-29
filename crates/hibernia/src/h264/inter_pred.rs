@@ -6,7 +6,7 @@ use super::macroblock::{
 use super::slice::{Slice, SliceType};
 use super::residual::{add_residual_4x4, Block4x4};
 use super::{ColorPlane, Point};
-use v_frame::plane::{Plane, PlaneOffset};
+use v_frame::plane::Plane;
 
 /// Section 8.4.2.2.1 Luma sample interpolation process.
 /// This function interpolates a block of luma samples with quarter-sample accuracy.
@@ -1441,7 +1441,6 @@ mod weighted_pred_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use v_frame::pixel::ChromaSampling;
 
     fn create_test_plane(width: usize, height: usize, fill: u8) -> Plane<u8> {
         let mut p = Plane::new(width, height, 0, 0, 16, 16);
@@ -1482,7 +1481,6 @@ mod tests {
                 break;
             }
             let row_start = y * stride;
-            let row_end = (row_start + stride).min(plane.data.len());
             for x in 0..stride {
                 if row_start + x < plane.data.len() {
                     plane.data[row_start + x] = if x % 2 == 0 { 100 } else { 200 };

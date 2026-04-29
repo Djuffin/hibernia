@@ -14,4 +14,6 @@ extern crate num_derive;
 
 pub mod diag;
 pub mod h264;
-pub mod y4m_cmp;
+
+#[cfg(test)]
+mod y4m_cmp;

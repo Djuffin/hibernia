@@ -12,21 +12,19 @@ use super::scaling_list::{
 };
 use super::slice;
 use super::sps;
-use super::tables;
 
 use super::cabac::CabacContext;
 use super::cavlc::parse_slice_data_cavlc;
-use super::residual::Residual;
-use super::{ChromaFormat, ColorPlane, Profile};
+use super::{ChromaFormat, ColorPlane};
 use decoder::DecoderContext;
 use log::trace;
 use macroblock::{
-    get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, BMb, BMbType,
-    get_8x8luma_block_neighbor, BSubMacroblock, BSubMbType, IMb, IMbType,
-    Intra_4x4_SamplePredMode, Intra_8x8_SamplePredMode, Intra_Chroma_Pred_Mode,
+    get_4x4luma_block_neighbor, BMbType,
+    get_8x8luma_block_neighbor, BSubMacroblock, BSubMbType, IMb,
+    Intra_4x4_SamplePredMode, Intra_8x8_SamplePredMode,
     Macroblock, MbAddr, MbMotion, MbNeighborName, MbPredictionMode, MotionVector,
-    PartitionRect, PMb, PMbType,
-    PartitionInfo, PcmMb, SubMacroblock, SubMbType,
+    PartitionRect, PMbType,
+    PartitionInfo, SubMacroblock, SubMbType,
 };
 use nal::{NalHeader, NalUnitType};
 use pps::{PicParameterSet, SliceGroup, SliceGroupChangeType, SliceRect};
@@ -553,27 +551,6 @@ pub fn parse_pps(input: &mut BitReader) -> ParseResult<PicParameterSet> {
     Ok(pps)
 }
 
-pub fn count_bytes_till_start_code(input: &[u8]) -> Option<usize> {
-    let mut zeros = 0;
-    for (idx, byte) in input.iter().enumerate() {
-        let value = *byte;
-        if value == 0 {
-            zeros += 1;
-        } else if value == 1 {
-            if zeros >= 3 {
-                return Some(idx - 3);
-            }
-            if zeros == 2 {
-                return Some(idx - 2);
-            }
-            zeros = 0;
-        } else {
-            zeros = 0;
-        }
-    }
-    None
-}
-
 /// Strip emulation_prevention_three_byte (0x03 inserted after `0x00 0x00`) per
 /// section 7.4.1.1. Borrows the input when no prevention bytes are present, so
 /// the no-emulation path is allocation-free.
@@ -711,7 +688,6 @@ pub fn parse_pred_weight_table(
     input: &mut BitReader,
     slice_header: &SliceHeader,
     sps: &SequenceParameterSet,
-    pps: &PicParameterSet,
 ) -> ParseResult<PredWeightTable> {
     if slice_header.num_ref_idx_l0_active_minus1 > 31 {
         return Err(format!(
@@ -772,7 +748,7 @@ pub fn parse_pred_weight_table(
     }
 
     if slice_header.slice_type == SliceType::B {
-        for i in 0..=slice_header.num_ref_idx_l1_active_minus1 {
+        for _ in 0..=slice_header.num_ref_idx_l1_active_minus1 {
             let mut factors = WeightingFactors {
                 luma_weight: 1 << table.luma_log2_weight_denom,
                 luma_offset: 0,
@@ -982,7 +958,7 @@ pub fn parse_slice_header(
     if (pps.weighted_pred_flag && matches!(header.slice_type, SliceType::P | SliceType::SP))
         || (pps.weighted_bipred_idc == 1 && header.slice_type == SliceType::B)
     {
-        header.pred_weight_table = Some(parse_pred_weight_table(input, &header, sps, pps)?);
+        header.pred_weight_table = Some(parse_pred_weight_table(input, &header, sps)?);
     }
 
     if nal.nal_ref_idc != 0 {
@@ -2275,6 +2251,8 @@ pub fn parse_slice_data_cabac(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::h264::macroblock::{IMbType, Intra_Chroma_Pred_Mode};
+    use crate::h264::Profile;
 
     pub fn reader(bytes: &[u8]) -> BitReader<'_> {
         BitReader::new(bytes)
@@ -2478,21 +2456,6 @@ mod tests {
         let pps_nal = parse_nal_header(&mut reader(&data)).expect("NAL unit");
         assert_eq!(pps_nal.nal_unit_type, NalUnitType::PicParameterSet);
         assert_eq!(pps_nal.nal_ref_idc, 3);
-    }
-
-    #[test]
-    pub fn test_count_bytes_till_start_code() {
-        let data = [0xFF, 0xFF, 0x00, 0x00, 0xAA, 0x00, 0x00, 0x00, 0x01, 0x07];
-        assert_eq!(count_bytes_till_start_code(&data), Some(5));
-
-        let data = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02,
-        ];
-        assert_eq!(count_bytes_till_start_code(&data), Some(15));
-
-        let data = [0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04];
-        assert_eq!(count_bytes_till_start_code(&data), None);
     }
 
     #[test]

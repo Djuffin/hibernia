@@ -1,7 +1,5 @@
-use log::trace;
 use num_traits::cast::FromPrimitive;
 use std::fmt::Display;
-use std::num::NonZeroU32;
 
 use super::residual::Residual;
 use super::tables::{MB_HEIGHT, MB_WIDTH};

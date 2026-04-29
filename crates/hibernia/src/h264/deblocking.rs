@@ -1,7 +1,5 @@
 use super::decoder::{get_chroma_qp, SliceDeblockParams, VideoFrame};
-use super::macroblock::{
-    get_neighbor_mbs, IMb, Macroblock, MbAddr, MbNeighborName, MbPredictionMode,
-};
+use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborName};
 use super::pps::PicParameterSet;
 use super::slice::DeblockingFilterIdc;
 use super::sps::SequenceParameterSet;

@@ -150,11 +150,6 @@ impl ResolvedScalingMatrix {
         &self.lists_8x8[idx]
     }
 
-    /// DC-only scaling factor (position 0 of the relevant 4x4 list).
-    #[inline]
-    pub fn dc_4x4(&self, is_inter: bool, plane: ColorPlane) -> u8 {
-        self.list_4x4(is_inter, plane)[0]
-    }
 }
 
 /// Resolve the effective sequence-level scaling matrix from a raw SPS matrix.

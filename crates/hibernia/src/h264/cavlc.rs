@@ -424,7 +424,6 @@ pub fn parse_residual(
     residual: &mut Residual,
 ) -> ParseResult<()> {
     trace!("parse_residual");
-    let pred_mode = residual.prediction_mode;
     let coded_block_pattern = residual.coded_block_pattern;
     parse_residual_luma(input, slice, residual)?;
     if slice.sps.ChromaArrayType().is_chroma_subsampled() {
@@ -858,7 +857,7 @@ pub fn parse_i_macroblock(
                         } else {
                             *mode = ((rem_intra4x4_pred_mode as u32) + 1)
                                 .try_into()
-                                .map_err(|e| "rem_intra4x4_pred_mode is too large".to_string())?;
+                                .map_err(|_| "rem_intra4x4_pred_mode is too large".to_string())?;
                         }
                     }
                     trace!("  blk:{blk_idx} prev: {prev_pred_mode} actual: {}", *mode);

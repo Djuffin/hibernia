@@ -2,7 +2,9 @@ use std::cmp::max;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use super::slice::{DeblockingFilterIdc, RefPicListModification, Slice, SliceHeader, SliceType};
+use super::slice::{
+    DeblockingFilterIdc, DpbList, RefPicListModification, Slice, SliceHeader, SliceType,
+};
 use super::tables::mb_type_to_16x16_pred_mode;
 use super::ColorPlane;
 
@@ -654,7 +656,7 @@ impl Decoder {
             .iter()
             .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
             .collect();
-        let l1_pocs: Vec<i32> = slice
+        let l1_pocs: DpbList<i32> = slice
             .ref_pic_list1
             .iter()
             .filter_map(|&idx| self.dpb.pictures.get(idx).map(|p| p.picture.pic_order_cnt))
@@ -679,9 +681,10 @@ impl Decoder {
             alpha_c0_offset_div2: slice.header.slice_alpha_c0_offset_div2,
             beta_offset_div2: slice.header.slice_beta_offset_div2,
         });
-        current
-            .slice_ref_pocs
-            .push((std::mem::take(&mut slice.ref_pic_list0_pocs), l1_pocs));
+        current.slice_ref_pocs.push((
+            std::mem::take(&mut slice.ref_pic_list0_pocs).into_vec(),
+            l1_pocs.into_vec(),
+        ));
         current.slices_seen += 1;
         current.next_mb_addr =
             slice.header.first_mb_in_slice + slice.get_macroblock_count() as MbAddr;
@@ -1097,17 +1100,17 @@ impl Decoder {
             ref_list0.truncate(len);
         }
 
-        slice.ref_pic_list0 = ref_list0.into_vec();
+        slice.ref_pic_list0 = ref_list0;
         Ok(())
     }
 
     // Section 8.2.4.2 Initialization process for reference picture lists
-    fn initialize_ref_pic_list0(&self, slice: &Slice) -> SmallVec<[usize; 16]> {
+    fn initialize_ref_pic_list0(&self, slice: &Slice) -> DpbList<usize> {
         let max_frame_num = 1 << (slice.sps.log2_max_frame_num_minus4 + 4);
         let curr_frame_num = slice.header.frame_num as i32;
 
-        let mut short_term_refs: SmallVec<[(usize, i32); 16]> = SmallVec::new();
-        let mut long_term_refs: SmallVec<[(usize, usize); 16]> = SmallVec::new();
+        let mut short_term_refs: DpbList<(usize, i32)> = DpbList::new();
+        let mut long_term_refs: DpbList<(usize, usize)> = DpbList::new();
 
         // The current picture is not yet in the DPB (stored after decoding per C.2.4),
         // so all DPB entries are valid reference candidates.
@@ -1144,7 +1147,7 @@ impl Decoder {
         &self,
         slice: &Slice,
         modifications: &[RefPicListModification],
-        ref_list: &mut SmallVec<[usize; 16]>,
+        ref_list: &mut DpbList<usize>,
     ) {
         if modifications.is_empty() {
             return;
@@ -1197,7 +1200,7 @@ impl Decoder {
         }
     }
 
-    fn place_picture_in_list(&self, list: &mut SmallVec<[usize; 16]>, pic_idx: usize, ref_idx: usize) {
+    fn place_picture_in_list(&self, list: &mut DpbList<usize>, pic_idx: usize, ref_idx: usize) {
         if ref_idx < list.len() {
             list.insert(ref_idx, pic_idx);
 
@@ -1235,10 +1238,10 @@ impl Decoder {
 
     // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
     // List 0 for B slices: short-term with POC <= current (desc), then POC > current (asc), then long-term (asc)
-    fn initialize_ref_pic_list0_b(&self, current_poc: i32) -> SmallVec<[usize; 16]> {
-        let mut short_term_le: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC <= current
-        let mut short_term_gt: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC > current
-        let mut long_term_refs: SmallVec<[(usize, usize); 16]> = SmallVec::new();
+    fn initialize_ref_pic_list0_b(&self, current_poc: i32) -> DpbList<usize> {
+        let mut short_term_le: DpbList<(usize, i32)> = DpbList::new(); // POC <= current
+        let mut short_term_gt: DpbList<(usize, i32)> = DpbList::new(); // POC > current
+        let mut long_term_refs: DpbList<(usize, usize)> = DpbList::new();
 
         for (i, pic) in self.dpb.pictures.iter().enumerate() {
             match pic.marking {
@@ -1270,10 +1273,10 @@ impl Decoder {
 
     // Section 8.2.4.2.3 Initialization process for reference picture lists for B slices
     // List 1 for B slices: short-term with POC > current (asc), then POC <= current (desc), then long-term (asc)
-    fn initialize_ref_pic_list1(&self, current_poc: i32) -> SmallVec<[usize; 16]> {
-        let mut short_term_gt: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC > current
-        let mut short_term_le: SmallVec<[(usize, i32); 16]> = SmallVec::new(); // POC <= current
-        let mut long_term_refs: SmallVec<[(usize, usize); 16]> = SmallVec::new();
+    fn initialize_ref_pic_list1(&self, current_poc: i32) -> DpbList<usize> {
+        let mut short_term_gt: DpbList<(usize, i32)> = DpbList::new(); // POC > current
+        let mut short_term_le: DpbList<(usize, i32)> = DpbList::new(); // POC <= current
+        let mut long_term_refs: DpbList<(usize, usize)> = DpbList::new();
 
         for (i, pic) in self.dpb.pictures.iter().enumerate() {
             match pic.marking {
@@ -1327,7 +1330,7 @@ impl Decoder {
             ref_list1.truncate(len);
         }
 
-        slice.ref_pic_list1 = ref_list1.into_vec();
+        slice.ref_pic_list1 = ref_list1;
         Ok(())
     }
 

@@ -2,12 +2,16 @@ use std::sync::Arc;
 use std::fmt;
 
 use num_traits::FromPrimitive;
+use smallvec::SmallVec;
 
 use super::decoder::MotionFieldStorage;
 use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborName};
 use super::pps::PicParameterSet;
 use super::sps::SequenceParameterSet;
 use super::{tables, ColorPlane, Point};
+
+/// A small-buffer-optimized vector sized for DPB-bounded data (max 16 frames per H.264 spec).
+pub type DpbList<T> = SmallVec<[T; 16]>;
 
 /// Information about the colocated picture (refPicList1[0]) needed for temporal direct prediction.
 #[derive(Clone, Debug)]
@@ -223,11 +227,11 @@ pub struct Slice {
     pub header: SliceHeader,
 
     macroblocks: Vec<Macroblock>,
-    pub ref_pic_list0: Vec<usize>,
-    pub ref_pic_list1: Vec<usize>,
+    pub ref_pic_list0: DpbList<usize>,
+    pub ref_pic_list1: DpbList<usize>,
     /// POCs of references in ref_pic_list0 (parallel to ref_pic_list0).
     /// Read during parse by `map_col_to_list0` for temporal direct prediction.
-    pub ref_pic_list0_pocs: Vec<i32>,
+    pub ref_pic_list0_pocs: DpbList<i32>,
     /// POC of the current picture being decoded.
     pub current_pic_poc: i32,
     /// Colocated picture info for temporal direct prediction in B slices.
@@ -250,9 +254,9 @@ impl Slice {
             pps,
             header,
             macroblocks,
-            ref_pic_list0: Vec::new(),
-            ref_pic_list1: Vec::new(),
-            ref_pic_list0_pocs: Vec::new(),
+            ref_pic_list0: DpbList::new(),
+            ref_pic_list1: DpbList::new(),
+            ref_pic_list0_pocs: DpbList::new(),
             current_pic_poc: 0,
             col_pic: None,
         }

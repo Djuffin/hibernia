@@ -1801,7 +1801,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         blk_idx: usize,
         comp_idx: usize,
         max_num_coeff: usize,
-    ) -> ParseResult<bool> {
+    ) -> ParseResult<()> {
         trace!(
             "parse_residual_block_cabac cat={} blk={} comp={}",
             ctx_block_cat,
@@ -1867,7 +1867,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
         trace!("parse_residual_block_cabac cbf={}", cbf);
         if !cbf {
-            return Ok(false);
+            return Ok(());
         }
 
         // 2. significant_coeff_flag / last_significant_coeff_flag.
@@ -1995,7 +1995,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
             _ => {}
         }
 
-        Ok(true)
+        Ok(())
     }
 
     fn parse_abs_level_minus1(

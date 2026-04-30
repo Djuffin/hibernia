@@ -177,7 +177,7 @@ pub fn resolve_seq_scaling_matrix(
         out.lists_4x4[i] = match &matrix.lists_4x4[i] {
             ScalingList4x4Entry::Explicit(v) => vec_to_list_4x4(v),
             ScalingList4x4Entry::UseDefault => {
-                if i == 0 || i == 1 || i == 2 {
+                if i < 3 {
                     DEFAULT_SCALING_LIST_4X4_INTRA
                 } else {
                     DEFAULT_SCALING_LIST_4X4_INTER

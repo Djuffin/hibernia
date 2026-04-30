@@ -882,24 +882,12 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         4
                     }
                 }
-                super::macroblock::PMbType::P_8x8 => match mb_part_idx {
-                    0 => 0,
-                    1 => 4,
-                    2 => 8,
-                    3 => 12,
-                    _ => 0,
-                },
+                super::macroblock::PMbType::P_8x8 => (mb_part_idx * 4) as u8,
                 _ => 0,
             },
             CabacMbType::B(b_type) => {
                 if b_type == super::macroblock::BMbType::B_8x8 {
-                    match mb_part_idx {
-                        0 => 0,
-                        1 => 4,
-                        2 => 8,
-                        3 => 12,
-                        _ => 0,
-                    }
+                    (mb_part_idx * 4) as u8
                 } else {
                     let (_, h) = b_type.MbPartSize();
                     if b_type.NumMbPart() <= 1 {
@@ -2801,14 +2789,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
                             // Update curr_mb.motion
                             // P_8x8 -> 8x8 block i.
-                            let start_blk_idx = match i {
-                                0 => 0,
-                                1 => 4,
-                                2 => 8,
-                                3 => 12,
-                                _ => 0,
-                            };
-                            let p = super::macroblock::get_4x4luma_block_location(start_blk_idx);
+                            let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
                             let start_y = (p.y / 4) as usize;
                             let start_x = (p.x / 4) as usize;
                             for y in 0..2 {
@@ -2836,13 +2817,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             // i*4 + p_idx constructs the Z-scan index of the sub-partition within the MB
                             // But p_idx here is relative to 8x8 block Z-scan.
                             // 8x8 block i starts at Z-scan index: 0, 4, 8, 12.
-                            let base_blk_idx = match i {
-                                0 => 0,
-                                1 => 4,
-                                2 => 8,
-                                3 => 12,
-                                _ => 0,
-                            };
+                            let base_blk_idx = i * 4;
                             let blk_idx = base_blk_idx + p_idx;
 
                             let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
@@ -3020,14 +2995,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     // (needed for predModeEqualFlagN within-MB neighbor checks)
                     for i in 0..4 {
                         let mode = sub_mbs[i].sub_mb_type.SubMbPredMode();
-                        let start_blk_idx: u8 = match i {
-                            0 => 0,
-                            1 => 4,
-                            2 => 8,
-                            3 => 12,
-                            _ => 0,
-                        };
-                        let p = super::macroblock::get_4x4luma_block_location(start_blk_idx);
+                        let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
                         let sy = (p.y / 4) as usize;
                         let sx = (p.x / 4) as usize;
                         for y in 0..2 {
@@ -3055,14 +3023,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             for j in 0..4 {
                                 sub_mbs[i].partitions[j].ref_idx_l0 = ref_idx;
                             }
-                            let start_blk_idx: u8 = match i {
-                                0 => 0,
-                                1 => 4,
-                                2 => 8,
-                                3 => 12,
-                                _ => 0,
-                            };
-                            let p = super::macroblock::get_4x4luma_block_location(start_blk_idx);
+                            let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
                             let sy = (p.y / 4) as usize;
                             let sx = (p.x / 4) as usize;
                             for y in 0..2 {
@@ -3088,14 +3049,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             for j in 0..4 {
                                 sub_mbs[i].partitions[j].ref_idx_l1 = ref_idx;
                             }
-                            let start_blk_idx: u8 = match i {
-                                0 => 0,
-                                1 => 4,
-                                2 => 8,
-                                3 => 12,
-                                _ => 0,
-                            };
-                            let p = super::macroblock::get_4x4luma_block_location(start_blk_idx);
+                            let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
                             let sy = (p.y / 4) as usize;
                             let sx = (p.x / 4) as usize;
                             for y in 0..2 {
@@ -3115,14 +3069,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let num_sub_part = sub_mbs[i].sub_mb_type.NumSubMbPart();
                             for j in 0..num_sub_part {
                                 let p_idx = Self::get_sub_mb_blk_idx_b(sub_mbs[i].sub_mb_type, j);
-                                let base_blk_idx: usize = match i {
-                                    0 => 0,
-                                    1 => 4,
-                                    2 => 8,
-                                    3 => 12,
-                                    _ => 0,
-                                };
-                                let blk_idx = base_blk_idx + p_idx;
+                                let blk_idx = i * 4 + p_idx;
 
                                 let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                                 let mvd_x = self.parse_mvd_cabac(&accessor, 0, 0, blk_idx)?;
@@ -3155,14 +3102,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let num_sub_part = sub_mbs[i].sub_mb_type.NumSubMbPart();
                             for j in 0..num_sub_part {
                                 let p_idx = Self::get_sub_mb_blk_idx_b(sub_mbs[i].sub_mb_type, j);
-                                let base_blk_idx: usize = match i {
-                                    0 => 0,
-                                    1 => 4,
-                                    2 => 8,
-                                    3 => 12,
-                                    _ => 0,
-                                };
-                                let blk_idx = base_blk_idx + p_idx;
+                                let blk_idx = i * 4 + p_idx;
 
                                 let accessor = NeighborAccessor::new(slice, mb_addr, &curr_mb);
                                 let mvd_x = self.parse_mvd_cabac(&accessor, 1, 0, blk_idx)?;

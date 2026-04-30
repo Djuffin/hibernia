@@ -24,7 +24,8 @@ use macroblock::{
     get_4x4chroma_block_neighbor, get_4x4luma_block_neighbor, get_neighbor_mbs, BMb, BMbType,
     get_8x8luma_block_neighbor, BSubMacroblock, BSubMbType, IMb, IMbType,
     Intra_4x4_SamplePredMode, Intra_8x8_SamplePredMode, Intra_Chroma_Pred_Mode,
-    Macroblock, MbAddr, MbMotion, MbNeighborName, MbPredictionMode, MotionVector, PMb, PMbType,
+    Macroblock, MbAddr, MbMotion, MbNeighborName, MbPredictionMode, MotionVector,
+    PartitionRect, PMb, PMbType,
     PartitionInfo, PcmMb, SubMacroblock, SubMbType,
 };
 use nal::{NalHeader, NalUnitType};
@@ -1178,20 +1179,16 @@ pub fn get_motion_at_coord(
 }
 
 // Section 8.4.1.3 Derivation process for luma motion vector prediction
-#[allow(clippy::too_many_arguments)]
 pub fn predict_mv_l0(
     slice: &Slice,
     mb_addr: MbAddr,
-    part_x: u8,
-    part_y: u8,
-    part_w: u8,
-    part_h: u8,
+    rect: PartitionRect,
     ref_idx_l0: u8,
     current_mb_motion: Option<&MbMotion>,
 ) -> MotionVector {
     let mb_loc = slice.get_mb_location(mb_addr);
-    let x = mb_loc.x as i32 + part_x as i32;
-    let y = mb_loc.y as i32 + part_y as i32;
+    let x = mb_loc.x as i32 + rect.x as i32;
+    let y = mb_loc.y as i32 + rect.y as i32;
 
     // Helper to fetch neighbor info.
     // Returns None if the neighbor is unavailable (e.g. out of bounds).
@@ -1214,15 +1211,15 @@ pub fn predict_mv_l0(
     // Neighbors A (left), B (top), C (top-right), D (top-left)
     let a = get_neighbor(x - 1, y);
     let b = get_neighbor(x, y - 1);
-    let c = get_neighbor(x + part_w as i32, y - 1);
+    let c = get_neighbor(x + rect.w as i32, y - 1);
     let d = get_neighbor(x - 1, y - 1);
 
     // Directional segmentation prediction (8-203 to 8-206)
-    let is_16x8 = part_w == 16 && part_h == 8;
-    let is_8x16 = part_w == 8 && part_h == 16;
+    let is_16x8 = rect.w == 16 && rect.h == 8;
+    let is_8x16 = rect.w == 8 && rect.h == 16;
 
     if is_16x8 {
-        if part_y == 0 {
+        if rect.y == 0 {
             // 16x8 Top partition (0): use B if references match
             if let Some(info) = b {
                 if info.ref_idx_l0 == ref_idx_l0 {
@@ -1238,7 +1235,7 @@ pub fn predict_mv_l0(
             }
         }
     } else if is_8x16 {
-        if part_x == 0 {
+        if rect.x == 0 {
             // 8x16 Left partition (0): use A if references match
             if let Some(info) = a {
                 if info.ref_idx_l0 == ref_idx_l0 {
@@ -1312,20 +1309,16 @@ pub fn predict_mv_l0(
 }
 
 // Section 8.4.1.3 Derivation process for luma motion vector prediction (L1)
-#[allow(clippy::too_many_arguments)]
 pub fn predict_mv_l1(
     slice: &Slice,
     mb_addr: MbAddr,
-    part_x: u8,
-    part_y: u8,
-    part_w: u8,
-    part_h: u8,
+    rect: PartitionRect,
     ref_idx_l1: u8,
     current_mb_motion: Option<&MbMotion>,
 ) -> MotionVector {
     let mb_loc = slice.get_mb_location(mb_addr);
-    let x = mb_loc.x as i32 + part_x as i32;
-    let y = mb_loc.y as i32 + part_y as i32;
+    let x = mb_loc.x as i32 + rect.x as i32;
+    let y = mb_loc.y as i32 + rect.y as i32;
 
     // Per spec 8.4.1.3.1: if a neighbor doesn't use L1 prediction, refIdxL1 = -1.
     // Note: pred_mode=None means P-slice code; not relevant for L1 but handled for safety.
@@ -1344,14 +1337,14 @@ pub fn predict_mv_l1(
 
     let a = get_neighbor(x - 1, y);
     let b = get_neighbor(x, y - 1);
-    let c = get_neighbor(x + part_w as i32, y - 1);
+    let c = get_neighbor(x + rect.w as i32, y - 1);
     let d = get_neighbor(x - 1, y - 1);
 
-    let is_16x8 = part_w == 16 && part_h == 8;
-    let is_8x16 = part_w == 8 && part_h == 16;
+    let is_16x8 = rect.w == 16 && rect.h == 8;
+    let is_8x16 = rect.w == 8 && rect.h == 16;
 
     if is_16x8 {
-        if part_y == 0 {
+        if rect.y == 0 {
             if let Some(info) = b {
                 if info.ref_idx_l1 == ref_idx_l1 {
                     return info.mv_l1;
@@ -1365,7 +1358,7 @@ pub fn predict_mv_l1(
             }
         }
     } else if is_8x16 {
-        if part_x == 0 {
+        if rect.x == 0 {
             if let Some(info) = a {
                 if info.ref_idx_l1 == ref_idx_l1 {
                     return info.mv_l1;
@@ -1430,10 +1423,7 @@ fn fill_motion_grid_b(
     slice: &Slice,
     mb_addr: MbAddr,
     motion: &mut MbMotion,
-    part_x: u8,
-    part_y: u8,
-    part_w: u8,
-    part_h: u8,
+    rect: PartitionRect,
     pred_mode: MbPredictionMode,
     ref_idx_l0: u8,
     mvd_l0: MotionVector,
@@ -1444,15 +1434,13 @@ fn fill_motion_grid_b(
     let mut final_mv_l1 = MotionVector::default();
 
     if pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred {
-        let mvp =
-            predict_mv_l0(slice, mb_addr, part_x, part_y, part_w, part_h, ref_idx_l0, Some(motion));
+        let mvp = predict_mv_l0(slice, mb_addr, rect, ref_idx_l0, Some(motion));
         final_mv_l0 =
             MotionVector { x: mvp.x.wrapping_add(mvd_l0.x), y: mvp.y.wrapping_add(mvd_l0.y) };
     }
 
     if pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred {
-        let mvp =
-            predict_mv_l1(slice, mb_addr, part_x, part_y, part_w, part_h, ref_idx_l1, Some(motion));
+        let mvp = predict_mv_l1(slice, mb_addr, rect, ref_idx_l1, Some(motion));
         final_mv_l1 =
             MotionVector { x: mvp.x.wrapping_add(mvd_l1.x), y: mvp.y.wrapping_add(mvd_l1.y) };
     }
@@ -1468,10 +1456,10 @@ fn fill_motion_grid_b(
         mvd_l1,
     };
 
-    let grid_x_start = (part_x / 4) as usize;
-    let grid_y_start = (part_y / 4) as usize;
-    let grid_w = (part_w / 4) as usize;
-    let grid_h = (part_h / 4) as usize;
+    let grid_x_start = (rect.x / 4) as usize;
+    let grid_y_start = (rect.y / 4) as usize;
+    let grid_w = (rect.w / 4) as usize;
+    let grid_h = (rect.h / 4) as usize;
 
     for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
         row[grid_x_start..grid_x_start + grid_w].fill(info);
@@ -1579,10 +1567,7 @@ pub fn calculate_motion_b(
                         slice,
                         this_mb_addr,
                         &mut motion,
-                        sub_mb_x + dx,
-                        sub_mb_y + dy,
-                        part_w,
-                        part_h,
+                        PartitionRect { x: sub_mb_x + dx, y: sub_mb_y + dy, w: part_w, h: part_h },
                         pred_mode,
                         p_info.ref_idx_l0,
                         p_info.mvd_l0,
@@ -1610,10 +1595,7 @@ pub fn calculate_motion_b(
                     slice,
                     this_mb_addr,
                     &mut motion,
-                    part_x,
-                    part_y,
-                    part_w,
-                    part_h,
+                    PartitionRect { x: part_x, y: part_y, w: part_w, h: part_h },
                     pred_mode,
                     partitions[i].ref_idx_l0,
                     partitions[i].mvd_l0,
@@ -1677,12 +1659,24 @@ fn derive_spatial_direct(slice: &Slice, mb_addr: MbAddr, _current_motion: &MbMot
     // Compute predicted MVs once (clause 8.4.1.3, same for all sub-blocks per NOTE 3).
     // These may be overridden to zero per sub-block by colZeroFlag.
     let predicted_mv_l0 = if !direct_zero_prediction && ref_idx_l0 >= 0 {
-        predict_mv_l0(slice, mb_addr, 0, 0, 16, 16, ref_idx_l0 as u8, None)
+        predict_mv_l0(
+            slice,
+            mb_addr,
+            PartitionRect { x: 0, y: 0, w: 16, h: 16 },
+            ref_idx_l0 as u8,
+            None,
+        )
     } else {
         MotionVector::default()
     };
     let predicted_mv_l1 = if !direct_zero_prediction && ref_idx_l1 >= 0 {
-        predict_mv_l1(slice, mb_addr, 0, 0, 16, 16, ref_idx_l1 as u8, None)
+        predict_mv_l1(
+            slice,
+            mb_addr,
+            PartitionRect { x: 0, y: 0, w: 16, h: 16 },
+            ref_idx_l1 as u8,
+            None,
+        )
     } else {
         MotionVector::default()
     };
@@ -1830,12 +1824,24 @@ fn derive_spatial_direct_sub(
 
     // MV prediction uses MB origin and full 16x16 partition width (spec NOTE 1/3)
     let predicted_mv_l0 = if !direct_zero_prediction && ref_idx_l0 >= 0 {
-        predict_mv_l0(slice, mb_addr, 0, 0, 16, 16, ref_idx_l0 as u8, None)
+        predict_mv_l0(
+            slice,
+            mb_addr,
+            PartitionRect { x: 0, y: 0, w: 16, h: 16 },
+            ref_idx_l0 as u8,
+            None,
+        )
     } else {
         MotionVector::default()
     };
     let predicted_mv_l1 = if !direct_zero_prediction && ref_idx_l1 >= 0 {
-        predict_mv_l1(slice, mb_addr, 0, 0, 16, 16, ref_idx_l1 as u8, None)
+        predict_mv_l1(
+            slice,
+            mb_addr,
+            PartitionRect { x: 0, y: 0, w: 16, h: 16 },
+            ref_idx_l1 as u8,
+            None,
+        )
     } else {
         MotionVector::default()
     };
@@ -2108,36 +2114,25 @@ pub fn calculate_motion(
     }
 
     // Helper to calculate motion vector and fill the grid
-    let mut fill_motion_grid =
-        |part_x: u8, part_y: u8, part_w: u8, part_h: u8, ref_idx: u8, mvd: MotionVector| {
-            let mvp = predict_mv_l0(
-                slice,
-                this_mb_addr,
-                part_x,
-                part_y,
-                part_w,
-                part_h,
-                ref_idx,
-                Some(&motion),
-            );
-            let final_mv =
-                MotionVector { x: mvp.x.wrapping_add(mvd.x), y: mvp.y.wrapping_add(mvd.y) };
-            let info = PartitionInfo {
-                ref_idx_l0: ref_idx,
-                mv_l0: final_mv,
-                mvd_l0: mvd,
-                ..Default::default()
-            };
-
-            let grid_x_start = (part_x / 4) as usize;
-            let grid_y_start = (part_y / 4) as usize;
-            let grid_w = (part_w / 4) as usize;
-            let grid_h = (part_h / 4) as usize;
-
-            for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
-                row[grid_x_start..grid_x_start + grid_w].fill(info);
-            }
+    let mut fill_motion_grid = |rect: PartitionRect, ref_idx: u8, mvd: MotionVector| {
+        let mvp = predict_mv_l0(slice, this_mb_addr, rect, ref_idx, Some(&motion));
+        let final_mv = MotionVector { x: mvp.x.wrapping_add(mvd.x), y: mvp.y.wrapping_add(mvd.y) };
+        let info = PartitionInfo {
+            ref_idx_l0: ref_idx,
+            mv_l0: final_mv,
+            mvd_l0: mvd,
+            ..Default::default()
         };
+
+        let grid_x_start = (rect.x / 4) as usize;
+        let grid_y_start = (rect.y / 4) as usize;
+        let grid_w = (rect.w / 4) as usize;
+        let grid_h = (rect.h / 4) as usize;
+
+        for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
+            row[grid_x_start..grid_x_start + grid_w].fill(info);
+        }
+    };
 
     match mb_type {
         PMbType::P_Skip => {
@@ -2168,7 +2163,7 @@ pub fn calculate_motion(
             let mv = if zero_a || zero_b {
                 MotionVector::default()
             } else {
-                predict_mv_l0(slice, this_mb_addr, 0, 0, 16, 16, 0, None)
+                predict_mv_l0(slice, this_mb_addr, PartitionRect { x: 0, y: 0, w: 16, h: 16 }, 0, None)
             };
 
             let info = PartitionInfo {
@@ -2203,10 +2198,7 @@ pub fn calculate_motion(
                         _ => unreachable!(),
                     };
                     fill_motion_grid(
-                        sub_mb_x + dx,
-                        sub_mb_y + dy,
-                        part_w,
-                        part_h,
+                        PartitionRect { x: sub_mb_x + dx, y: sub_mb_y + dy, w: part_w, h: part_h },
                         mvd_info.ref_idx_l0,
                         mvd_info.mvd_l0,
                     );
@@ -2233,10 +2225,7 @@ pub fn calculate_motion(
                     _ => unreachable!(),
                 };
                 fill_motion_grid(
-                    part_x,
-                    part_y,
-                    part_w,
-                    part_h,
+                    PartitionRect { x: part_x, y: part_y, w: part_w, h: part_h },
                     mvd_info.ref_idx_l0,
                     mvd_info.mvd_l0,
                 );

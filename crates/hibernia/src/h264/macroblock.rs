@@ -723,6 +723,14 @@ pub struct IMb {
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PartitionRect {
+    pub x: u8,
+    pub y: u8,
+    pub w: u8,
+    pub h: u8,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MotionVector {
     pub x: i16,
     pub y: i16,

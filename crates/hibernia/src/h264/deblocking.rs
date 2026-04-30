@@ -698,6 +698,25 @@ fn get_partition(mb: &Macroblock, y: usize, x: usize) -> Option<super::macrobloc
     }
 }
 
+// (q_y, q_x, p_y, p_x) for a given edge: outer index is `edge_idx + 4 * is_vertical`,
+// inner index is `block_idx`. The neighbor across an internal edge is `edge_idx - 1`;
+// for `edge_idx == 0` (external edge) it wraps to row/col 3 of the neighboring MB.
+const EDGE_BLOCK_COORDS: [[(usize, usize, usize, usize); 4]; 8] = {
+    let mut t = [[(0usize, 0, 0, 0); 4]; 8];
+    let mut e = 0;
+    while e < 4 {
+        let p = if e == 0 { 3 } else { e - 1 };
+        let mut b = 0;
+        while b < 4 {
+            t[e][b] = (e, b, p, b);
+            t[4 + e][b] = (b, e, b, p);
+            b += 1;
+        }
+        e += 1;
+    }
+    t
+};
+
 #[allow(clippy::too_many_arguments)]
 fn get_bs(
     mb_q: &Macroblock,
@@ -715,17 +734,8 @@ fn get_bs(
     block_idx: usize,
     is_vertical: bool,
 ) -> u8 {
-    let (q_y, q_x, p_y, p_x) = if is_vertical {
-        if edge_idx == 0 {
-            (block_idx, edge_idx, block_idx, 3)
-        } else {
-            (block_idx, edge_idx, block_idx, edge_idx - 1)
-        }
-    } else if edge_idx == 0 {
-        (edge_idx, block_idx, 3, block_idx)
-    } else {
-        (edge_idx, block_idx, edge_idx - 1, block_idx)
-    };
+    let (q_y, q_x, p_y, p_x) =
+        EDGE_BLOCK_COORDS[edge_idx + 4 * (is_vertical as usize)][block_idx];
 
     if mb_p.is_intra() || mb_q.is_intra() {
         if edge_idx == 0 {

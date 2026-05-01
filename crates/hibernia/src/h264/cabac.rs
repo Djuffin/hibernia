@@ -5,9 +5,7 @@ use super::macroblock::{
 use super::parser::{BitReader, ParseResult};
 use super::residual::Residual;
 use super::slice::Slice;
-use super::tables::{
-    get_init_table, NEXT_STATE_LPS_BY_CTX, NEXT_STATE_MPS_BY_CTX, RANGE_TAB_LPS,
-};
+use super::tables::{get_init_table, NEXT_STATE_MLPS, RANGE_TAB_LPS};
 use log::trace;
 use std::cmp::min;
 
@@ -693,36 +691,31 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // access compiles to a plain indexed load instead of a cmp+jb+panic.
         let idx = ctx_idx & 0x3FF;
         // Top bit of ctx_state is always 0 (we only ever write back values < 128);
-        // masking lets the optimizer drop the bounds check on the 128-entry
-        // NEXT_STATE_*_BY_CTX tables.
+        // masking lets the optimizer drop the bounds check on the 256-entry
+        // NEXT_STATE_MLPS table and the 64-entry RANGE_TAB_LPS table.
         let ctx_state = self.ctx_table[idx] & 0x7F;
         let p_state_idx = (ctx_state >> 1) as usize;
-        let val_mps = ctx_state & 1;
 
         let q_cod_i_range_idx = ((self.range >> 6) & 3) as usize;
         let cod_i_range_lps = RANGE_TAB_LPS[p_state_idx][q_cod_i_range_idx] as u32;
 
         self.range -= cod_i_range_lps;
 
-        // Fuse the MPS/LPS decision with the 9.3.3.2.1.1 state transition.
-        // NEXT_STATE_*_BY_CTX is keyed on the full 7-bit ctx_state and bakes in
-        // the pStateIdx==0 valMPS-toggle, so each path collapses to one byte
-        // load + store.
-        let bin_val;
-        let next_ctx_state;
-        if self.offset >= self.range {
-            // LPS path
-            bin_val = 1 - val_mps;
-            self.offset -= self.range;
-            self.range = cod_i_range_lps;
-            next_ctx_state = NEXT_STATE_LPS_BY_CTX[ctx_state as usize];
-        } else {
-            // MPS path
-            bin_val = val_mps;
-            next_ctx_state = NEXT_STATE_MPS_BY_CTX[ctx_state as usize];
-        }
+        // Branchless MPS/LPS selection via sign-bit extraction. Arithmetic
+        // right-shift produces an all-ones mask (-1) when offset >= range
+        // (LPS), all-zeros (0) for MPS.
+        let lps_mask = ((self.range as i32) - (self.offset as i32) - 1) >> 31;
+        let lps_mask_u = lps_mask as u32;
 
-        self.ctx_table[idx] = next_ctx_state;
+        self.offset -= self.range & lps_mask_u;
+        self.range = self.range.wrapping_add(cod_i_range_lps.wrapping_sub(self.range) & lps_mask_u);
+
+        // Combined state transition + bin_val from the MLPS table.
+        // XOR with -1 inverts ctx_state, selecting the LPS half of the table
+        // and flipping the valMPS bit in one shot.
+        let s = (ctx_state as i32) ^ lps_mask;
+        self.ctx_table[idx] = NEXT_STATE_MLPS[((s + 128) as u8) as usize];
+        let bin_val = (s & 1) as u8;
 
         self.renorm()?;
         trace!("decode_bin ctxIdx={} bin={}", ctx_idx, bin_val);

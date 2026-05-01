@@ -204,7 +204,7 @@ impl Residual {
         if plane == ColorPlane::Y {
             let weight_scale_4x4 = scaling.list_4x4(is_inter, ColorPlane::Y);
             match &self.luma {
-                LumaResidual::Intra16x16 { dc, ac, .. } => {
+                LumaResidual::Intra16x16 { dc, ac, ac_nc } => {
                     // Section 8.5.2 Specification of transform decoding process for luma samples
                     // of Intra_16x16 macroblock prediction mode
                     let mut dcs_block = unzip_block_4x4(dc);
@@ -212,9 +212,21 @@ impl Residual {
                     dc_scale_4x4_block(&mut dcs_block, weight_scale_4x4[0], qp);
 
                     for blk_idx in 0..16 {
-                        let mut coeffs = [0i32; 16];
                         let (dc_row, dc_column) = unscan_4x4(blk_idx);
-                        coeffs[0] = dcs_block.samples[dc_row][dc_column];
+                        let scaled_dc = dcs_block.samples[dc_row][dc_column];
+
+                        // DC-only fast path: when AC has no non-zero coeffs the
+                        // 4x4 IDCT collapses to a uniform output of (DC+32)>>6.
+                        // The parser invariant `ac_nc==0 ==> ac all zero` is
+                        // upheld by both CABAC (cbf=0 early return) and CAVLC
+                        // (total_coeff=0 early return) before any writes to ac.
+                        if ac_nc[blk_idx] == 0 {
+                            result.push(dc_only_block_4x4(scaled_dc));
+                            continue;
+                        }
+
+                        let mut coeffs = [0i32; 16];
+                        coeffs[0] = scaled_dc;
                         coeffs[1..].copy_from_slice(&ac[blk_idx]);
                         level_scale_4x4_block(&mut coeffs, weight_scale_4x4, true, qp);
                         let mut block = unzip_block_4x4(&coeffs);
@@ -229,9 +241,20 @@ impl Residual {
                     // it into four Block4x4 in the renderer's expected sub-order
                     // (0,0), (4,0), (0,4), (4,4) so the existing 4x4 residual-add
                     // loop works.
+                    //
+                    // Skip-zero fast path: CodedBlockPatternLuma bit `i` is 0 iff
+                    // 8x8 block `i` has no non-zero coeffs. CABAC cat-5 doesn't
+                    // populate per-4x4 nc, so CBP is the canonical signal here.
+                    let cbp_luma = self.coded_block_pattern.luma();
                     let weight_scale_8x8 =
                         weight_scale_8x8_2d(scaling.list_8x8(is_inter, ColorPlane::Y));
                     for i8x8 in 0..4 {
+                        if cbp_luma & (1 << i8x8) == 0 {
+                            for _ in 0..4 {
+                                result.push(Block4x4::default());
+                            }
+                            continue;
+                        }
                         let mut block = unzip_block_8x8(&levels[i8x8].0);
                         level_scale_8x8_block(&mut block, &weight_scale_8x8, qp);
                         transform_8x8(&mut block);
@@ -246,8 +269,14 @@ impl Residual {
                         }
                     }
                 }
-                LumaResidual::Block4x4 { levels, .. } => {
+                LumaResidual::Block4x4 { levels, nc } => {
                     for blk_idx in 0..16 {
+                        // Skip-zero fast path: nc==0 implies all coeffs zero
+                        // (parser invariant), so the 4x4 IDCT yields all zeros.
+                        if nc[blk_idx] == 0 {
+                            result.push(Block4x4::default());
+                            continue;
+                        }
                         let mut coeffs = [0i32; 16];
                         coeffs.copy_from_slice(&levels[blk_idx]);
                         level_scale_4x4_block(&mut coeffs, weight_scale_4x4, false, qp);
@@ -264,9 +293,9 @@ impl Residual {
         } else {
             // Section 8.5.8, 8.5.11 Specification of transform decoding process for chroma samples
             let weight_scale_4x4 = scaling.list_4x4(is_inter, plane);
-            let dcs = match plane {
-                ColorPlane::Cb => &self.chroma_cb_dc_level,
-                ColorPlane::Cr => &self.chroma_cr_dc_level,
+            let (dcs, ac_nc) = match plane {
+                ColorPlane::Cb => (&self.chroma_cb_dc_level, &self.chroma_cb_level4x4_nc),
+                ColorPlane::Cr => (&self.chroma_cr_dc_level, &self.chroma_cr_level4x4_nc),
                 _ => unreachable!(),
             };
             let mut dcs_block = Block2x2 { samples: [[dcs[0], dcs[1]], [dcs[2], dcs[3]]] };
@@ -274,14 +303,24 @@ impl Residual {
             dc_scale_2x2_block(&mut dcs_block, weight_scale_4x4[0], qp);
 
             for blk_idx in 0..4 {
+                let (dc_row, dc_column) = unscan_2x2(blk_idx);
+                let scaled_dc = dcs_block.samples[dc_row][dc_column];
+
+                // DC-only fast path: same reasoning as the Intra_16x16 luma path
+                // -- AC nc==0 implies the 15 AC coeffs are all zero, so the IDCT
+                // output is uniform (scaled_dc+32)>>6.
+                if ac_nc[blk_idx] == 0 {
+                    result.push(dc_only_block_4x4(scaled_dc));
+                    continue;
+                }
+
                 let acs = match plane {
                     ColorPlane::Cb => &self.chroma_cb_ac_level[blk_idx],
                     ColorPlane::Cr => &self.chroma_cr_ac_level[blk_idx],
                     _ => unreachable!(),
                 };
                 let mut coeffs = [0i32; 16];
-                let (dc_row, dc_column) = unscan_2x2(blk_idx);
-                coeffs[0] = dcs_block.samples[dc_row][dc_column];
+                coeffs[0] = scaled_dc;
                 coeffs[1..].copy_from_slice(acs);
                 level_scale_4x4_block(&mut coeffs, weight_scale_4x4, true, qp);
                 let mut block = unzip_block_4x4(&coeffs);
@@ -571,6 +610,15 @@ pub fn unscan_block_4x4(block: &[i32]) -> Block4x4 {
         result.samples[row][column] = *value;
     }
     result
+}
+
+// 4x4 IDCT result when only the DC coefficient is non-zero. Tracing
+// `transform_4x4` with `samples[0][0] = D` and the rest zero shows every output
+// sample collapses to `(D + 32) >> 6`, so we can skip the full transform.
+#[inline]
+pub fn dc_only_block_4x4(scaled_dc: i32) -> Block4x4 {
+    let v = (scaled_dc + 32) >> 6;
+    Block4x4 { samples: [[v; 4]; 4] }
 }
 
 // Section 8.5.12.2 Transformation process for residual 4x4 blocks

@@ -602,7 +602,8 @@ enum WeightedPredMode {
 }
 
 // Resolved weighting parameters for one prediction direction (Section 8.4.3 outputs).
-struct WeightParams {
+#[derive(Copy, Clone)]
+pub(crate) struct WeightParams {
     log_wd: u32,
     w0: i32,
     o0: i32,
@@ -718,6 +719,24 @@ fn get_implicit_weights(
     let w0 = 64 - w1;
 
     WeightParams { log_wd, w0, o0: 0, w1, o1: 0 }
+}
+
+const DEFAULT_IMPLICIT_WEIGHT: WeightParams = WeightParams { log_wd: 5, w0: 32, o0: 0, w1: 32, o1: 0 };
+
+pub(crate) type ImplicitWeightTable = [[WeightParams; 16]; 16];
+
+pub(crate) fn build_implicit_weight_table(
+    ref_pics_l0: &[&DpbPicture],
+    ref_pics_l1: &[&DpbPicture],
+    current_poc: i32,
+) -> ImplicitWeightTable {
+    let mut table = [[DEFAULT_IMPLICIT_WEIGHT; 16]; 16];
+    for (i, l0) in ref_pics_l0.iter().enumerate().take(16) {
+        for (j, l1) in ref_pics_l1.iter().enumerate().take(16) {
+            table[i][j] = get_implicit_weights(l0, l1, current_poc);
+        }
+    }
+    table
 }
 
 pub fn render_luma_inter_prediction(
@@ -1001,11 +1020,12 @@ pub fn render_chroma_inter_prediction(
     Ok(())
 }
 
-pub fn render_luma_inter_prediction_b(
+pub(crate) fn render_luma_inter_prediction_b(
     slice: &Slice,
     mb: &BMb,
     mb_loc: Point,
     frame: &mut VideoFrame,
+    implicit_weights: &ImplicitWeightTable,
     residuals: &[Block4x4],
     ref_pics_l0: &[&DpbPicture],
     ref_pics_l1: &[&DpbPicture],
@@ -1136,25 +1156,9 @@ pub fn render_luma_inter_prediction_b(
             }
             WeightedPredMode::Implicit => {
                 if has_l0 && has_l1 {
-                    let ref_l0 =
-                        ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
-                            DecodingError::ReferenceNotFound(format!(
-                                "ref_idx_l0 {} out of bounds (list length {})",
-                                partition.ref_idx_l0,
-                                ref_pics_l0.len()
-                            ))
-                        })?;
-                    let ref_l1 =
-                        ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
-                            DecodingError::ReferenceNotFound(format!(
-                                "ref_idx_l1 {} out of bounds (list length {})",
-                                partition.ref_idx_l1,
-                                ref_pics_l1.len()
-                            ))
-                        })?;
-                    let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
+                    let wp = &implicit_weights[partition.ref_idx_l0 as usize][partition.ref_idx_l1 as usize];
                     for i in 0..16 {
-                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
+                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], wp);
                     }
                 } else if has_l0 {
                     dst = pred_l0;
@@ -1190,7 +1194,7 @@ pub fn render_luma_inter_prediction_b(
     Ok(())
 }
 
-pub fn render_chroma_inter_prediction_b(
+pub(crate) fn render_chroma_inter_prediction_b(
     slice: &Slice,
     mb: &BMb,
     mb_loc: Point,
@@ -1199,6 +1203,7 @@ pub fn render_chroma_inter_prediction_b(
     residuals: &[Block4x4],
     ref_pics_l0: &[&DpbPicture],
     ref_pics_l1: &[&DpbPicture],
+    implicit_weights: &ImplicitWeightTable,
 ) -> Result<(), DecodingError> {
     let chroma_plane = &mut frame.planes[plane as usize];
     let mb_x_chroma = mb_loc.x >> 1;
@@ -1337,26 +1342,9 @@ pub fn render_chroma_inter_prediction_b(
             }
             WeightedPredMode::Implicit => {
                 if has_l0 && has_l1 {
-                    // Implicit mode uses same weights for luma and chroma
-                    let ref_l0 =
-                        ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
-                            DecodingError::ReferenceNotFound(format!(
-                                "ref_idx_l0 {} out of bounds (list length {})",
-                                partition.ref_idx_l0,
-                                ref_pics_l0.len()
-                            ))
-                        })?;
-                    let ref_l1 =
-                        ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
-                            DecodingError::ReferenceNotFound(format!(
-                                "ref_idx_l1 {} out of bounds (list length {})",
-                                partition.ref_idx_l1,
-                                ref_pics_l1.len()
-                            ))
-                        })?;
-                    let wp = get_implicit_weights(ref_l0, ref_l1, slice.current_pic_poc);
+                    let wp = &implicit_weights[partition.ref_idx_l0 as usize][partition.ref_idx_l1 as usize];
                     for i in 0..4 {
-                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
+                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], wp);
                     }
                 } else if has_l0 {
                     dst = pred_l0;

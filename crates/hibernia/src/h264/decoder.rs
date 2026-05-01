@@ -10,8 +10,8 @@ use super::ColorPlane;
 
 use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
 use super::inter_pred::{
-    render_chroma_inter_prediction, render_chroma_inter_prediction_b, render_luma_inter_prediction,
-    render_luma_inter_prediction_b, InterpolationBuffer,
+    build_implicit_weight_table, render_chroma_inter_prediction, render_chroma_inter_prediction_b,
+    render_luma_inter_prediction, render_luma_inter_prediction_b, InterpolationBuffer,
 };
 use super::intra_pred::{
     point_to_plane_offset, render_chroma_intra_prediction, render_luma_16x16_intra_prediction,
@@ -827,6 +827,8 @@ impl Decoder {
             resolve_ref_pic_list(&slice.ref_pic_list0, &self.dpb.pictures, "ref_pic_list0")?;
         let ref_pics_l1 =
             resolve_ref_pic_list(&slice.ref_pic_list1, &self.dpb.pictures, "ref_pic_list1")?;
+        let implicit_weights =
+            build_implicit_weight_table(&ref_pics_l0, &ref_pics_l1, slice.current_pic_poc);
 
         // Resolve the active (picture-level) scaling matrix from SPS + PPS per
         // clauses 7.4.2.1.1.1 (rule A) and 7.4.2.2.1 (rule B). Falls back to
@@ -1010,6 +1012,7 @@ impl Decoder {
                             block,
                             mb_loc,
                             frame,
+                            &implicit_weights,
                             &residuals,
                             &ref_pics_l0,
                             &ref_pics_l1,
@@ -1034,6 +1037,7 @@ impl Decoder {
                                 &residuals,
                                 &ref_pics_l0,
                                 &ref_pics_l1,
+                                &implicit_weights,
                             )?;
                         }
                     }

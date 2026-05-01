@@ -56,6 +56,33 @@ pub fn interpolate_luma(
         (4, 4) => interpolate_luma_impl::<4, 4>(
             ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
         ),
+        (4, 12) => interpolate_luma_impl::<4, 12>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (4, 16) => interpolate_luma_impl::<4, 16>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (8, 12) => interpolate_luma_impl::<8, 12>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (12, 4) => interpolate_luma_impl::<12, 4>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (12, 8) => interpolate_luma_impl::<12, 8>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (12, 12) => interpolate_luma_impl::<12, 12>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (12, 16) => interpolate_luma_impl::<12, 16>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (16, 4) => interpolate_luma_impl::<16, 4>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
+        (16, 12) => interpolate_luma_impl::<16, 12>(
+            ref_plane, mb_x, mb_y, blk_x, blk_y, mv, dst, dst_stride, buffer,
+        ),
         _ => unreachable!("unsupported block size {}x{}", width, height),
     }
 }
@@ -302,7 +329,7 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
         // j requires two-pass filtering: horizontal into unclipped intermediate,
         // then vertical on the intermediate results.
         (2, 2) | (2, 1) | (2, 3) | (1, 2) | (3, 2) => {
-            let mut intermediate = [[0i32; 16]; 21];
+            let mut intermediate = [[0i32; 21]; 21];
             for y in 0..buf_h {
                 let r = &data[y][..W + 5];
                 let out = &mut intermediate[y][..W];
@@ -710,57 +737,67 @@ pub fn render_luma_inter_prediction(
     let y_data = y_plane.data_origin_mut();
     assert!(mb_origin + 15 * y_stride + 16 <= y_data.len());
 
-    for raster_idx in 0..16 {
-        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
-
-        let ref_idx = partition.ref_idx_l0;
-        let mv = partition.mv_l0;
-
-        let ref_pic = *ref_pics_l0.get(ref_idx as usize).ok_or_else(|| {
+    let mut pred_buf = [0u8; 256];
+    let mut rects = [PartitionRect::default(); 16];
+    let n_rects = collect_pred_rects(
+        &mb.motion.partitions,
+        |p| Some((p.ref_idx_l0, p.mv_l0)),
+        &mut rects,
+    );
+    for rect in &rects[..n_rects] {
+        let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
             DecodingError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
-                ref_idx,
+                rect.ref_idx,
                 ref_pics_l0.len()
             ))
         })?;
         let ref_plane = &ref_pic.picture.frame.planes[0];
-
-        let blk_x = grid_x * 4;
-        let blk_y = grid_y * 4;
-
-        let mut dst = [0u8; 16]; // 4x4 block
-
+        let lx = rect.grid_x as usize * 4;
+        let ly = rect.grid_y as usize * 4;
+        let lw = rect.grid_w as usize * 4;
+        let lh = rect.grid_h as usize * 4;
         interpolate_luma(
             ref_plane,
             mb_loc.x,
             mb_loc.y,
-            blk_x as u8,
-            blk_y as u8,
-            4,
-            4,
-            mv,
-            &mut dst,
-            4, // stride for 4x4 block buffer
+            lx as u8,
+            ly as u8,
+            lw as u8,
+            lh as u8,
+            rect.mv,
+            &mut pred_buf[ly * 16 + lx..],
+            16,
             buffer,
         );
+    }
 
-        // Section 8.4.2.3: Apply weighted prediction before residual addition
+    for raster_idx in 0..16 {
+        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
+        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
+
+        let blk_x = grid_x * 4;
+        let blk_y = grid_y * 4;
+
+        let mut dst = [0u8; 16];
+        for y in 0..4usize {
+            let src_off = (blk_y as usize + y) * 16 + blk_x as usize;
+            dst[y * 4..y * 4 + 4].copy_from_slice(&pred_buf[src_off..src_off + 4]);
+        }
+
         if wp_mode == WeightedPredMode::Explicit {
-            let wp = get_explicit_luma_weights(slice, ref_idx as usize, 0);
+            let wp = get_explicit_luma_weights(slice, partition.ref_idx_l0 as usize, 0);
             for sample in &mut dst {
                 *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
             }
         }
 
-        // Add residual
         let blk_idx =
             macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
         if let Some(residual_blk) = residuals.get(blk_idx as usize) {
             add_residual_4x4(&mut dst, 0, 4, residual_blk);
         }
 
-        // Copy to frame
         let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);
         for y in 0..4 {
             let row_base = cell_base + y * y_stride;
@@ -982,6 +1019,68 @@ pub fn render_luma_inter_prediction_b(
     let y_data = y_plane.data_origin_mut();
     assert!(mb_origin + 15 * y_stride + 16 <= y_data.len());
 
+    let mut pred_l0_buf = [0u8; 256];
+    let mut pred_l1_buf = [0u8; 256];
+    let mut rects = [PartitionRect::default(); 16];
+
+    let n_l0 = collect_pred_rects(&mb.motion.partitions, classify_b_l0, &mut rects);
+    for rect in &rects[..n_l0] {
+        let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l0 {} out of bounds (list length {})",
+                rect.ref_idx,
+                ref_pics_l0.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[0];
+        let lx = rect.grid_x as usize * 4;
+        let ly = rect.grid_y as usize * 4;
+        let lw = rect.grid_w as usize * 4;
+        let lh = rect.grid_h as usize * 4;
+        interpolate_luma(
+            ref_plane,
+            mb_loc.x,
+            mb_loc.y,
+            lx as u8,
+            ly as u8,
+            lw as u8,
+            lh as u8,
+            rect.mv,
+            &mut pred_l0_buf[ly * 16 + lx..],
+            16,
+            buffer,
+        );
+    }
+
+    let n_l1 = collect_pred_rects(&mb.motion.partitions, classify_b_l1, &mut rects);
+    for rect in &rects[..n_l1] {
+        let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
+            DecodingError::ReferenceNotFound(format!(
+                "ref_idx_l1 {} out of bounds (list length {})",
+                rect.ref_idx,
+                ref_pics_l1.len()
+            ))
+        })?;
+        let ref_plane = &ref_pic.picture.frame.planes[0];
+        let lx = rect.grid_x as usize * 4;
+        let ly = rect.grid_y as usize * 4;
+        let lw = rect.grid_w as usize * 4;
+        let lh = rect.grid_h as usize * 4;
+        interpolate_luma(
+            ref_plane,
+            mb_loc.x,
+            mb_loc.y,
+            lx as u8,
+            ly as u8,
+            lw as u8,
+            lh as u8,
+            rect.mv,
+            &mut pred_l1_buf[ly * 16 + lx..],
+            16,
+            buffer,
+        );
+    }
+
     for raster_idx in 0..16 {
         let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
         let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
@@ -1001,54 +1100,19 @@ pub fn render_luma_inter_prediction_b(
         let mut pred_l1 = [0u8; 16];
 
         if has_l0 {
-            let ref_pic = ref_pics_l0.get(partition.ref_idx_l0 as usize).ok_or_else(|| {
-                DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l0 {} out of bounds (list length {})",
-                    partition.ref_idx_l0,
-                    ref_pics_l0.len()
-                ))
-            })?;
-            let ref_plane = &ref_pic.picture.frame.planes[0];
-            interpolate_luma(
-                ref_plane,
-                mb_loc.x,
-                mb_loc.y,
-                blk_x as u8,
-                blk_y as u8,
-                4,
-                4,
-                partition.mv_l0,
-                &mut pred_l0,
-                4,
-                buffer,
-            );
+            for y in 0..4usize {
+                let off = (blk_y as usize + y) * 16 + blk_x as usize;
+                pred_l0[y * 4..y * 4 + 4].copy_from_slice(&pred_l0_buf[off..off + 4]);
+            }
         }
 
         if has_l1 {
-            let ref_pic = ref_pics_l1.get(partition.ref_idx_l1 as usize).ok_or_else(|| {
-                DecodingError::ReferenceNotFound(format!(
-                    "ref_idx_l1 {} out of bounds (list length {})",
-                    partition.ref_idx_l1,
-                    ref_pics_l1.len()
-                ))
-            })?;
-            let ref_plane = &ref_pic.picture.frame.planes[0];
-            interpolate_luma(
-                ref_plane,
-                mb_loc.x,
-                mb_loc.y,
-                blk_x as u8,
-                blk_y as u8,
-                4,
-                4,
-                partition.mv_l1,
-                &mut pred_l1,
-                4,
-                buffer,
-            );
+            for y in 0..4usize {
+                let off = (blk_y as usize + y) * 16 + blk_x as usize;
+                pred_l1[y * 4..y * 4 + 4].copy_from_slice(&pred_l1_buf[off..off + 4]);
+            }
         }
 
-        // Section 8.4.2.3: Combine predictions according to weighted prediction mode
         match wp_mode {
             WeightedPredMode::Explicit => {
                 let wp = get_explicit_luma_weights(
@@ -1093,7 +1157,6 @@ pub fn render_luma_inter_prediction_b(
                         dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
                     }
                 } else if has_l0 {
-                    // Section 8.4.2.3: implicit mode with only one list falls back to default
                     dst = pred_l0;
                 } else if has_l1 {
                     dst = pred_l1;
@@ -1112,14 +1175,12 @@ pub fn render_luma_inter_prediction_b(
             }
         }
 
-        // Add residual
         let blk_idx =
             macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
         if let Some(residual_blk) = residuals.get(blk_idx as usize) {
             add_residual_4x4(&mut dst, 0, 4, residual_blk);
         }
 
-        // Copy to frame
         let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);
         for y in 0..4 {
             let row_base = cell_base + y * y_stride;

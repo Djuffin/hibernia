@@ -394,6 +394,13 @@ fn filter_luma_edge(
     let beta = thresh.beta;
     let index_a = thresh.index_a;
 
+    // ALPHA_TABLE[0..=15] and BETA_TABLE[0..=15] are zero (Table 8-16). When
+    // either threshold is zero, every Eq 8-460 comparison `.abs() < threshold`
+    // is unconditionally false, so no pixel on this edge can be filtered.
+    if alpha == 0 || beta == 0 {
+        return;
+    }
+
     // edge_step: distance between consecutive samples along the edge
     // perp_step: distance from q0 toward p0 (perpendicular to the edge)
     let (edge_step, perp_step, base_idx) = if is_vertical {
@@ -541,6 +548,11 @@ fn filter_chroma_edge(
         let alpha = chroma_thresh[pidx].alpha;
         let beta = chroma_thresh[pidx].beta;
         let index_a = chroma_thresh[pidx].index_a;
+
+        // See filter_luma_edge: zero threshold makes Eq 8-460 always false.
+        if alpha == 0 || beta == 0 {
+            continue;
+        }
 
         let plane = &mut frame.planes[plane_idx as usize];
         let stride = plane.cfg.stride;

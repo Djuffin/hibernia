@@ -142,54 +142,126 @@ fn lookup_total_zeros_chroma(bits: u16, vlc_idx: u8) -> (u8, u8) {
     TOTAL_ZEROS_CHROMA_LUT[vlc_idx as usize][index]
 }
 
-// Naive implementation of Table 9-10 - Tables for run_before
+// Generates a LUT for `run_before` decoding at compile time. Maps
+// `(zeros_left_category, top_11_bits)` to `(run_before, bit_length)`.
+//
+// The first dimension has 8 rows: index 0 is unused (a sentinel for "no zeros left,
+// no read needed"), indices 1..=6 cover the equally-named zeros_left buckets, and
+// index 7 covers all zeros_left >= 7. The longest code in Table 9-10 is 11 bits
+// (for the zeros_left>=7 column), so we index with the top 11 bits of the bitstream
+// and shorter codes get expanded across all matching suffixes.
+const fn init_run_before_lut() -> [[(u8, u8); 2048]; 8] {
+    let mut lut = [[(0, 0); 2048]; 8];
+
+    let mut category = 1;
+    while category <= 7 {
+        let mut row_idx = 0;
+        while row_idx < 15 {
+            let row = tables::TABLE9_10[row_idx];
+            let (pattern, len) = match category {
+                1 => row.1,
+                2 => row.2,
+                3 => row.3,
+                4 => row.4,
+                5 => row.5,
+                6 => row.6,
+                7 => row.7,
+                _ => (0, 0),
+            };
+
+            if len > 0 {
+                let run_before = row.0;
+                let shift = 11 - len;
+                let start = (pattern as usize) << shift;
+                let end = ((pattern as usize) + 1) << shift;
+                let mut i = start;
+                while i < end {
+                    lut[category][i] = (run_before, len);
+                    i += 1;
+                }
+            }
+            row_idx += 1;
+        }
+        category += 1;
+    }
+    lut
+}
+
+static RUN_BEFORE_LUT: [[(u8, u8); 2048]; 8] = init_run_before_lut();
+
+// Table 9-10 lookup for run_before patterns (O(1)).
 fn lookup_run_before(bits: u16, zeros_left: u8) -> (u8, u8) {
-    for row in tables::TABLE9_10 {
-        let (pattern, pattern_len) = match zeros_left {
-            0 => (0, 0),
+    if zeros_left == 0 {
+        return (0, 0);
+    }
+    let category = if zeros_left >= 7 { 7 } else { zeros_left as usize };
+    let index = (bits >> 5) as usize; // top 11 bits
+    RUN_BEFORE_LUT[category][index]
+}
+
+// Generates coeff_token LUTs at compile time, one per nc category. Each table is
+// indexed by the top N bits of the bitstream where N is the longest code in that
+// category, and stores (trailing_ones, total_coeffs, pattern_len). Entries with
+// pattern_len == 0 indicate "no match" (used as the default for the spec's
+// "[end of bitstream]" rows).
+//
+// Max code lengths per category (verified against table 9-5):
+//   nc 0|1: 16 bits, nc 2|3: 14 bits, nc 4-7: 10 bits,
+//   nc 8+: 6 bits, nc -1: 8 bits, nc -2: 13 bits.
+// Total ~268KB of static data — large but standard for VLC decoders (FFmpeg's
+// equivalent tables are similar). All resolved at compile time, zero runtime cost.
+const fn init_coeff_token_lut<const BITS: usize, const SIZE: usize>(
+    column: usize,
+) -> [(u8, u8, u8); SIZE] {
+    let mut lut = [(0u8, 0u8, 0u8); SIZE];
+    let mut row_idx = 0;
+    while row_idx < 62 {
+        let row = tables::TABLE95[row_idx];
+        let (pattern, len) = match column {
             1 => row.1,
             2 => row.2,
             3 => row.3,
             4 => row.4,
             5 => row.5,
             6 => row.6,
-            7.. => row.7,
-        };
-        if pattern_len == 0 {
-            break;
-        }
-        let shift = u16::BITS - pattern_len as u32;
-        let meaningful_bits = bits >> shift;
-        if meaningful_bits == pattern {
-            return (row.0, pattern_len);
-        }
-    }
-    (0, 0)
-}
-
-// Naive implementation of Table 9-5 lookup for coeff_token patterns
-fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
-    for row in tables::TABLE95 {
-        let (pattern, pattern_len) = match nc {
-            0 | 1 => row.1,
-            2 | 3 => row.2,
-            4..=7 => row.3,
-            8.. => row.4,
-            -1 => row.5,
-            -2 => row.6,
             _ => (0, 0),
         };
-        if pattern_len == 0 {
-            break;
-        }
-        let shift = u16::BITS - pattern_len as u32;
-        let meaningful_bits = bits >> shift;
-        if meaningful_bits == pattern {
+
+        if len > 0 {
             let (trailing_ones, total_coeffs) = row.0;
-            return CoeffToken { total_coeffs, trailing_ones, pattern_len };
+            let shift = BITS - len as usize;
+            let start = (pattern as usize) << shift;
+            let end = ((pattern as usize) + 1) << shift;
+            let mut i = start;
+            while i < end {
+                lut[i] = (trailing_ones, total_coeffs, len);
+                i += 1;
+            }
         }
+        row_idx += 1;
     }
-    CoeffToken::default()
+    lut
+}
+
+static COEFF_TOKEN_LUT_NC01: [(u8, u8, u8); 1 << 16] = init_coeff_token_lut::<16, { 1 << 16 }>(1);
+static COEFF_TOKEN_LUT_NC23: [(u8, u8, u8); 1 << 14] = init_coeff_token_lut::<14, { 1 << 14 }>(2);
+static COEFF_TOKEN_LUT_NC47: [(u8, u8, u8); 1 << 10] = init_coeff_token_lut::<10, { 1 << 10 }>(3);
+static COEFF_TOKEN_LUT_NC8P: [(u8, u8, u8); 1 << 6] = init_coeff_token_lut::<6, { 1 << 6 }>(4);
+static COEFF_TOKEN_LUT_NCM1: [(u8, u8, u8); 1 << 8] = init_coeff_token_lut::<8, { 1 << 8 }>(5);
+static COEFF_TOKEN_LUT_NCM2: [(u8, u8, u8); 1 << 13] = init_coeff_token_lut::<13, { 1 << 13 }>(6);
+
+// Table 9-5 lookup for coeff_token patterns (O(1)).
+fn lookup_coeff_token(bits: u16, nc: i32) -> CoeffToken {
+    let (trailing_ones, total_coeffs, pattern_len) = match nc {
+        0 | 1 => COEFF_TOKEN_LUT_NC01[bits as usize],
+        2 | 3 => COEFF_TOKEN_LUT_NC23[(bits >> 2) as usize],
+        4..=7 => COEFF_TOKEN_LUT_NC47[(bits >> 6) as usize],
+        8.. => COEFF_TOKEN_LUT_NC8P[(bits >> 10) as usize],
+        -1 => COEFF_TOKEN_LUT_NCM1[(bits >> 8) as usize],
+        -2 => COEFF_TOKEN_LUT_NCM2[(bits >> 3) as usize],
+        _ => (0, 0, 0),
+    };
+    CoeffToken { total_coeffs, trailing_ones, pattern_len }
 }
 
 // Section 9.2.2.1 Parsing process for level_prefix

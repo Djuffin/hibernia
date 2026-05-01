@@ -2787,17 +2787,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             sub_mbs[i].partitions[2].ref_idx_l0 = ref_idx;
                             sub_mbs[i].partitions[3].ref_idx_l0 = ref_idx;
 
-                            // Update curr_mb.motion
-                            // P_8x8 -> 8x8 block i.
-                            let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
-                            let start_y = (p.y / 4) as usize;
-                            let start_x = (p.x / 4) as usize;
-                            for y in 0..2 {
-                                for x in 0..2 {
-                                    curr_mb.motion.partitions[start_y + y][start_x + x]
-                                        .ref_idx_l0 = ref_idx;
-                                }
-                            }
+                            curr_mb.motion.fill_region(i * 4, 2, 2, |p| p.ref_idx_l0 = ref_idx);
                         }
                     }
 
@@ -2828,22 +2818,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                             sub_mbs[i].partitions[j].mvd_l0 = mvd_vec;
 
-                            // Update curr_mb.motion
                             let (w, h) = match sub_mbs[i].sub_mb_type {
                                 SubMbType::P_L0_8x8 => (2, 2),
                                 SubMbType::P_L0_8x4 => (2, 1),
                                 SubMbType::P_L0_4x8 => (1, 2),
                                 SubMbType::P_L0_4x4 => (1, 1),
                             };
-                            let p = super::macroblock::get_4x4luma_block_location(blk_idx as u8);
-                            let start_blk_y = (p.y / 4) as usize;
-                            let start_blk_x = (p.x / 4) as usize;
-                            for y in 0..h {
-                                for x in 0..w {
-                                    curr_mb.motion.partitions[start_blk_y + y][start_blk_x + x]
-                                        .mvd_l0 = mvd_vec;
-                                }
-                            }
+                            curr_mb.motion.fill_region(blk_idx, w, h, |p| p.mvd_l0 = mvd_vec);
                         }
                     }
                 } else {
@@ -2864,7 +2845,6 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
                             partitions[i].ref_idx_l0 = ref_idx;
 
-                            // Update curr_mb.motion
                             let (w, h) = match p_type {
                                 super::macroblock::PMbType::P_L0_16x16 => (4, 4),
                                 super::macroblock::PMbType::P_L0_L0_16x8 => (4, 2),
@@ -2876,16 +2856,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 super::macroblock::PMbType::P_L0_L0_8x16 => i * 4,
                                 _ => 0,
                             };
-                            let p =
-                                super::macroblock::get_4x4luma_block_location(start_blk_idx as u8);
-                            let start_blk_y = (p.y / 4) as usize;
-                            let start_blk_x = (p.x / 4) as usize;
-                            for y in 0..h {
-                                for x in 0..w {
-                                    curr_mb.motion.partitions[start_blk_y + y][start_blk_x + x]
-                                        .ref_idx_l0 = ref_idx;
-                                }
-                            }
+                            curr_mb.motion.fill_region(start_blk_idx, w, h, |p| p.ref_idx_l0 = ref_idx);
                         }
                     }
 
@@ -2902,22 +2873,13 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         let mvd_vec = MotionVector { x: mvd_x, y: mvd_y };
                         partitions[i].mvd_l0 = mvd_vec;
 
-                        // Update curr_mb.motion
                         let (w, h) = match p_type {
                             super::macroblock::PMbType::P_L0_16x16 => (4, 4),
                             super::macroblock::PMbType::P_L0_L0_16x8 => (4, 2),
                             super::macroblock::PMbType::P_L0_L0_8x16 => (2, 4),
                             _ => (0, 0),
                         };
-                        let p = super::macroblock::get_4x4luma_block_location(blk_idx as u8);
-                        let start_blk_y = (p.y / 4) as usize;
-                        let start_blk_x = (p.x / 4) as usize;
-                        for y in 0..h {
-                            for x in 0..w {
-                                curr_mb.motion.partitions[start_blk_y + y][start_blk_x + x]
-                                    .mvd_l0 = mvd_vec;
-                            }
-                        }
+                        curr_mb.motion.fill_region(blk_idx, w, h, |p| p.mvd_l0 = mvd_vec);
                     }
                 }
 
@@ -2995,14 +2957,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     // (needed for predModeEqualFlagN within-MB neighbor checks)
                     for i in 0..4 {
                         let mode = sub_mbs[i].sub_mb_type.SubMbPredMode();
-                        let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
-                        let sy = (p.y / 4) as usize;
-                        let sx = (p.x / 4) as usize;
-                        for y in 0..2 {
-                            for x in 0..2 {
-                                curr_mb.motion.partitions[sy + y][sx + x].pred_mode = mode;
-                            }
-                        }
+                        curr_mb.motion.fill_region(i * 4, 2, 2, |p| p.pred_mode = mode);
                     }
 
                     let num_ref_idx_l0 = slice.header.num_ref_idx_l0_active_minus1;
@@ -3023,14 +2978,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             for j in 0..4 {
                                 sub_mbs[i].partitions[j].ref_idx_l0 = ref_idx;
                             }
-                            let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
-                            let sy = (p.y / 4) as usize;
-                            let sx = (p.x / 4) as usize;
-                            for y in 0..2 {
-                                for x in 0..2 {
-                                    curr_mb.motion.partitions[sy + y][sx + x].ref_idx_l0 = ref_idx;
-                                }
-                            }
+                            curr_mb.motion.fill_region(i * 4, 2, 2, |p| p.ref_idx_l0 = ref_idx);
                         }
                     }
 
@@ -3049,14 +2997,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             for j in 0..4 {
                                 sub_mbs[i].partitions[j].ref_idx_l1 = ref_idx;
                             }
-                            let p = super::macroblock::get_4x4luma_block_location((i * 4) as u8);
-                            let sy = (p.y / 4) as usize;
-                            let sx = (p.x / 4) as usize;
-                            for y in 0..2 {
-                                for x in 0..2 {
-                                    curr_mb.motion.partitions[sy + y][sx + x].ref_idx_l1 = ref_idx;
-                                }
-                            }
+                            curr_mb.motion.fill_region(i * 4, 2, 2, |p| p.ref_idx_l1 = ref_idx);
                         }
                     }
 
@@ -3080,15 +3021,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 sub_mbs[i].partitions[j].mvd_l0 = mvd_vec;
 
                                 let (w, h) = Self::get_sub_mb_grid_size_b(sub_mbs[i].sub_mb_type);
-                                let p =
-                                    super::macroblock::get_4x4luma_block_location(blk_idx as u8);
-                                let sy = (p.y / 4) as usize;
-                                let sx = (p.x / 4) as usize;
-                                for y in 0..h {
-                                    for x in 0..w {
-                                        curr_mb.motion.partitions[sy + y][sx + x].mvd_l0 = mvd_vec;
-                                    }
-                                }
+                                curr_mb.motion.fill_region(blk_idx, w, h, |p| p.mvd_l0 = mvd_vec);
                             }
                         }
                     }
@@ -3113,15 +3046,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                                 sub_mbs[i].partitions[j].mvd_l1 = mvd_vec;
 
                                 let (w, h) = Self::get_sub_mb_grid_size_b(sub_mbs[i].sub_mb_type);
-                                let p =
-                                    super::macroblock::get_4x4luma_block_location(blk_idx as u8);
-                                let sy = (p.y / 4) as usize;
-                                let sx = (p.x / 4) as usize;
-                                for y in 0..h {
-                                    for x in 0..w {
-                                        curr_mb.motion.partitions[sy + y][sx + x].mvd_l1 = mvd_vec;
-                                    }
-                                }
+                                curr_mb.motion.fill_region(blk_idx, w, h, |p| p.mvd_l1 = mvd_vec);
                             }
                         }
                     }
@@ -3136,14 +3061,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                         let mode = b_type.MbPartPredMode(i);
                         let (w, h) = Self::get_mb_part_grid_size_b(b_type);
                         let start_blk_idx = Self::get_mb_part_start_blk_idx_b(b_type, i);
-                        let p = super::macroblock::get_4x4luma_block_location(start_blk_idx as u8);
-                        let sy = (p.y / 4) as usize;
-                        let sx = (p.x / 4) as usize;
-                        for y in 0..h {
-                            for x in 0..w {
-                                curr_mb.motion.partitions[sy + y][sx + x].pred_mode = mode;
-                            }
-                        }
+                        curr_mb.motion.fill_region(start_blk_idx, w, h, |p| p.pred_mode = mode);
                     }
 
                     // ref_idx_l0
@@ -3160,15 +3078,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
                             let (w, h) = Self::get_mb_part_grid_size_b(b_type);
                             let start_blk_idx = Self::get_mb_part_start_blk_idx_b(b_type, i);
-                            let p =
-                                super::macroblock::get_4x4luma_block_location(start_blk_idx as u8);
-                            let sy = (p.y / 4) as usize;
-                            let sx = (p.x / 4) as usize;
-                            for y in 0..h {
-                                for x in 0..w {
-                                    curr_mb.motion.partitions[sy + y][sx + x].ref_idx_l0 = ref_idx;
-                                }
-                            }
+                            curr_mb.motion.fill_region(start_blk_idx, w, h, |p| p.ref_idx_l0 = ref_idx);
                         }
                     }
 
@@ -3186,15 +3096,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
 
                             let (w, h) = Self::get_mb_part_grid_size_b(b_type);
                             let start_blk_idx = Self::get_mb_part_start_blk_idx_b(b_type, i);
-                            let p =
-                                super::macroblock::get_4x4luma_block_location(start_blk_idx as u8);
-                            let sy = (p.y / 4) as usize;
-                            let sx = (p.x / 4) as usize;
-                            for y in 0..h {
-                                for x in 0..w {
-                                    curr_mb.motion.partitions[sy + y][sx + x].ref_idx_l1 = ref_idx;
-                                }
-                            }
+                            curr_mb.motion.fill_region(start_blk_idx, w, h, |p| p.ref_idx_l1 = ref_idx);
                         }
                     }
 
@@ -3212,14 +3114,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             partitions[i].mvd_l0 = mvd_vec;
 
                             let (w, h) = Self::get_mb_part_grid_size_b(b_type);
-                            let p = super::macroblock::get_4x4luma_block_location(blk_idx as u8);
-                            let sy = (p.y / 4) as usize;
-                            let sx = (p.x / 4) as usize;
-                            for y in 0..h {
-                                for x in 0..w {
-                                    curr_mb.motion.partitions[sy + y][sx + x].mvd_l0 = mvd_vec;
-                                }
-                            }
+                            curr_mb.motion.fill_region(blk_idx, w, h, |p| p.mvd_l0 = mvd_vec);
                         }
                     }
 
@@ -3237,14 +3132,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                             partitions[i].mvd_l1 = mvd_vec;
 
                             let (w, h) = Self::get_mb_part_grid_size_b(b_type);
-                            let p = super::macroblock::get_4x4luma_block_location(blk_idx as u8);
-                            let sy = (p.y / 4) as usize;
-                            let sx = (p.x / 4) as usize;
-                            for y in 0..h {
-                                for x in 0..w {
-                                    curr_mb.motion.partitions[sy + y][sx + x].mvd_l1 = mvd_vec;
-                                }
-                            }
+                            curr_mb.motion.fill_region(blk_idx, w, h, |p| p.mvd_l1 = mvd_vec);
                         }
                     }
                 }

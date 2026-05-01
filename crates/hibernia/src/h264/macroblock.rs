@@ -756,6 +756,29 @@ pub struct MbMotion {
     pub partitions: [[PartitionInfo; 4]; 4],
 }
 
+impl MbMotion {
+    // Fill an h-by-w region of the 4x4 partition grid, starting at the
+    // 4x4 luma block index `blk_idx` (Z-scan, 0..16). The closure runs on
+    // each PartitionInfo in the region.
+    #[inline]
+    pub fn fill_region(
+        &mut self,
+        blk_idx: usize,
+        w: usize,
+        h: usize,
+        mut f: impl FnMut(&mut PartitionInfo),
+    ) {
+        let p = get_4x4luma_block_location(blk_idx as u8);
+        let sy = (p.y / 4) as usize;
+        let sx = (p.x / 4) as usize;
+        for y in 0..h {
+            for x in 0..w {
+                f(&mut self.partitions[sy + y][sx + x]);
+            }
+        }
+    }
+}
+
 // Table 7-17 - Sub-macroblock types in P macroblock
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, FromPrimitive)]

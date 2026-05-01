@@ -754,6 +754,10 @@ pub struct PartitionInfo {
 #[derive(Clone, Debug, Default)]
 pub struct MbMotion {
     pub partitions: [[PartitionInfo; 4]; 4],
+    /// Tracks which 4x4 grid blocks have been written during in-progress decode of this MB.
+    /// Bit `y*4 + x` corresponds to `partitions[y][x]`. MV prediction reads this to skip
+    /// not-yet-decoded neighbors within the same MB.
+    pub decoded_mask: u16,
 }
 
 impl MbMotion {
@@ -776,6 +780,23 @@ impl MbMotion {
                 f(&mut self.partitions[sy + y][sx + x]);
             }
         }
+    }
+
+    #[inline]
+    pub fn mark_decoded(&mut self, rect: PartitionRect) {
+        let grid_x = (rect.x / 4) as usize;
+        let grid_y = (rect.y / 4) as usize;
+        let grid_w = (rect.w / 4) as usize;
+        let grid_h = (rect.h / 4) as usize;
+        let row_pattern = (1u16 << grid_w) - 1;
+        for dy in 0..grid_h {
+            self.decoded_mask |= row_pattern << ((grid_y + dy) * 4 + grid_x);
+        }
+    }
+
+    #[inline]
+    pub fn is_decoded(&self, grid_x: usize, grid_y: usize) -> bool {
+        (self.decoded_mask >> (grid_y * 4 + grid_x)) & 1 != 0
     }
 }
 

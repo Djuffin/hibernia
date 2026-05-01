@@ -1123,13 +1123,10 @@ pub fn get_motion_at_coord(
         return if let Some(motion) = current_mb_motion {
             let block_grid_x = ((x % 16) / 4) as usize;
             let block_grid_y = ((y % 16) / 4) as usize;
-            let info = motion.partitions[block_grid_y][block_grid_x];
-            // Both ref_idx set to 255 means "not yet decoded" (sentinel from calculate_motion).
-            // A single 255 means "unused direction" (e.g., Pred_L1 has ref_idx_l0=255).
-            if info.ref_idx_l0 == 255 && info.ref_idx_l1 == 255 {
-                None
+            if motion.is_decoded(block_grid_x, block_grid_y) {
+                Some(motion.partitions[block_grid_y][block_grid_x])
             } else {
-                Some(info)
+                None
             }
         } else {
             None
@@ -1440,6 +1437,7 @@ fn fill_motion_grid_b(
     for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
         row[grid_x_start..grid_x_start + grid_w].fill(info);
     }
+    motion.mark_decoded(rect);
 }
 
 pub fn calculate_motion_b(
@@ -1450,14 +1448,6 @@ pub fn calculate_motion_b(
     sub_macroblocks: &[BSubMacroblock; 4],
 ) -> MbMotion {
     let mut motion = MbMotion::default();
-
-    // Mark all as "not yet decoded"
-    for row in motion.partitions.iter_mut() {
-        for part in row.iter_mut() {
-            part.ref_idx_l0 = 255;
-            part.ref_idx_l1 = 255;
-        }
-    }
 
     let use_spatial = slice.header.direct_spatial_mv_pred_flag.unwrap_or(true);
 
@@ -1501,6 +1491,7 @@ pub fn calculate_motion_b(
                                 direct_motion.partitions[grid_y + dy][grid_x + dx];
                         }
                     }
+                    motion.mark_decoded(PartitionRect { x: sub_mb_x, y: sub_mb_y, w: 8, h: 8 });
                     continue;
                 }
 
@@ -2079,16 +2070,6 @@ pub fn calculate_motion(
 ) -> MbMotion {
     let mut motion = MbMotion::default();
 
-    // Mark all partitions as "Not yet decoded" (Unavailable) using sentinel ref_idx 255.
-    // This allows predict_mv_l0 to correctly identify unavailable neighbors within the same MB.
-    // Both L0 and L1 must be 255 to match the sentinel check in get_motion_at_coord.
-    for row in motion.partitions.iter_mut() {
-        for part in row.iter_mut() {
-            part.ref_idx_l0 = 255;
-            part.ref_idx_l1 = 255;
-        }
-    }
-
     // Helper to calculate motion vector and fill the grid
     let mut fill_motion_grid = |rect: PartitionRect, ref_idx: u8, mvd: MotionVector| {
         let mvp = predict_mv_l0(slice, this_mb_addr, rect, ref_idx, Some(&motion));
@@ -2108,6 +2089,7 @@ pub fn calculate_motion(
         for row in motion.partitions.iter_mut().skip(grid_y_start).take(grid_h) {
             row[grid_x_start..grid_x_start + grid_w].fill(info);
         }
+        motion.mark_decoded(rect);
     };
 
     match mb_type {
@@ -2151,6 +2133,7 @@ pub fn calculate_motion(
             for row in motion.partitions.iter_mut() {
                 row.fill(info);
             }
+            motion.decoded_mask = 0xFFFF;
         }
         PMbType::P_8x8 | PMbType::P_8x8ref0 => {
             // Section 8.4.1 Derivation process for motion vector components and reference indices

@@ -637,12 +637,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         if prefix < u_coff {
             let val = prefix as i32;
             let final_val = if signed_val_flag && val != 0 {
-                let sign = self.decode_bypass()?;
-                if sign == 1 {
-                    -val
-                } else {
-                    val
-                }
+                self.decode_bypass_sign(val)?
             } else {
                 val
             };
@@ -670,12 +665,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         let val = (prefix + suffix_val) as i32;
 
         let final_val = if signed_val_flag && val != 0 {
-            let sign = self.decode_bypass()?;
-            if sign == 1 {
-                -val
-            } else {
-                val
-            }
+            self.decode_bypass_sign(val)?
         } else {
             val
         };
@@ -720,6 +710,15 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         self.renorm()?;
         trace!("decode_bin ctxIdx={} bin={}", ctx_idx, bin_val);
         Ok(bin_val)
+    }
+
+    #[inline]
+    pub fn decode_bypass_sign(&mut self, abs_val: i32) -> ParseResult<i32> {
+        self.offset = (self.offset << 1) | self.read_bits(1)?;
+        let sign_bit = (self.offset >= self.range) as i32;
+        self.offset -= self.range & ((sign_bit as u32).wrapping_neg());
+        let mask = -sign_bit;
+        Ok((abs_val ^ mask) - mask)
     }
 
     // 9.3.3.2.3 Bypass decoding process
@@ -1927,8 +1926,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 num_decod_abs_level_gt1 += 1;
             }
 
-            let sign = self.decode_bypass()?;
-            let level = if sign == 1 { -abs_level } else { abs_level };
+            let level = self.decode_bypass_sign(abs_level)?;
             // Mask with 63 to completely guarantee to LLVM that no bounds check is needed
             coeff_level[(pos as usize) & 63] = level;
         }

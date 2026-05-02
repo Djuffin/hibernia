@@ -13,34 +13,49 @@ const BS_CODED: u8 = 2;
 const BS_MOTION: u8 = 1;
 const BS_NONE: u8 = 0;
 
+// Padded to 76 entries: 12 leading (qp_av+offset in -12..-1, clamped to TABLE[0]) +
+// 52 spec entries + 12 trailing (52..63, clamped to TABLE[51]). Caller adds
+// QP_OFFSET_PAD to map [-12, 63] -> [0, 75]; parser enforces offset in [-12, 12]
+// and QP in [0, 51] so the index is always in-bounds.
+const QP_OFFSET_PAD: i32 = 12;
+
 // Table 8-16
-const ALPHA_TABLE: [u8; 52] = [
+const ALPHA_TABLE: [u8; 76] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 17, 20,
     22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 71, 80, 90, 101, 113, 127, 144, 162, 182, 203, 226,
-    255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
 ];
 
-const BETA_TABLE: [u8; 52] = [
+const BETA_TABLE: [u8; 76] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 6, 6, 7, 7, 8, 8,
     9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15, 15, 16, 16, 17, 17, 18, 18,
+    18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
 ];
 
 // Table 8-17
-const TC0_TABLE: [[u8; 52]; 3] = [
+const TC0_TABLE: [[u8; 76]; 3] = [
     // bS = 1 (BS_MOTION)
     [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
         1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 6, 6, 7, 8, 9, 10, 11, 13,
+        13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
     ],
     // bS = 2 (BS_CODED)
     [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 2, 2, 2, 2, 3, 3, 3, 4, 4, 5, 5, 6, 7, 8, 8, 10, 11, 12, 13, 15, 17,
+        17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
     ],
     // bS = 3 (BS_INTRA)
     [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2,
         2, 3, 3, 3, 4, 4, 4, 5, 6, 6, 7, 8, 9, 10, 11, 13, 14, 16, 18, 20, 23, 25,
+        25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
     ],
 ];
 
@@ -56,8 +71,8 @@ impl FilterThresholds {
     /// average QP of the p and q blocks and the slice-level offsets.
     fn from_qp(p_qp: u8, q_qp: u8, alpha_offset: i32, beta_offset: i32) -> Self {
         let qp_av = (p_qp as i32 + q_qp as i32 + 1) >> 1;
-        let index_a = (qp_av + alpha_offset).clamp(0, 51) as usize;
-        let index_b = (qp_av + beta_offset).clamp(0, 51) as usize;
+        let index_a = (qp_av + alpha_offset + QP_OFFSET_PAD) as usize;
+        let index_b = (qp_av + beta_offset + QP_OFFSET_PAD) as usize;
         FilterThresholds {
             alpha: ALPHA_TABLE[index_a] as i32,
             beta: BETA_TABLE[index_b] as i32,

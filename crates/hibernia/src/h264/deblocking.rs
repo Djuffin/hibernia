@@ -661,40 +661,83 @@ fn compute_bs_arrays(
 ) -> ([[u8; 4]; 4], [[u8; 4]; 4]) {
     let mut bs_vert = [[BS_NONE; 4]; 4];
     let mut bs_horz = [[BS_NONE; 4]; 4];
+    let q_intra = mb.is_intra();
 
     let (q_l0, q_l1) = input.ref_pocs(q_slice_id);
 
-    // External edges (MB boundary) -- use neighbor MB as p
+    // External edges (MB boundary) -- use neighbor MB as p.
+    // Fast path: when either side is intra, every block's bS is BS_STRONG, so
+    // we can fill the row directly without 4 enum-dispatch calls into get_bs.
     if let Some((p_mb, p_slice_id)) = left {
-        let (p_l0, p_l1) = input.ref_pocs(p_slice_id);
-        for b in 0..4 {
-            bs_vert[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, true);
+        if q_intra || p_mb.is_intra() {
+            bs_vert[0] = [BS_STRONG; 4];
+        } else {
+            let (p_l0, p_l1) = input.ref_pocs(p_slice_id);
+            for b in 0..4 {
+                bs_vert[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, true);
+            }
         }
     }
     if let Some((p_mb, p_slice_id)) = top {
-        let (p_l0, p_l1) = input.ref_pocs(p_slice_id);
-        for b in 0..4 {
-            bs_horz[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, false);
+        if q_intra || p_mb.is_intra() {
+            bs_horz[0] = [BS_STRONG; 4];
+        } else {
+            let (p_l0, p_l1) = input.ref_pocs(p_slice_id);
+            for b in 0..4 {
+                bs_horz[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, false);
+            }
         }
     }
 
     // Internal edges -- p and q are both within this MB (same slice -> same POCs).
-    if !transform_8x8 {
-        for edge in 1..4 {
-            for b in 0..4 {
-                bs_vert[edge][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, true);
-                bs_horz[edge][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, false);
+    // Fast paths:
+    //   - intra MB: every internal 4x4 edge has bS=BS_INTRA (skips 24 calls)
+    //   - 16x16 inter with cbp_luma==0: every internal edge has bS=0; leave
+    //     bs_vert/bs_horz at their BS_NONE init
+    if q_intra {
+        if !transform_8x8 {
+            for edge in 1..4 {
+                bs_vert[edge] = [BS_INTRA; 4];
+                bs_horz[edge] = [BS_INTRA; 4];
             }
+        } else {
+            // 8x8 transform: only edge 2 (at the 8-sample boundary)
+            bs_vert[2] = [BS_INTRA; 4];
+            bs_horz[2] = [BS_INTRA; 4];
         }
-    } else {
-        // 8x8 transform: only edge 2 (at the 8-sample boundary)
-        for b in 0..4 {
-            bs_vert[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, true);
-            bs_horz[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, false);
+    } else if !has_no_internal_edges(mb) {
+        if !transform_8x8 {
+            for edge in 1..4 {
+                for b in 0..4 {
+                    bs_vert[edge][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, true);
+                    bs_horz[edge][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, false);
+                }
+            }
+        } else {
+            for b in 0..4 {
+                bs_vert[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, true);
+                bs_horz[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, false);
+            }
         }
     }
 
     (bs_vert, bs_horz)
+}
+
+// True when the MB's internal 4x4 edges are all guaranteed bS=0:
+// inter MB with a single 16x16 partition (NumMbPart == 1, which excludes
+// B_Direct_16x16 and B_Skip whose motion is derived per 8x8 sub-block) and
+// no coded luma coefficients. Saves up to 24 get_bs calls per such MB.
+#[inline]
+fn has_no_internal_edges(mb: &Macroblock) -> bool {
+    if mb.get_coded_block_pattern().luma() != 0 {
+        return false;
+    }
+    match mb {
+        Macroblock::P(m) => m.NumMbPart() == 1,
+        Macroblock::B(m) => m.NumMbPart() == 1,
+        _ => false,
+    }
 }
 
 #[inline(always)]

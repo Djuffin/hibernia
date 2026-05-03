@@ -750,9 +750,9 @@ fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
     let Some(res) = mb.get_residual() else { return false };
     match &res.luma {
         LumaResidual::Intra16x16 { dc, ac_nc, .. } => ac_nc[blk_idx] != 0 || dc[blk_idx] != 0,
-        LumaResidual::Block8x8 { levels, .. } => {
+        LumaResidual::Block8x8 { .. } => {
             let i8x8 = blk_idx / 4;
-            levels[i8x8].0.iter().any(|&v| v != 0)
+            res.coded_block_pattern.luma() & (1 << i8x8) != 0
         }
         LumaResidual::Block4x4 { nc, .. } => nc[blk_idx] != 0,
         LumaResidual::Empty => false,

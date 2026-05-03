@@ -21,9 +21,10 @@ use super::macroblock::{
     self, Macroblock, MbAddr, MbPredictionMode,
 };
 use super::poc::PocState;
-use super::residual::{Block4x4, Residual};
+use super::residual::{Block4x4, DequantTables, Residual};
 use super::scaling_list::{
-    resolve_pic_scaling_matrix, resolve_seq_scaling_matrix, ResolvedScalingMatrix,
+    resolve_pic_scaling_matrix, resolve_seq_scaling_matrix, PicScalingMatrix, ResolvedScalingMatrix,
+    SeqScalingMatrix,
 };
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::{info, trace};
@@ -288,6 +289,18 @@ fn is_new_picture(
     false
 }
 
+// Inputs that fully determine an active ResolvedScalingMatrix (and therefore
+// the DequantTables built from it). Comparing these is cheaper than comparing
+// the resolved matrix because the SPS/PPS scaling-matrix fields are usually
+// `None` or all-`NotPresent`, so PartialEq stops at the enum tag.
+#[derive(Clone, PartialEq, Eq)]
+struct DequantCacheKey {
+    seq_scaling_matrix: Option<SeqScalingMatrix>,
+    pic_scaling_matrix: Option<PicScalingMatrix>,
+    transform_8x8_mode_flag: bool,
+    chroma_format: ChromaFormat,
+}
+
 /// A standards-compliant H.264 (AVC) video decoder.
 ///
 /// This decoder implements the ITU-T H.264 specification, supporting the parsing of NAL units
@@ -351,6 +364,8 @@ pub struct Decoder {
     current_picture: Option<CurrentPicture>,
     residual_pool: super::residual::ResidualPool,
     mb_pool: macroblock::MacroblockPool,
+    // Reused across slices when the matrix-defining inputs are unchanged.
+    dequant_cache: Option<(DequantCacheKey, DequantTables)>,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -381,6 +396,7 @@ impl Decoder {
             current_picture: None,
             residual_pool: super::residual::ResidualPool::default(),
             mb_pool: macroblock::MacroblockPool::default(),
+            dequant_cache: None,
         }
     }
 
@@ -830,21 +846,33 @@ impl Decoder {
         let implicit_weights =
             build_implicit_weight_table(&ref_pics_l0, &ref_pics_l1, slice.current_pic_poc);
 
-        // Resolve the active (picture-level) scaling matrix from SPS + PPS per
-        // clauses 7.4.2.1.1.1 (rule A) and 7.4.2.2.1 (rule B). Falls back to
-        // all-flat-16 when neither signals a custom matrix.
-        let active_scaling_matrix: ResolvedScalingMatrix = {
-            let sps_resolved = resolve_seq_scaling_matrix(
-                slice.sps.seq_scaling_matrix.as_ref(),
-                slice.sps.ChromaArrayType(),
-            );
-            resolve_pic_scaling_matrix(
-                &sps_resolved,
-                slice.sps.seq_scaling_matrix.is_some(),
-                slice.pps.pic_scaling_matrix.as_ref(),
-                slice.pps.transform_8x8_mode_flag,
-                slice.sps.ChromaArrayType(),
-            )
+        let dequant_key = DequantCacheKey {
+            seq_scaling_matrix: slice.sps.seq_scaling_matrix.clone(),
+            pic_scaling_matrix: slice.pps.pic_scaling_matrix.clone(),
+            transform_8x8_mode_flag: slice.pps.transform_8x8_mode_flag,
+            chroma_format: slice.sps.ChromaArrayType(),
+        };
+        // Take the cached tables out so the loop body can borrow `self` mutably
+        // for other fields; put them back after the loop.
+        let active_dequant = match self.dequant_cache.take() {
+            Some((key, dq)) if key == dequant_key => dq,
+            _ => {
+                // Section 7.4.2.1.1.1 (rule A) + 7.4.2.2.1 (rule B): resolve
+                // the active scaling matrix from SPS + PPS, then materialise
+                // dequant tables. Reached only on cache miss (matrix change).
+                let sps_resolved = resolve_seq_scaling_matrix(
+                    dequant_key.seq_scaling_matrix.as_ref(),
+                    dequant_key.chroma_format,
+                );
+                let active_scaling_matrix = resolve_pic_scaling_matrix(
+                    &sps_resolved,
+                    dequant_key.seq_scaling_matrix.is_some(),
+                    dequant_key.pic_scaling_matrix.as_ref(),
+                    dequant_key.transform_8x8_mode_flag,
+                    dequant_key.chroma_format,
+                );
+                DequantTables::from_scaling_matrix(&active_scaling_matrix)
+            }
         };
         let first_mb_addr = slice.header.first_mb_in_slice;
         for i in 0..slice.get_macroblock_count() {
@@ -899,7 +927,7 @@ impl Decoder {
                             imb.residual.as_deref(),
                             ColorPlane::Y,
                             qp as u8,
-                            &active_scaling_matrix,
+                            &active_dequant,
                         );
 
                         let luma_plane = &mut frame.planes[0];
@@ -947,7 +975,7 @@ impl Decoder {
                                 imb.residual.as_deref(),
                                 plane_name,
                                 chroma_qp,
-                                &active_scaling_matrix,
+                                &active_dequant,
                             );
                             render_chroma_intra_prediction(
                                 slice,
@@ -965,7 +993,7 @@ impl Decoder {
                             block.residual.as_deref(),
                             ColorPlane::Y,
                             qp as u8,
-                            &active_scaling_matrix,
+                            &active_dequant,
                         );
 
                         render_luma_inter_prediction(
@@ -985,7 +1013,7 @@ impl Decoder {
                                 block.residual.as_deref(),
                                 plane_name,
                                 chroma_qp,
-                                &active_scaling_matrix,
+                                &active_dequant,
                             );
                             render_chroma_inter_prediction(
                                 slice,
@@ -1004,7 +1032,7 @@ impl Decoder {
                             block.residual.as_deref(),
                             ColorPlane::Y,
                             qp as u8,
-                            &active_scaling_matrix,
+                            &active_dequant,
                         );
 
                         render_luma_inter_prediction_b(
@@ -1026,7 +1054,7 @@ impl Decoder {
                                 block.residual.as_deref(),
                                 plane_name,
                                 chroma_qp,
-                                &active_scaling_matrix,
+                                &active_dequant,
                             );
                             render_chroma_inter_prediction_b(
                                 slice,
@@ -1049,6 +1077,8 @@ impl Decoder {
                 trace!("MB {mb_addr}: {mb:?}");
             }
         }
+
+        self.dequant_cache = Some((dequant_key, active_dequant));
 
         // Drain decoded macroblocks into picture-wide state consumed at
         // finalize: `mb_slice_id` drives cross-slice deblocking suppression
@@ -1400,10 +1430,10 @@ fn restore_residuals(
     residual: Option<&Residual>,
     plane: ColorPlane,
     qp: u8,
-    scaling: &ResolvedScalingMatrix,
+    dequant: &DequantTables,
 ) -> SmallVec<[Block4x4; 16]> {
     match residual {
-        Some(r) => r.restore(plane, qp, scaling),
+        Some(r) => r.restore(plane, qp, dequant),
         None => SmallVec::new(),
     }
 }

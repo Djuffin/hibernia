@@ -196,20 +196,22 @@ impl Residual {
         &self,
         plane: ColorPlane,
         qp: u8,
-        scaling: &ResolvedScalingMatrix,
+        dequant: &DequantTables,
     ) -> SmallVec<[Block4x4; 16]> {
         let mut result = SmallVec::new();
         let is_inter = self.prediction_mode.is_inter();
+        let m = (qp % 6) as usize;
 
         if plane == ColorPlane::Y {
-            let weight_scale_4x4 = scaling.list_4x4(is_inter, ColorPlane::Y);
+            let dequant_4x4 = dequant.list_4x4(is_inter, ColorPlane::Y);
+            let scale_factors_4x4 = &dequant_4x4[m];
             match &self.luma {
                 LumaResidual::Intra16x16 { dc, ac, ac_nc } => {
                     // Section 8.5.2 Specification of transform decoding process for luma samples
                     // of Intra_16x16 macroblock prediction mode
                     let mut dcs_block = unzip_block_4x4(dc);
                     dcs_block = transform_dc(&dcs_block);
-                    dc_scale_4x4_block(&mut dcs_block, weight_scale_4x4[0], qp);
+                    dc_scale_4x4_block(&mut dcs_block, scale_factors_4x4[0], qp);
 
                     for blk_idx in 0..16 {
                         let (dc_row, dc_column) = unscan_4x4(blk_idx);
@@ -228,7 +230,7 @@ impl Residual {
                         let mut coeffs = [0i32; 16];
                         coeffs[0] = scaled_dc;
                         coeffs[1..].copy_from_slice(&ac[blk_idx]);
-                        level_scale_4x4_block(&mut coeffs, weight_scale_4x4, true, qp);
+                        level_scale_4x4_block(&mut coeffs, scale_factors_4x4, true, qp);
                         let mut block = unzip_block_4x4(&coeffs);
                         transform_4x4(&mut block);
                         result.push(block);
@@ -246,8 +248,7 @@ impl Residual {
                     // 8x8 block `i` has no non-zero coeffs. CABAC cat-5 doesn't
                     // populate per-4x4 nc, so CBP is the canonical signal here.
                     let cbp_luma = self.coded_block_pattern.luma();
-                    let weight_scale_8x8 =
-                        weight_scale_8x8_2d(scaling.list_8x8(is_inter, ColorPlane::Y));
+                    let scale_factors_8x8 = &dequant.list_8x8(is_inter, ColorPlane::Y)[m];
                     for i8x8 in 0..4 {
                         if cbp_luma & (1 << i8x8) == 0 {
                             for _ in 0..4 {
@@ -256,7 +257,7 @@ impl Residual {
                             continue;
                         }
                         let mut block = unzip_block_8x8(&levels[i8x8].0);
-                        level_scale_8x8_block(&mut block, &weight_scale_8x8, qp);
+                        level_scale_8x8_block(&mut block, scale_factors_8x8, qp);
                         transform_8x8(&mut block);
                         for (sub_y, sub_x) in [(0, 0), (0, 4), (4, 0), (4, 4)] {
                             let mut sub = Block4x4::default();
@@ -279,7 +280,7 @@ impl Residual {
                         }
                         let mut coeffs = [0i32; 16];
                         coeffs.copy_from_slice(&levels[blk_idx]);
-                        level_scale_4x4_block(&mut coeffs, weight_scale_4x4, false, qp);
+                        level_scale_4x4_block(&mut coeffs, scale_factors_4x4, false, qp);
                         let mut block = unzip_block_4x4(&coeffs);
                         transform_4x4(&mut block);
                         result.push(block);
@@ -292,7 +293,8 @@ impl Residual {
             }
         } else {
             // Section 8.5.8, 8.5.11 Specification of transform decoding process for chroma samples
-            let weight_scale_4x4 = scaling.list_4x4(is_inter, plane);
+            let dequant_4x4 = dequant.list_4x4(is_inter, plane);
+            let scale_factors_4x4 = &dequant_4x4[m];
             let (dcs, ac_nc) = match plane {
                 ColorPlane::Cb => (&self.chroma_cb_dc_level, &self.chroma_cb_level4x4_nc),
                 ColorPlane::Cr => (&self.chroma_cr_dc_level, &self.chroma_cr_level4x4_nc),
@@ -300,7 +302,7 @@ impl Residual {
             };
             let mut dcs_block = Block2x2 { samples: [[dcs[0], dcs[1]], [dcs[2], dcs[3]]] };
             dcs_block = transform_chroma_dc(&dcs_block);
-            dc_scale_2x2_block(&mut dcs_block, weight_scale_4x4[0], qp);
+            dc_scale_2x2_block(&mut dcs_block, scale_factors_4x4[0], qp);
 
             for blk_idx in 0..4 {
                 let (dc_row, dc_column) = unscan_2x2(blk_idx);
@@ -322,7 +324,7 @@ impl Residual {
                 let mut coeffs = [0i32; 16];
                 coeffs[0] = scaled_dc;
                 coeffs[1..].copy_from_slice(acs);
-                level_scale_4x4_block(&mut coeffs, weight_scale_4x4, true, qp);
+                level_scale_4x4_block(&mut coeffs, scale_factors_4x4, true, qp);
                 let mut block = unzip_block_4x4(&coeffs);
                 transform_4x4(&mut block);
                 result.push(block);
@@ -416,43 +418,26 @@ pub const fn level_scale_4x4(weight_scale: u8, m: u8, idx: usize) -> i32 {
     (weight_scale as i32) * (norm_adjust_4x4(m, idx) as i32)
 }
 
-// Section 8.5.12.1 Scaling process for residual 4x4 blocks. `weight_scale` is
-// the 16-element, zig-zag-ordered scaling list active for this block.
+// Section 8.5.12.1 Scaling process for residual 4x4 blocks. `scale_factors` is
+// the zig-zag-ordered LevelScale4x4 row for `m = qp % 6`.
 #[inline(always)]
 pub fn level_scale_4x4_block(
     block: &mut [i32],
-    weight_scale: &[u8; 16],
+    scale_factors: &[i32; 16],
     skip_dc: bool,
     qp: u8,
 ) {
     debug_assert!(block.len() == 16);
-    let m = qp % 6;
 
-    // Per-position scaling factors keyed on (weight_scale[i], m, i). Held as
-    // four i32x4 rows aligned with the block's row layout below.
-    let s0 = i32x4::new([
-        level_scale_4x4(weight_scale[0], m, 0),
-        level_scale_4x4(weight_scale[1], m, 1),
-        level_scale_4x4(weight_scale[2], m, 2),
-        level_scale_4x4(weight_scale[3], m, 3),
-    ]);
-    let s1 = i32x4::new([
-        level_scale_4x4(weight_scale[4], m, 4),
-        level_scale_4x4(weight_scale[5], m, 5),
-        level_scale_4x4(weight_scale[6], m, 6),
-        level_scale_4x4(weight_scale[7], m, 7),
-    ]);
-    let s2 = i32x4::new([
-        level_scale_4x4(weight_scale[8], m, 8),
-        level_scale_4x4(weight_scale[9], m, 9),
-        level_scale_4x4(weight_scale[10], m, 10),
-        level_scale_4x4(weight_scale[11], m, 11),
-    ]);
+    let s0 = i32x4::new([scale_factors[0], scale_factors[1], scale_factors[2], scale_factors[3]]);
+    let s1 = i32x4::new([scale_factors[4], scale_factors[5], scale_factors[6], scale_factors[7]]);
+    let s2 =
+        i32x4::new([scale_factors[8], scale_factors[9], scale_factors[10], scale_factors[11]]);
     let s3 = i32x4::new([
-        level_scale_4x4(weight_scale[12], m, 12),
-        level_scale_4x4(weight_scale[13], m, 13),
-        level_scale_4x4(weight_scale[14], m, 14),
-        level_scale_4x4(weight_scale[15], m, 15),
+        scale_factors[12],
+        scale_factors[13],
+        scale_factors[14],
+        scale_factors[15],
     ]);
 
     let mut b0 = i32x4::new(block[0..4].try_into().unwrap());
@@ -492,18 +477,17 @@ pub fn level_scale_4x4_block(
 }
 
 // Section 8.5.10 Scaling and transformation process for DC transform coefficients for Intra_16x16.
-// `weight_scale_dc` is position 0 of the active 4x4 scaling list.
+// `scale_factor_dc` is LevelScale4x4 at position 0 for `m = qp % 6`.
 #[inline(always)]
-pub fn dc_scale_4x4_block(block: &mut Block4x4, weight_scale_dc: u8, qp: u8) {
-    let m = qp % 6;
+pub fn dc_scale_4x4_block(block: &mut Block4x4, scale_factor_dc: i32, qp: u8) {
     for row in block.samples.iter_mut() {
         for c in row.iter_mut() {
             let d = if qp >= 36 {
                 // Equation 8-321
-                (*c * level_scale_4x4(weight_scale_dc, m, 0)) << (qp / 6 - 6)
+                (*c * scale_factor_dc) << (qp / 6 - 6)
             } else {
                 // Equation 8-322
-                (*c * level_scale_4x4(weight_scale_dc, m, 0) + (1 << (5 - qp / 6))) >> (6 - qp / 6)
+                (*c * scale_factor_dc + (1 << (5 - qp / 6))) >> (6 - qp / 6)
             };
             *c = d;
         }
@@ -512,14 +496,13 @@ pub fn dc_scale_4x4_block(block: &mut Block4x4, weight_scale_dc: u8, qp: u8) {
 
 // Section 8.5.11.2 Scaling process for chroma DC transform coefficients
 // (the 2x2 transform itself lives in 8.5.11.1 / `transform_chroma_dc`).
-// `weight_scale_dc` is position 0 of the active (Intra or Inter) chroma 4x4 scaling list.
+// `scale_factor_dc` is LevelScale4x4 at position 0 of the active chroma list.
 #[inline(always)]
-pub fn dc_scale_2x2_block(block: &mut Block2x2, weight_scale_dc: u8, qp: u8) {
-    let m = qp % 6;
+pub fn dc_scale_2x2_block(block: &mut Block2x2, scale_factor_dc: i32, qp: u8) {
     for row in block.samples.iter_mut() {
         for c in row.iter_mut() {
             // Equation 8-326.
-            let d = ((*c * level_scale_4x4(weight_scale_dc, m, 0)) << (qp / 6)) >> 5;
+            let d = ((*c * scale_factor_dc) << (qp / 6)) >> 5;
             *c = d;
         }
     }
@@ -740,15 +723,13 @@ pub const fn level_scale_8x8(weight_scale: u8, m: u8, i: usize, j: usize) -> i32
 }
 
 // Section 8.5.13.1 Scaling process for residual 8x8 blocks (Eqs. 8-356, 8-357).
-// `weight_scale` is the 8x8 active scaling list in 2D form.
-pub fn level_scale_8x8_block(block: &mut Block8x8, weight_scale: &[[u8; 8]; 8], qp: u8) {
-    let m = qp % 6;
+// `scale_factors` is the LevelScale8x8 row for `m = qp % 6` (see DequantTables).
+pub fn level_scale_8x8_block(block: &mut Block8x8, scale_factors: &[[i32; 8]; 8], qp: u8) {
     if qp >= 36 {
         let shift = (qp / 6 - 6) as i32;
         for i in 0..8 {
             for j in 0..8 {
-                block.samples[i][j] =
-                    (block.samples[i][j] * level_scale_8x8(weight_scale[i][j], m, i, j)) << shift;
+                block.samples[i][j] = (block.samples[i][j] * scale_factors[i][j]) << shift;
             }
         }
     } else {
@@ -756,12 +737,67 @@ pub fn level_scale_8x8_block(block: &mut Block8x8, weight_scale: &[[u8; 8]; 8], 
         let offset = 1 << (5 - qp / 6);
         for i in 0..8 {
             for j in 0..8 {
-                block.samples[i][j] = ((block.samples[i][j]
-                    * level_scale_8x8(weight_scale[i][j], m, i, j))
-                    + offset)
-                    >> shift;
+                block.samples[i][j] =
+                    ((block.samples[i][j] * scale_factors[i][j]) + offset) >> shift;
             }
         }
+    }
+}
+
+// Materialised LevelScale4x4 / LevelScale8x8 tables (Eqs. 8-315, 8-316),
+// keyed by (active scaling list, m = qp % 6, position). Each entry is the
+// product weightScale[pos] * normAdjust(m, pos) that the inverse-quantization
+// step would otherwise recompute for every coefficient. In the 8x8 path that
+// recompute is 64 lookups per block via a 6-arm class match, so caching it
+// makes the inner loop a single load and multiply. The tables only need to
+// be rebuilt when the active scaling matrix changes (across PPS swaps),
+// which is rare; per-MB qp changes just pick a different `m` row.
+//
+// Indexing follows ResolvedScalingMatrix: 4x4 list ids per Table 7-2
+// (Intra/Inter x Y/Cb/Cr) selected by `list_4x4`, 8x8 by `list_8x8`. 4x4 inner
+// positions are zig-zag, matching the residual layout; 8x8 inner positions are
+// 2D (i, j), matching the post-zigzag block.
+#[derive(Clone)]
+pub struct DequantTables {
+    d4x4: [[[i32; 16]; 6]; 6],
+    d8x8: [[[[i32; 8]; 8]; 6]; 6],
+}
+
+impl DequantTables {
+    pub fn from_scaling_matrix(matrix: &ResolvedScalingMatrix) -> Self {
+        let mut d4x4 = [[[0i32; 16]; 6]; 6];
+        for list_idx in 0..6 {
+            let list = &matrix.lists_4x4[list_idx];
+            for m in 0..6u8 {
+                for idx in 0..16 {
+                    d4x4[list_idx][m as usize][idx] = level_scale_4x4(list[idx], m, idx);
+                }
+            }
+        }
+        let mut d8x8 = [[[[0i32; 8]; 8]; 6]; 6];
+        for list_idx in 0..6 {
+            let ws_2d = weight_scale_8x8_2d(&matrix.lists_8x8[list_idx]);
+            for m in 0..6u8 {
+                for i in 0..8 {
+                    for j in 0..8 {
+                        d8x8[list_idx][m as usize][i][j] = level_scale_8x8(ws_2d[i][j], m, i, j);
+                    }
+                }
+            }
+        }
+        DequantTables { d4x4, d8x8 }
+    }
+
+    // Table 7-2: ScalingList4x4[iYCbCr + (mbIsInter ? 3 : 0)].
+    #[inline]
+    pub fn list_4x4(&self, is_inter: bool, plane: ColorPlane) -> &[[i32; 16]; 6] {
+        &self.d4x4[plane as usize + if is_inter { 3 } else { 0 }]
+    }
+
+    // Table 7-2: ScalingList8x8[2 * iYCbCr + mbIsInter].
+    #[inline]
+    pub fn list_8x8(&self, is_inter: bool, plane: ColorPlane) -> &[[[i32; 8]; 8]; 6] {
+        &self.d8x8[2 * (plane as usize) + if is_inter { 1 } else { 0 }]
     }
 }
 
@@ -882,6 +918,26 @@ mod tests {
         }
     }
 
+    fn make_scale_factors_4x4(weight_scale: &[u8; 16], qp: u8) -> [i32; 16] {
+        let m = qp % 6;
+        let mut sf = [0i32; 16];
+        for idx in 0..16 {
+            sf[idx] = level_scale_4x4(weight_scale[idx], m, idx);
+        }
+        sf
+    }
+
+    fn make_scale_factors_8x8(weight_scale_2d: &[[u8; 8]; 8], qp: u8) -> [[i32; 8]; 8] {
+        let m = qp % 6;
+        let mut sf = [[0i32; 8]; 8];
+        for i in 0..8 {
+            for j in 0..8 {
+                sf[i][j] = level_scale_8x8(weight_scale_2d[i][j], m, i, j);
+            }
+        }
+        sf
+    }
+
     pub fn test_transform_4x4(input: Block4x4, expected: Block4x4, qp: u8) {
         let mut block = [0i32; 16];
         for i in 0..4 {
@@ -890,7 +946,8 @@ mod tests {
             }
         }
 
-        level_scale_4x4_block(&mut block, &FLAT_4X4_16, false, qp);
+        let sf = make_scale_factors_4x4(&FLAT_4X4_16, qp);
+        level_scale_4x4_block(&mut block, &sf, false, qp);
         let mut output = unzip_block_4x4(&block);
         transform_4x4(&mut output);
         assert_eq!(output.samples, expected.samples);
@@ -1002,7 +1059,8 @@ mod tests {
     pub fn test_transform_8x8_zeros() {
         let mut block = Block8x8::default();
         let w = weight_scale_8x8_2d(&FLAT_8X8_16);
-        level_scale_8x8_block(&mut block, &w, 20);
+        let sf = make_scale_factors_8x8(&w, 20);
+        level_scale_8x8_block(&mut block, &sf, 20);
         transform_8x8(&mut block);
         assert_eq!(block.samples, [[0i32; 8]; 8]);
     }
@@ -1035,7 +1093,8 @@ mod tests {
         let mut block = Block8x8::default();
         block.samples[0][0] = 3;
         let w = weight_scale_8x8_2d(&FLAT_8X8_16);
-        level_scale_8x8_block(&mut block, &w, 24);
+        let sf = make_scale_factors_8x8(&w, 24);
+        level_scale_8x8_block(&mut block, &sf, 24);
         assert_eq!(block.samples[0][0], (3 * 320 + 2) >> 2);
     }
 
@@ -1061,7 +1120,8 @@ mod tests {
         let mut block = Block8x8::default();
         block.samples[0][0] = 3;
         let w = weight_scale_8x8_2d(&FLAT_8X8_16);
-        level_scale_8x8_block(&mut block, &w, 42);
+        let sf = make_scale_factors_8x8(&w, 42);
+        level_scale_8x8_block(&mut block, &sf, 42);
         assert_eq!(block.samples[0][0], 3 * 320 * 2);
     }
 
@@ -1074,7 +1134,8 @@ mod tests {
             for i in 0..16 {
                 b[i] = 10 + i as i32;
             }
-            level_scale_4x4_block(&mut b, &FLAT_4X4_16, false, 24);
+            let sf = make_scale_factors_4x4(&FLAT_4X4_16, 24);
+            level_scale_4x4_block(&mut b, &sf, false, 24);
             b
         };
         let block_doubled = {
@@ -1083,7 +1144,8 @@ mod tests {
                 b[i] = 10 + i as i32;
             }
             let doubled = [32u8; 16];
-            level_scale_4x4_block(&mut b, &doubled, false, 24);
+            let sf = make_scale_factors_4x4(&doubled, 24);
+            level_scale_4x4_block(&mut b, &sf, false, 24);
             b
         };
         for i in 0..16 {
@@ -1102,7 +1164,8 @@ mod tests {
                 }
             }
             let w = weight_scale_8x8_2d(&FLAT_8X8_16);
-            level_scale_8x8_block(&mut block, &w, 24);
+            let sf = make_scale_factors_8x8(&w, 24);
+            level_scale_8x8_block(&mut block, &sf, 24);
             block
         };
         let doubled_block = {
@@ -1114,7 +1177,8 @@ mod tests {
             }
             let list = [32u8; 64];
             let w = weight_scale_8x8_2d(&list);
-            level_scale_8x8_block(&mut block, &w, 24);
+            let sf = make_scale_factors_8x8(&w, 24);
+            level_scale_8x8_block(&mut block, &sf, 24);
             block
         };
         for i in 0..8 {

@@ -1,14 +1,14 @@
-//! Custom scaling matrices (Annex H.264 clauses 7.3.2.1.1.1, 7.3.2.2.1,
-//! 7.4.2.1.1.1, 7.4.2.2.1, 8.5.9).
-//!
-//! Scaling lists are stored in zig-zag scan order (matching the bitstream
-//! encoding). Index conventions follow Table 7-2:
-//!   0: Sl_4x4_Intra_Y     3: Sl_4x4_Inter_Y
-//!   1: Sl_4x4_Intra_Cb    4: Sl_4x4_Inter_Cb
-//!   2: Sl_4x4_Intra_Cr    5: Sl_4x4_Inter_Cr
-//!   6: Sl_8x8_Intra_Y     7: Sl_8x8_Inter_Y
-//!   8: Sl_8x8_Intra_Cb    9: Sl_8x8_Inter_Cb     (only when chroma_format_idc == 3)
-//!  10: Sl_8x8_Intra_Cr   11: Sl_8x8_Inter_Cr     (only when chroma_format_idc == 3)
+// Custom scaling matrices (Annex H.264 clauses 7.3.2.1.1.1, 7.3.2.2.1,
+// 7.4.2.1.1.1, 7.4.2.2.1, 8.5.9).
+//
+// Scaling lists are stored in zig-zag scan order (matching the bitstream
+// encoding). Index conventions follow Table 7-2:
+//   0: Sl_4x4_Intra_Y     3: Sl_4x4_Inter_Y
+//   1: Sl_4x4_Intra_Cb    4: Sl_4x4_Inter_Cb
+//   2: Sl_4x4_Intra_Cr    5: Sl_4x4_Inter_Cr
+//   6: Sl_8x8_Intra_Y     7: Sl_8x8_Inter_Y
+//   8: Sl_8x8_Intra_Cb    9: Sl_8x8_Inter_Cb     (only when chroma_format_idc == 3)
+//  10: Sl_8x8_Intra_Cr   11: Sl_8x8_Inter_Cr     (only when chroma_format_idc == 3)
 
 use super::rbsp::{ParseResult, RbspReader};
 use super::tables::{

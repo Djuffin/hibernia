@@ -918,7 +918,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 return 0;
             }
             if accessor.slice.MbaffFrameFlag() {
-                unimplemented!(
+                unreachable!(
                     "MBAFF field macroblock logic for RefIdx context derivation (Eq 9-12)"
                 );
             }
@@ -989,7 +989,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 return 0;
             }
             if accessor.slice.MbaffFrameFlag() {
-                unimplemented!(
+                unreachable!(
                     "MBAFF field macroblock scaling for MVD context derivation (Eq 9-15, 9-16)"
                 );
             }
@@ -1401,7 +1401,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                     cbf_bit(cbf_src, 5, 0, neighbor_blk_idx) as usize
                 }
                 6..=13 => {
-                    unimplemented!("Coded block flag context derivation for categories 6-13 (ChromaArrayType 3)");
+                    unreachable!("Coded block flag context derivation for categories 6-13 (ChromaArrayType 3)");
                 }
                 _ => 0,
             }
@@ -1613,7 +1613,7 @@ impl<'a, 'b> CabacContext<'a, 'b> {
                 }
             }
             (SyntaxElement::MbTypeSI, _) => {
-                unimplemented!("SI-slice context derivation for {:?}", se);
+                unreachable!("SI-slice context derivation for {:?}", se);
             }
             _ => unreachable!("get_ctx_idx_inc mismatch: se={:?}, ctx={:?}", se, ctx),
         }

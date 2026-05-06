@@ -49,45 +49,6 @@ pub struct DpbPicture {
     pub needed_for_output: bool,
 }
 
-/// Compute MaxDpbFrames per spec A.3.1 / Table A-1.
-/// Returns the maximum number of frames the DPB can hold based on level limits.
-pub fn max_dpb_frames(sps: &SequenceParameterSet) -> usize {
-    // Table A-1: MaxDPB in bytes for each level_idc
-    let max_dpb_bytes: u64 = match sps.level_idc {
-        10 => 152_064,
-        11 => {
-            if sps.constraint_set3_flag {
-                // Level 1b
-                152_064
-            } else {
-                345_600
-            }
-        }
-        12 => 912_384,
-        13 => 912_384,
-        20 => 912_384,
-        21 => 1_824_768,
-        22 => 3_110_400,
-        30 => 3_110_400,
-        31 => 6_912_000,
-        32 => 7_864_320,
-        40 => 12_582_912,
-        41 => 12_582_912,
-        42 => 13_369_344,
-        50 => 42_393_600,
-        51 => 70_778_880,
-        52 => 70_778_880,
-        // Level 1b encoded as 9
-        9 => 152_064,
-        _ => 70_778_880, // fallback to max
-    };
-
-    // MaxDpbFrames = Min( MaxDPB / ( PicWidthInMbs * FrameHeightInMbs * 384 ), 16 )
-    // For frame coding, FrameHeightInMbs = PicHeightInMapUnits
-    let frame_size = sps.pic_width_in_mbs() as u64 * sps.pic_height_in_mbs() as u64 * 384;
-    std::cmp::min((max_dpb_bytes / frame_size) as usize, 16)
-}
-
 // Annex C: Decoded Picture Buffer (DPB)
 #[derive(Debug)]
 pub struct DecodedPictureBuffer {
@@ -612,4 +573,5 @@ mod tests {
         assert!(dpb.pictures.is_empty());
         assert!(current.marking.is_short_term());
     }
+
 }

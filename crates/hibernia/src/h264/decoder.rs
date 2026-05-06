@@ -421,6 +421,17 @@ impl Decoder {
                     .map_err(parse_error_handler)?;
                 trace!("{:?} {:#?}", nal.nal_unit_type, slice);
 
+                // SP/SI slice types are unsupported. The header parser accepts
+                // them, but the decoder pipeline (notably CABAC SI context
+                // derivation) is not implemented. Reject before any further
+                // processing so we never reach the panic sites downstream.
+                if matches!(slice.header.slice_type, SliceType::SP | SliceType::SI) {
+                    return Err(DecodingError::FeatureNotSupported(format!(
+                        "{:?} slices are not supported",
+                        slice.header.slice_type
+                    )));
+                }
+
                 // Section 7.4.1.2.4: finalize the in-progress picture if this
                 // slice begins a new one. With `current_picture == None` (first
                 // slice of the stream, or just-finalized) we always start fresh.
@@ -466,9 +477,10 @@ impl Decoder {
                         "gaps_in_frame_num_value_allowed_flag=1 is not supported".into(),
                     ));
                 }
+                check_sps_level_limits(&sps)?;
                 // Update DPB size: use level-derived MaxDpbFrames per A.3.1,
                 // or VUI max_dec_frame_buffering if bitstream_restriction_flag is set.
-                let max_dpb_frames = super::dpb::max_dpb_frames(&sps);
+                let max_dpb_frames = super::levels::max_dpb_frames(&sps);
                 let mut max_dpb_size = max(sps.max_num_ref_frames as usize, 1);
                 if let Some(vui) = &sps.vui_parameters {
                     if vui.bitstream_restriction_flag {
@@ -933,7 +945,11 @@ impl Decoder {
                         let luma_plane = &mut frame.planes[0];
                         let luma_prediction_mode = imb.MbPartPredMode(0);
                         match luma_prediction_mode {
-                            MbPredictionMode::None => panic!("impossible pred mode"),
+                            MbPredictionMode::None => {
+                                return Err(DecodingError::MisformedData(
+                                    "Macroblock::I has I_PCM mb_type (None pred mode)".into(),
+                                ));
+                            }
                             MbPredictionMode::Intra_4x4 => {
                                 render_luma_4x4_intra_prediction(
                                     slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
@@ -1445,6 +1461,81 @@ fn next_qp(qp: i32, mb_qp_delta: i32, qp_bd_offset_y: i32) -> i32 {
     (qp + mb_qp_delta + 52 + 2 * qp_bd_offset_y) % (52 + qp_bd_offset_y) - qp_bd_offset_y
 }
 
+/// Validate a parsed SPS against limits the parser doesn't enforce: Annex A.3
+/// per-level frame-size caps, and frame-cropping arithmetic that would
+/// underflow `crop_dimensions()` in sps.rs.
+fn check_sps_level_limits(sps: &sps::SequenceParameterSet) -> Result<(), DecodingError> {
+    let max_fs = super::levels::max_frame_size_in_mbs(sps);
+    let pic_w_mbs = sps.pic_width_in_mbs() as u32;
+    let pic_h_mbs = sps.pic_height_in_mbs() as u32;
+
+    let pic_size = pic_w_mbs.saturating_mul(pic_h_mbs);
+    if pic_size > max_fs {
+        return Err(DecodingError::OutOfRange(format!(
+            "picture size {} MBs ({}x{}) exceeds level {}.{} MaxFS={}",
+            pic_size,
+            pic_w_mbs,
+            pic_h_mbs,
+            sps.level_idc / 10,
+            sps.level_idc % 10,
+            max_fs
+        )));
+    }
+
+    // Annex A.3.1 constraints H.1/H.2: width and height in MBs must each be
+    // <= sqrt(8 * MaxFS). Compared via squaring to avoid floating point.
+    let dim_sq_limit: u64 = 8u64 * max_fs as u64;
+    if (pic_w_mbs as u64) * (pic_w_mbs as u64) > dim_sq_limit {
+        return Err(DecodingError::OutOfRange(format!(
+            "picture width {} MBs exceeds level {}.{} sqrt(8*MaxFS) cap",
+            pic_w_mbs,
+            sps.level_idc / 10,
+            sps.level_idc % 10,
+        )));
+    }
+    if (pic_h_mbs as u64) * (pic_h_mbs as u64) > dim_sq_limit {
+        return Err(DecodingError::OutOfRange(format!(
+            "picture height {} MBs exceeds level {}.{} sqrt(8*MaxFS) cap",
+            pic_h_mbs,
+            sps.level_idc / 10,
+            sps.level_idc % 10,
+        )));
+    }
+
+    // Section 7.4.2.1.1: frame cropping must leave a positive display area.
+    // Without this check, crop_dimensions() in sps.rs underflows usize on
+    // pic_width - crop_left - crop_right (or the height counterpart).
+    if let Some(crop) = &sps.frame_cropping {
+        let (crop_unit_x, crop_unit_y) = if sps.ChromaArrayType() == ChromaFormat::Monochrome {
+            (1usize, 2 - sps.frame_mbs_only_flag as usize)
+        } else {
+            let shift = sps.ChromaArrayType().get_chroma_shift();
+            (
+                1usize << shift.width,
+                (1usize << shift.height) * (2 - sps.frame_mbs_only_flag as usize),
+            )
+        };
+        let crop_h = (crop.left as u64 + crop.right as u64) * crop_unit_x as u64;
+        let crop_v = (crop.top as u64 + crop.bottom as u64) * crop_unit_y as u64;
+        if crop_h >= sps.pic_width() as u64 {
+            return Err(DecodingError::OutOfRange(format!(
+                "frame_crop_left + frame_crop_right ({} samples) >= pic_width ({})",
+                crop_h,
+                sps.pic_width()
+            )));
+        }
+        if crop_v >= sps.pic_height() as u64 {
+            return Err(DecodingError::OutOfRange(format!(
+                "frame_crop_top + frame_crop_bottom ({} samples) >= pic_height ({})",
+                crop_v,
+                sps.pic_height()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 // Section 8.5.8 Derivation process for chroma quantization parameters.
 // The result is statically in u8 range: qp_c is in [-qp_bd_offset_c, 51], and
 // qp_bd_offset_c = 6 * bit_depth_chroma_minus8 in [0, 36], so qp_c + qp_bd_offset_c
@@ -1459,5 +1550,92 @@ pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -
     let qp_i = (luma_qp + chroma_qp_offset).clamp(-qp_bd_offset_c, 51);
     let qp_c = if qp_i < 0 { qp_i } else { TABLE[qp_i as usize] as i32 };
     (qp_c + qp_bd_offset_c) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sps::FrameCrop;
+
+    fn sps_dim(level_idc: u8, w_mbs_m1: u16, h_mbs_m1: u16) -> sps::SequenceParameterSet {
+        sps::SequenceParameterSet {
+            level_idc,
+            pic_width_in_mbs_minus1: w_mbs_m1,
+            pic_height_in_map_units_minus1: h_mbs_m1,
+            frame_mbs_only_flag: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn level_limits_reject_width_over_sqrt_cap() {
+        // Level 6.2 MaxFS=696_320, sqrt(8*MaxFS) ~= 2360 MBs. Width 4096 alone
+        // exceeds that.
+        match check_sps_level_limits(&sps_dim(62, 4095, 0)) {
+            Err(DecodingError::OutOfRange(msg)) => {
+                assert!(msg.contains("width"), "expected width-cap error, got: {}", msg);
+            }
+            other => panic!("expected OutOfRange(width), got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn level_limits_reject_height_over_sqrt_cap() {
+        match check_sps_level_limits(&sps_dim(62, 0, 4095)) {
+            Err(DecodingError::OutOfRange(msg)) => {
+                assert!(msg.contains("height"), "expected height-cap error, got: {}", msg);
+            }
+            other => panic!("expected OutOfRange(height), got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn level_limits_unknown_level_still_caps_dimensions() {
+        // level_idc=255 falls back to Level 6.2 MaxFS, which still rejects a
+        // 65535x65535 SPS.
+        match check_sps_level_limits(&sps_dim(255, 65534, 65534)) {
+            Err(DecodingError::OutOfRange(_)) => {}
+            other => panic!("expected OutOfRange, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cropping_within_picture_is_accepted() {
+        // 4x4 MB picture (64x64 samples). Crop 16 left + 16 right + 8 top +
+        // 8 bottom (all in cropping units, YUV420 -> crop_unit_x=2,
+        // crop_unit_y=2 with frame_mbs_only_flag) = 32x16 samples cropped.
+        let mut sps = sps_dim(10, 3, 3);
+        sps.frame_cropping = Some(FrameCrop { left: 1, right: 1, top: 1, bottom: 1 });
+        check_sps_level_limits(&sps).expect("crop fits inside picture");
+    }
+
+    #[test]
+    fn cropping_horizontal_underflow_is_rejected() {
+        // 4x4 MB picture (64 samples wide). YUV420 crop_unit_x = 2. left+right
+        // in cropping units must be < 32. Use 32 to hit the boundary (== is
+        // rejected since the display area must be positive).
+        let mut sps = sps_dim(10, 3, 3);
+        sps.frame_cropping = Some(FrameCrop { left: 16, right: 16, top: 0, bottom: 0 });
+        match check_sps_level_limits(&sps) {
+            Err(DecodingError::OutOfRange(msg)) => {
+                assert!(msg.contains("frame_crop_left"), "got: {}", msg);
+            }
+            other => panic!("expected OutOfRange (horizontal crop), got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cropping_vertical_underflow_is_rejected() {
+        // 4x4 MB picture (64 samples tall). YUV420 + frame_mbs_only_flag ->
+        // crop_unit_y = 2. top+bottom in cropping units >= 32 underflows.
+        let mut sps = sps_dim(10, 3, 3);
+        sps.frame_cropping = Some(FrameCrop { left: 0, right: 0, top: 16, bottom: 16 });
+        match check_sps_level_limits(&sps) {
+            Err(DecodingError::OutOfRange(msg)) => {
+                assert!(msg.contains("frame_crop_top"), "got: {}", msg);
+            }
+            other => panic!("expected OutOfRange (vertical crop), got: {:?}", other),
+        }
+    }
 }
 

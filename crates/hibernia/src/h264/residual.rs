@@ -146,7 +146,7 @@ impl Residual {
         match plane {
             ColorPlane::Y => match &mut self.luma {
                 LumaResidual::Intra16x16 { dc, .. } => dc.as_mut_slice(),
-                _ => panic!("No separate DC levels in this prediction mode"),
+                _ => unreachable!("get_dc_levels_for(Y) requires Intra_16x16 layout"),
             },
             ColorPlane::Cb => self.chroma_cb_dc_level.as_mut_slice(),
             ColorPlane::Cr => self.chroma_cr_dc_level.as_mut_slice(),
@@ -163,7 +163,9 @@ impl Residual {
                 LumaResidual::Block4x4 { levels, nc } => {
                     (levels[blk_idx].as_mut_slice(), &mut nc[blk_idx])
                 }
-                _ => panic!("get_ac_levels_for(Y): luma residual is not 4x4 or Intra_16x16"),
+                _ => unreachable!(
+                    "get_ac_levels_for(Y) requires Intra_16x16 or Block4x4 layout"
+                ),
             },
             ColorPlane::Cb => (
                 self.chroma_cb_ac_level[blk_idx].as_mut_slice(),

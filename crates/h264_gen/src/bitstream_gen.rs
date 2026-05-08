@@ -104,7 +104,7 @@ pub fn generate_bitstream(config: &BitstreamConfig) -> Result<Vec<u8>, String> {
                         }) => {
                             for _ in 0..*count {
                                 writer.ue(25)?; // I_PCM mb_type
-                                writer.align()?;
+                                writer.align_zero()?;
                                 for _ in 0..256 {
                                     writer.u(8, *luma as u32)?;
                                 }

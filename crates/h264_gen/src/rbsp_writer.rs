@@ -30,6 +30,13 @@ impl RbspWriter {
         self.writer.byte_align().map_err(map_io_error)
     }
 
+    pub fn align_zero(&mut self) -> WriteResult {
+        while !self.is_aligned() {
+            self.writer.write_bit(false).map_err(map_io_error)?;
+        }
+        Ok(())
+    }
+
     pub fn is_aligned(&self) -> bool {
         self.writer.byte_aligned()
     }

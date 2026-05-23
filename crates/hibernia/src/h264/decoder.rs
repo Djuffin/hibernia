@@ -493,15 +493,8 @@ impl Decoder {
         .expect("test_default config is well-formed")
     }
 
-    /// Compat shim for the adapter-side `H264VideoDecoder` that lives
-    /// for one more phase. Deleted along with the adapter in Phase C.
-    pub(crate) fn with_allocator(allocator: Arc<dyn VideoFrameAllocator>) -> Decoder {
-        Decoder::new(DecoderConfig::new(Codec::H264), allocator, Arc::new(NoopCallbacks))
-            .expect("with_allocator config is well-formed")
-    }
-
     /// The allocator the decoder draws frame memory from.
-    pub fn allocator(&self) -> Arc<dyn VideoFrameAllocator> {
+    pub(crate) fn allocator(&self) -> Arc<dyn VideoFrameAllocator> {
         Arc::clone(&self.allocator)
     }
 

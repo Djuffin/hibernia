@@ -25,6 +25,9 @@ pub mod tables;
 #[cfg(test)]
 pub mod e2e_tests;
 
+#[cfg(test)]
+mod api_tests;
+
 use num_traits::cast::FromPrimitive;
 
 #[derive(

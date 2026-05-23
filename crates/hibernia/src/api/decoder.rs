@@ -65,7 +65,7 @@ pub fn create_decoder(
     callback: Arc<dyn VideoDecoderCallbacks>,
 ) -> Result<Box<dyn VideoDecoder>, DecoderError> {
     match config.codec {
-        Codec::H264 => Ok(Box::new(super::h264_adapter::H264VideoDecoder::new(
+        Codec::H264 => Ok(Box::new(crate::h264::decoder::Decoder::new(
             config, allocator, callback,
         )?)),
         other => Err(DecoderError::FeatureNotSupported(format!(

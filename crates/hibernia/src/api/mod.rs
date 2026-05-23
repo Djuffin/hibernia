@@ -19,6 +19,7 @@ pub mod config;
 pub mod default_allocator;
 pub mod format;
 pub mod frame;
+pub mod h264_adapter;
 pub mod packet;
 
 pub use bitstream::{AnnexBSplitter, AvcBitstreamFormat, AvcSplitter, H264Config};

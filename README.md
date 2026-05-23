@@ -38,48 +38,69 @@ Add `hibernia` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hibernia = "0.1.0"
+hibernia = "0.2.0"
 ```
 
 ### Basic Example
 
+### Basic example
+
 ```rust
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::Arc;
+
+use hibernia::api::{
+    create_decoder, Codec, DecoderConfig, DefaultAllocator, EncodedPacket, FlushMode,
+    StreamFormat, VideoDecoderCallbacks, VideoPlane,
+};
 use hibernia::h264::nal_parser::NalParser;
-use hibernia::h264::decoder::Decoder;
+
+struct PrintCallbacks;
+impl VideoDecoderCallbacks for PrintCallbacks {
+    fn on_picture_available(&self) {}
+    fn on_format_changed(&self, format: StreamFormat) {
+        println!("format: {}x{} (pixel {:?})", format.display_width, format.display_height, format.pixel_format);
+    }
+}
 
 fn main() {
-    let file = File::open("test.264").expect("File not found");
-    let reader = BufReader::new(file);
+    let file = File::open("test.264").expect("file not found");
+    let nal_parser = NalParser::new(BufReader::new(file));
 
-    // Parse NAL units from the byte stream
-    let nal_parser = NalParser::new(reader);
+    let mut decoder = create_decoder(
+        DecoderConfig::new(Codec::H264),
+        Arc::new(DefaultAllocator),
+        Arc::new(PrintCallbacks),
+    )
+    .expect("create_decoder");
 
-    // Initialize the decoder
-    let mut decoder = Decoder::new();
-
+    // Feed per-NAL packets. Each one carries an Annex-B start code so
+    // the decoder's bitstream splitter can find the NAL inside.
     for nal_result in nal_parser {
-        let nal_data = nal_result.expect("Error parsing NAL");
+        let nal = nal_result.expect("nal parse");
+        let mut buf = Vec::with_capacity(nal.len() + 4);
+        buf.extend_from_slice(&[0, 0, 0, 1]);
+        buf.extend_from_slice(&nal);
+        decoder.decode(EncodedPacket::from_vec(buf)).expect("decode");
 
-        // Feed NAL unit to the decoder
-        decoder.decode(&nal_data).expect("Decoding error");
-
-        // Retrieve decoded pictures (if any are ready)
-        while let Some(pic) = decoder.retrieve_picture() {
-            println!("Decoded frame: {}x{}", pic.crop.display_width, pic.crop.display_height);
-            // Process the picture (e.g., save to disk, display, etc.)
+        while let Some(pic) = decoder.get_picture().expect("get_picture") {
+            let y = pic.frame.plane(VideoPlane::Y).expect("luma");
+            println!(
+                "frame {}x{}, luma stride {}",
+                pic.format.display_width, pic.format.display_height, y.stride,
+            );
         }
     }
 
-    // Flush the decoder to get the remaining pictures
-    decoder.flush().expect("Flush error");
-    while let Some(pic) = decoder.retrieve_picture() {
-        println!("Decoded frame: {}x{}", pic.crop.display_width, pic.crop.display_height);
+    // End of stream: drain remaining pictures held in the DPB.
+    decoder.flush(FlushMode::Drain).expect("flush");
+    while let Some(_pic) = decoder.get_picture().expect("get_picture") {
+        // ...
     }
 }
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License -- see the [LICENSE](LICENSE) file for details.

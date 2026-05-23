@@ -9,8 +9,9 @@ use super::tables::mb_type_to_16x16_pred_mode;
 use super::ColorPlane;
 
 use crate::api::frame::VideoFrameAllocator;
-use crate::api::h264_adapter::stream_format_from_sps;
 use crate::api::{DefaultAllocator, StreamFormat};
+
+use super::format::stream_format_from_sps;
 
 use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
 use super::frame::BorderedFrame;

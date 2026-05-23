@@ -3,6 +3,7 @@ pub mod cavlc;
 pub mod deblocking;
 pub mod decoder;
 pub mod dpb;
+pub mod format;
 pub mod frame;
 pub mod inter_pred;
 pub mod intra_pred;

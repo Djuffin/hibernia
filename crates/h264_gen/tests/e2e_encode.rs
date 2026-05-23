@@ -116,7 +116,7 @@ fn test_generate_and_decode_video() {
 
     let cursor = Cursor::new(bitstream);
     let nal_parser = NalParser::new(cursor);
-    let mut decoder = Decoder::new();
+    let mut decoder = Decoder::test_default();
 
     let mut frames_decoded = 0;
 
@@ -180,16 +180,16 @@ fn test_generate_and_decode_video() {
 
     for nal_result in nal_parser {
         let nal_data = nal_result.unwrap();
-        decoder.decode(&nal_data).unwrap();
+        decoder.decode_nal(&nal_data).unwrap();
 
-        while let Some(pic) = decoder.retrieve_picture() {
+        while let Some(pic) = decoder.take_picture() {
             frames_decoded += 1;
             check_frame(&pic.frame, frames_decoded, false);
         }
     }
 
-    decoder.flush().unwrap();
-    while let Some(pic) = decoder.retrieve_picture() {
+    decoder.finalize_and_drain().unwrap();
+    while let Some(pic) = decoder.take_picture() {
         frames_decoded += 1;
         check_frame(&pic.frame, frames_decoded, true);
     }

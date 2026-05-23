@@ -289,7 +289,7 @@ mod tests {
         assert!(!bitstream.is_empty());
 
         // Decode the generated bitstream
-        let mut decoder = hibernia::h264::decoder::Decoder::new();
+        let mut decoder = hibernia::h264::decoder::Decoder::test_default();
         let cursor = std::io::Cursor::new(bitstream);
         let nal_parser = hibernia::h264::nal_parser::NalParser::new(cursor);
 
@@ -326,14 +326,14 @@ mod tests {
 
         for nal_result in nal_parser {
             let nal_data = nal_result.unwrap();
-            decoder.decode(&nal_data).unwrap();
-            while let Some(pic) = decoder.retrieve_picture() {
+            decoder.decode_nal(&nal_data).unwrap();
+            while let Some(pic) = decoder.take_picture() {
                 check_frame(&pic.frame);
             }
         }
 
-        decoder.flush().unwrap();
-        while let Some(pic) = decoder.retrieve_picture() {
+        decoder.finalize_and_drain().unwrap();
+        while let Some(pic) = decoder.take_picture() {
             check_frame(&pic.frame);
         }
 

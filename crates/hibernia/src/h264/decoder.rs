@@ -8,10 +8,29 @@ use super::slice::{
 use super::tables::mb_type_to_16x16_pred_mode;
 use super::ColorPlane;
 
+use crate::api::bitstream::{AnnexBSplitter, AvcBitstreamFormat, AvcSplitter, H264Config};
+use crate::api::callbacks::{DecoderError, VideoDecoderCallbacks};
+use crate::api::config::{Codec, DecoderConfig};
+use crate::api::decoder::{ControlCmd, FlushMode, VideoDecoder};
 use crate::api::frame::VideoFrameAllocator;
+use crate::api::packet::{DecodedPicture, EncodedPacket};
 use crate::api::{DefaultAllocator, StreamFormat};
 
 use super::format::stream_format_from_sps;
+use super::frame::PublishedFrame;
+
+/// Default ceiling on the public output queue. Sized generously so
+/// callers feeding per-NAL packets never trip `QueueFull` while a
+/// reorder-deep GOP drains.
+const DEFAULT_QUEUE_DEPTH: usize = 64;
+
+/// Noop callbacks for internal test fixtures.
+struct NoopCallbacks;
+
+impl VideoDecoderCallbacks for NoopCallbacks {
+    fn on_picture_available(&self) {}
+    fn on_format_changed(&self, _format: StreamFormat) {}
+}
 
 use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
 use super::frame::BorderedFrame;
@@ -348,19 +367,19 @@ struct DequantCacheKey {
 ///     0x6E, 0x18, 0xFA, 0x14, 0x43, 0x03, 0x9F, 0xA8, 0xFC
 /// ];
 ///
-/// let mut decoder = Decoder::new();
+/// let mut decoder = Decoder::test_default();
 ///
 /// // 1. Decode Parameter Sets first
-/// decoder.decode(&sps).expect("SPS should be valid");
-/// decoder.decode(&pps).expect("PPS should be valid");
+/// decoder.decode_nal(&sps).expect("SPS should be valid");
+/// decoder.decode_nal(&pps).expect("PPS should be valid");
 ///
 /// // 2. Decode Slice Data
 /// // Since we provided a truncated slice, we use .ok() to ignore potential EOF errors
 /// // for this demonstration. In a real scenario, you'd provide the full NAL.
-/// let _ = decoder.decode(&slice);
+/// let _ = decoder.decode_nal(&slice);
 ///
 /// // 3. Retrieve decoded frames (if any are ready)
-/// if let Some(pic) = decoder.retrieve_picture() {
+/// if let Some(pic) = decoder.take_picture() {
 ///     println!("Decoded {}x{} frame", pic.crop.display_width, pic.crop.display_height);
 /// }
 /// ```
@@ -384,6 +403,23 @@ pub struct Decoder {
     // starts. Consumed by the slice handler when it allocates the
     // CurrentPicture, after which it's reset to None.
     pending_opaque: Option<Box<dyn std::any::Any + Send>>,
+    // Event sink for picture-available and format-changed notifications.
+    callbacks: Arc<dyn VideoDecoderCallbacks>,
+    // Packet framing selected at construction (Annex-B or AVC).
+    bitstream_format: AvcBitstreamFormat,
+    // For AVC framing: NAL length-prefix width in bytes (typically 4).
+    avc_length_size: usize,
+    // Output queue exposed via `VideoDecoder::get_picture`. Pictures
+    // are converted to `DecodedPicture` here, separately from the
+    // per-NAL internal `output_pictures` queue.
+    out_queue: VecDeque<DecodedPicture>,
+    // Last `StreamFormat` announced to the caller through
+    // `on_format_changed`. Compared against each emitted picture's
+    // format to detect changes.
+    last_format: Option<StreamFormat>,
+    // Ceiling on `out_queue.len()`; `decode` returns `QueueFull` once
+    // crossed so callers know to drain.
+    max_queue_depth: usize,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -397,19 +433,32 @@ impl std::fmt::Debug for Decoder {
     }
 }
 
-impl Default for Decoder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Decoder {
-    pub fn new() -> Decoder {
-        Decoder::with_allocator(Arc::new(DefaultAllocator))
-    }
+    /// Construct a decoder configured per the public `VideoDecoder`
+    /// API. `config.codec` must be `Codec::H264`; any other value
+    /// returns `InitializationFailed`. Custom params, if present,
+    /// must downcast to `H264Config`.
+    pub fn new(
+        config: DecoderConfig,
+        allocator: Arc<dyn VideoFrameAllocator>,
+        callbacks: Arc<dyn VideoDecoderCallbacks>,
+    ) -> Result<Self, DecoderError> {
+        if config.codec != Codec::H264 {
+            return Err(DecoderError::InitializationFailed(format!(
+                "Decoder is H.264-only; got {:?}",
+                config.codec
+            )));
+        }
+        let (bitstream_format, avc_length_size) = if let Some(params) = config.custom_params {
+            let h264_cfg = params.downcast::<H264Config>().map_err(|_| {
+                DecoderError::InitializationFailed("custom_params is not H264Config".into())
+            })?;
+            (h264_cfg.bitstream_format, 4)
+        } else {
+            (AvcBitstreamFormat::AnnexB, 4)
+        };
 
-    pub fn with_allocator(allocator: Arc<dyn VideoFrameAllocator>) -> Decoder {
-        Decoder {
+        Ok(Decoder {
             context: DecoderContext::default(),
             dpb: DecodedPictureBuffer::new(),
             output_pictures: VecDeque::new(),
@@ -421,7 +470,34 @@ impl Decoder {
             dequant_cache: None,
             allocator,
             pending_opaque: None,
-        }
+            callbacks,
+            bitstream_format,
+            avc_length_size,
+            out_queue: VecDeque::new(),
+            last_format: None,
+            max_queue_depth: DEFAULT_QUEUE_DEPTH,
+        })
+    }
+
+    /// Internal-use helper: a Decoder over `DefaultAllocator` with
+    /// noop callbacks, AnnexB packaging. Used by benches and the
+    /// existing per-NAL test suite that predates the public API.
+    /// Will become `pub(crate)` once those callers move off the
+    /// legacy methods.
+    pub fn test_default() -> Decoder {
+        Decoder::new(
+            DecoderConfig::new(Codec::H264),
+            Arc::new(DefaultAllocator),
+            Arc::new(NoopCallbacks),
+        )
+        .expect("test_default config is well-formed")
+    }
+
+    /// Compat shim for the adapter-side `H264VideoDecoder` that lives
+    /// for one more phase. Deleted along with the adapter in Phase C.
+    pub(crate) fn with_allocator(allocator: Arc<dyn VideoFrameAllocator>) -> Decoder {
+        Decoder::new(DecoderConfig::new(Codec::H264), allocator, Arc::new(NoopCallbacks))
+            .expect("with_allocator config is well-formed")
     }
 
     /// The allocator the decoder draws frame memory from.
@@ -432,7 +508,7 @@ impl Decoder {
     /// Attach `opaque` to the next primary coded picture that starts.
     /// If a picture is already in progress, the opaque attaches to the
     /// in-progress picture instead.
-    pub fn set_pending_opaque(&mut self, opaque: Box<dyn std::any::Any + Send>) {
+    pub(crate) fn set_pending_opaque(&mut self, opaque: Box<dyn std::any::Any + Send>) {
         if let Some(cur) = self.current_picture.as_mut() {
             if cur.dpb_pic.picture.opaque.is_none() {
                 cur.dpb_pic.picture.opaque = Some(opaque);
@@ -442,7 +518,7 @@ impl Decoder {
         self.pending_opaque = Some(opaque);
     }
 
-    pub fn decode(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
+    pub fn decode_nal(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
         use nal::NalUnitType;
 
         let rbsp_data = parser::remove_emulation_if_needed(nal_data);
@@ -853,18 +929,19 @@ impl Decoder {
         Ok(())
     }
 
-    /// Retrieves the next available picture from the decoder's output queue.
-    /// Returns `Some(Picture)` if a picture is available, or `None` if the queue is empty.
-    pub fn retrieve_picture(&mut self) -> Option<Picture> {
+    /// Take the next picture from the inner H.264 output queue.
+    /// External callers should use [`VideoDecoder::get_picture`];
+    /// this stays `pub` for one more phase so cross-crate test
+    /// fixtures can drive it during the migration.
+    pub fn take_picture(&mut self) -> Option<Picture> {
         self.output_pictures.pop_front()
     }
 
-    /// Flushes the decoder, forcing any remaining frames in the DPB to be output.
-    /// This is necessary because some frames may be held in the DPB (Decoded Picture Buffer)
-    /// for reference or reordering (e.g., B-frames) and won't be output immediately.
-    /// This should be called at the end of the stream.
-    /// Call `retrieve_picture` repeatedly after flushing until it returns `None`.
-    pub fn flush(&mut self) -> Result<(), DecodingError> {
+    /// Drain the DPB into the inner output queue (end-of-stream
+    /// semantics). External callers should use
+    /// [`VideoDecoder::flush`] with `FlushMode::Drain`; kept `pub`
+    /// for one more phase so cross-crate test fixtures keep working.
+    pub fn finalize_and_drain(&mut self) -> Result<(), DecodingError> {
         self.finalize_pending_picture()?;
         let pictures = self.dpb.flush();
         self.output_pictures.extend(pictures.into_iter().map(|p| p.picture));
@@ -1465,6 +1542,106 @@ impl Decoder {
             mb_slice_id: std::mem::take(&mut current.mb_slice_id),
             slice_ref_pocs: std::mem::take(&mut current.slice_ref_pocs),
         })
+    }
+
+    /// Move every picture from the internal per-NAL queue into the
+    /// public `out_queue` as `DecodedPicture`, firing
+    /// `on_format_changed` when the format moves and
+    /// `on_picture_available` once at the end if anything landed.
+    fn drain_to_out_queue(&mut self) -> Result<(), DecoderError> {
+        let mut emitted = false;
+        while let Some(pic) = self.output_pictures.pop_front() {
+            if self.out_queue.len() >= self.max_queue_depth {
+                // Put the picture back at the head so the next
+                // `decode` / `get_picture` cycle picks it up first.
+                self.output_pictures.push_front(pic);
+                if emitted {
+                    self.callbacks.on_picture_available();
+                }
+                return Err(DecoderError::QueueFull);
+            }
+            if self.last_format.as_ref() != Some(&pic.format) {
+                self.callbacks.on_format_changed(pic.format.clone());
+                self.last_format = Some(pic.format.clone());
+            }
+            self.out_queue.push_back(picture_to_decoded(pic));
+            emitted = true;
+        }
+        if emitted {
+            self.callbacks.on_picture_available();
+        }
+        Ok(())
+    }
+}
+
+fn picture_to_decoded(pic: Picture) -> DecodedPicture {
+    let format = pic.format.clone();
+    let opaque = pic.opaque;
+    let frame: Arc<dyn crate::api::VideoFrame> = Arc::new(PublishedFrame::new(pic.frame));
+    DecodedPicture { frame, format, opaque }
+}
+
+impl VideoDecoder for Decoder {
+    fn decode(&mut self, packet: EncodedPacket) -> Result<(), DecoderError> {
+        let EncodedPacket { data, opaque } = packet;
+        if let Some(op) = opaque {
+            self.set_pending_opaque(op);
+        }
+        let bytes: &[u8] = (*data).as_ref();
+        match self.bitstream_format {
+            AvcBitstreamFormat::AnnexB => {
+                for nal in AnnexBSplitter::new(bytes) {
+                    if nal.is_empty() {
+                        continue;
+                    }
+                    self.decode_nal(nal)?;
+                }
+            }
+            AvcBitstreamFormat::Avc => {
+                for nal in AvcSplitter::new(bytes, self.avc_length_size) {
+                    let nal = nal.map_err(|e| DecoderError::BitstreamCorrupted(e.into()))?;
+                    if nal.is_empty() {
+                        continue;
+                    }
+                    self.decode_nal(nal)?;
+                }
+            }
+        }
+        self.drain_to_out_queue()
+    }
+
+    fn get_picture(&mut self) -> Result<Option<DecodedPicture>, DecoderError> {
+        Ok(self.out_queue.pop_front())
+    }
+
+    fn flush(&mut self, mode: FlushMode) -> Result<(), DecoderError> {
+        match mode {
+            FlushMode::Drain => {
+                self.finalize_and_drain()?;
+                self.drain_to_out_queue()?;
+            }
+            FlushMode::Discard => {
+                // Wipe per-stream state in place. Pools (residual_pool,
+                // mb_pool, interpolation_buffer) and the allocator
+                // stay; callbacks and packaging config stay.
+                self.context = DecoderContext::default();
+                self.dpb = DecodedPictureBuffer::new();
+                self.output_pictures.clear();
+                self.out_queue.clear();
+                self.poc_state = PocState::new();
+                self.current_picture = None;
+                self.dequant_cache = None;
+                self.pending_opaque = None;
+                self.last_format = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn control(&mut self, _cmd: &mut ControlCmd) -> Result<(), DecoderError> {
+        Err(DecoderError::FeatureNotSupported(
+            "H.264 Decoder defines no control commands".into(),
+        ))
     }
 }
 

@@ -14,7 +14,7 @@ fn workspace_root() -> &'static Path {
 fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
     let cursor = Cursor::new(encoded_video_buffer);
     let nal_parser = NalParser::new(cursor);
-    let mut decoder = h264::decoder::Decoder::new();
+    let mut decoder = h264::decoder::Decoder::test_default();
 
     let mut decoding_output = Vec::<u8>::new();
     {
@@ -83,17 +83,17 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
         for nal_result in nal_parser {
             let nal_data = nal_result.map_err(|e| format!("NAL error: {e:?}"))?;
             decoder
-                .decode(&nal_data)
+                .decode_nal(&nal_data)
                 .map_err(|e| format!("Decoding error at NAL #{nal_idx}: {e:?}"))?;
             nal_idx += 1;
 
-            while let Some(pic) = decoder.retrieve_picture() {
+            while let Some(pic) = decoder.take_picture() {
                 process_frame(pic);
             }
         }
 
-        decoder.flush().map_err(|e| format!("Flush error: {e:?}"))?;
-        while let Some(pic) = decoder.retrieve_picture() {
+        decoder.finalize_and_drain().map_err(|e| format!("Flush error: {e:?}"))?;
+        while let Some(pic) = decoder.take_picture() {
             process_frame(pic);
         }
     }

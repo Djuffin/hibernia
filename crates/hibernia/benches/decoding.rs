@@ -85,17 +85,17 @@ fn bench_decoder(b: &mut criterion::Bencher, encoded_video_buffer: &[u8]) {
     b.iter(|| {
         let cursor = Cursor::new(black_box(encoded_video_buffer));
         let nal_parser = NalParser::new(cursor);
-        let mut decoder = Decoder::new();
+        let mut decoder = Decoder::test_default();
 
         for nal_result in nal_parser {
             let nal = nal_result.unwrap();
-            decoder.decode(&nal).unwrap();
-            while let Some(_frame) = decoder.retrieve_picture() {
+            decoder.decode_nal(&nal).unwrap();
+            while let Some(_frame) = decoder.take_picture() {
                 // consume frame
             }
         }
-        decoder.flush().unwrap();
-        while let Some(_frame) = decoder.retrieve_picture() {
+        decoder.finalize_and_drain().unwrap();
+        while let Some(_frame) = decoder.take_picture() {
             // consume frame
         }
     });

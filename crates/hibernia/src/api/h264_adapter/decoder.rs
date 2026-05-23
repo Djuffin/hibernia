@@ -63,7 +63,7 @@ impl H264VideoDecoder {
     /// observed one, and `on_picture_available` if anything landed.
     fn drain_inner(&mut self) -> Result<(), DecoderError> {
         let mut emitted = false;
-        while let Some(pic) = self.inner.retrieve_picture() {
+        while let Some(pic) = self.inner.take_picture() {
             if self.out_queue.len() >= self.max_queue_depth {
                 // Put it back at the head and signal full. The inner
                 // decoder no longer holds it, so we keep it in the queue
@@ -110,7 +110,7 @@ impl VideoDecoder for H264VideoDecoder {
                     if nal.is_empty() {
                         continue;
                     }
-                    self.inner.decode(nal)?;
+                    self.inner.decode_nal(nal)?;
                 }
             }
             AvcBitstreamFormat::Avc => {
@@ -119,7 +119,7 @@ impl VideoDecoder for H264VideoDecoder {
                     if nal.is_empty() {
                         continue;
                     }
-                    self.inner.decode(nal)?;
+                    self.inner.decode_nal(nal)?;
                 }
             }
         }
@@ -133,7 +133,7 @@ impl VideoDecoder for H264VideoDecoder {
     fn flush(&mut self, mode: FlushMode) -> Result<(), DecoderError> {
         match mode {
             FlushMode::Drain => {
-                self.inner.flush()?;
+                self.inner.finalize_and_drain()?;
                 self.drain_inner()?;
             }
             FlushMode::Discard => {

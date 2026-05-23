@@ -36,7 +36,7 @@ use smallvec::SmallVec;
 
 pub type VideoFrame = BorderedFrame;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Picture {
     /// Decoded sample data. Wrapped in `Arc` so that bumping a reference
     /// picture for output (`DPB::bump_one`) is a refcount bump rather than
@@ -51,6 +51,9 @@ pub struct Picture {
     /// is shared with each B-slice that picks this picture as colocated.
     pub motion_field: Option<Arc<MotionFieldStorage>>,
     pub crop: sps::CropDimensions,
+    /// Caller-supplied metadata attached when the picture's first slice
+    /// arrived; emitted alongside the picture when it leaves the DPB.
+    pub opaque: Option<Box<dyn std::any::Any + Send>>,
 }
 
 /// Compact bit-packed boolean vector.
@@ -159,7 +162,7 @@ pub struct SliceDeblockParams {
 /// `CurrentPicture`. When any of those fields change, the existing
 /// `CurrentPicture` is finalized (deblocked, motion field built, stored in DPB,
 /// emitted for output) and a fresh one is started.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct CurrentPicture {
     // The DPB-bound picture being assembled. Slice decoding writes pixels
     // directly into `dpb_pic.picture.frame`.
@@ -371,6 +374,10 @@ pub struct Decoder {
     dequant_cache: Option<(DequantCacheKey, DequantTables)>,
     // Source of raw frame memory for newly allocated pictures.
     allocator: Arc<dyn VideoFrameAllocator>,
+    // Opaque metadata attached to the next primary coded picture that
+    // starts. Consumed by the slice handler when it allocates the
+    // CurrentPicture, after which it's reset to None.
+    pending_opaque: Option<Box<dyn std::any::Any + Send>>,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -407,7 +414,21 @@ impl Decoder {
             mb_pool: macroblock::MacroblockPool::default(),
             dequant_cache: None,
             allocator,
+            pending_opaque: None,
         }
+    }
+
+    /// Attach `opaque` to the next primary coded picture that starts.
+    /// If a picture is already in progress, the opaque attaches to the
+    /// in-progress picture instead.
+    pub fn set_pending_opaque(&mut self, opaque: Box<dyn std::any::Any + Send>) {
+        if let Some(cur) = self.current_picture.as_mut() {
+            if cur.dpb_pic.picture.opaque.is_none() {
+                cur.dpb_pic.picture.opaque = Some(opaque);
+                return;
+            }
+        }
+        self.pending_opaque = Some(opaque);
     }
 
     pub fn decode(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
@@ -452,7 +473,9 @@ impl Decoder {
                     .unwrap_or(true);
                 if starts_new_picture {
                     self.finalize_pending_picture()?;
-                    self.current_picture = Some(self.start_new_picture(&slice, &nal)?);
+                    let mut new_picture = self.start_new_picture(&slice, &nal)?;
+                    new_picture.dpb_pic.picture.opaque = self.pending_opaque.take();
+                    self.current_picture = Some(new_picture);
                 }
 
                 // Decoding methods need `&mut self`, which conflicts with a
@@ -571,6 +594,7 @@ impl Decoder {
             pic_order_cnt,
             motion_field: None,
             crop: crop_dims,
+            opaque: None,
         };
         let dpb_pic = DpbPicture {
             picture: pic,

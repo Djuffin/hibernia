@@ -1,3 +1,5 @@
+use crate::h264::decoder::DecodingError;
+
 use super::format::StreamFormat;
 use super::frame::AllocError;
 
@@ -49,3 +51,20 @@ impl std::fmt::Display for DecoderError {
 }
 
 impl std::error::Error for DecoderError {}
+
+impl From<AllocError> for DecoderError {
+    fn from(e: AllocError) -> Self {
+        DecoderError::Alloc(e)
+    }
+}
+
+impl From<DecodingError> for DecoderError {
+    fn from(e: DecodingError) -> Self {
+        match e {
+            DecodingError::MisformedData(s) => DecoderError::BitstreamCorrupted(s),
+            DecodingError::OutOfRange(s) => DecoderError::BitstreamCorrupted(s),
+            DecodingError::ReferenceNotFound(s) => DecoderError::BitstreamCorrupted(s),
+            DecodingError::FeatureNotSupported(s) => DecoderError::FeatureNotSupported(s),
+        }
+    }
+}

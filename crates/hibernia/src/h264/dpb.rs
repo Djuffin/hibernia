@@ -40,7 +40,7 @@ pub enum DpbPictureStructure {
     BottomField,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct DpbPicture {
     pub picture: Picture,
     pub marking: DpbMarking,
@@ -117,14 +117,19 @@ impl DecodedPictureBuffer {
             // Reference: share frame via `Arc`, mark not-needed-for-output
             // (doesn't free DPB slot). Both the output copy and the DPB-resident
             // copy are read-only from this point on, so sharing is sound.
+            // The opaque is moved (not copied) into the bumped picture: a
+            // reference picture is bumped at most once, so the DPB-resident
+            // copy never needs it again.
+            let src = &mut self.pictures[idx];
             let pic = Picture {
-                frame: Arc::clone(&self.pictures[idx].picture.frame),
-                frame_num: self.pictures[idx].picture.frame_num,
-                pic_order_cnt: self.pictures[idx].picture.pic_order_cnt,
+                frame: Arc::clone(&src.picture.frame),
+                frame_num: src.picture.frame_num,
+                pic_order_cnt: src.picture.pic_order_cnt,
                 motion_field: None,
-                crop: self.pictures[idx].picture.crop.clone(),
+                crop: src.picture.crop.clone(),
+                opaque: src.picture.opaque.take(),
             };
-            self.pictures[idx].needed_for_output = false;
+            src.needed_for_output = false;
             Some(pic)
         }
     }
@@ -411,6 +416,7 @@ mod tests {
                 crop_left: 0,
                 crop_top: 0,
             },
+            opaque: None,
         }
     }
 

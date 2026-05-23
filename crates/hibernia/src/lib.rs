@@ -12,6 +12,7 @@
 #[macro_use]
 extern crate num_derive;
 
+pub mod api;
 pub mod diag;
 pub mod h264;
 

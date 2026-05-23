@@ -5,7 +5,12 @@
 mod support;
 
 mod allocator;
+mod callbacks;
+mod construction;
+mod control;
 mod data_path;
+mod errors;
+mod flush;
 mod format;
 mod frame;
 mod framing;

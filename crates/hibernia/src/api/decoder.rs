@@ -1,6 +1,9 @@
 use std::any::Any;
+use std::sync::Arc;
 
-use super::callbacks::DecoderError;
+use super::callbacks::{DecoderError, VideoDecoderCallbacks};
+use super::config::{Codec, DecoderConfig};
+use super::frame::VideoFrameAllocator;
 use super::packet::{DecodedPicture, EncodedPacket};
 
 /// Modes for flushing the decoder pipeline.
@@ -51,4 +54,22 @@ pub trait VideoDecoder: Send {
     /// `DecoderError::FeatureNotSupported`. Outputs are written back
     /// through `&mut` fields on the payload.
     fn control(&mut self, cmd: &mut ControlCmd) -> Result<(), DecoderError>;
+}
+
+/// The primary entry point: instantiate a software video decoder for
+/// the codec requested in `config`. Concrete implementations live in
+/// codec-specific submodules; this dispatches on `config.codec`.
+pub fn create_decoder(
+    config: DecoderConfig,
+    allocator: Arc<dyn VideoFrameAllocator>,
+    callback: Arc<dyn VideoDecoderCallbacks>,
+) -> Result<Box<dyn VideoDecoder>, DecoderError> {
+    match config.codec {
+        Codec::H264 => Ok(Box::new(super::h264_adapter::H264VideoDecoder::new(
+            config, allocator, callback,
+        )?)),
+        other => Err(DecoderError::FeatureNotSupported(format!(
+            "codec {other:?} is not built in"
+        ))),
+    }
 }

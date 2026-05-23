@@ -25,7 +25,7 @@ pub mod packet;
 
 pub use bitstream::{AnnexBSplitter, AvcBitstreamFormat, AvcSplitter, H264Config};
 pub use callbacks::{DecoderError, VideoDecoderCallbacks};
-pub use decoder::{ControlCmd, FlushMode, VideoDecoder};
+pub use decoder::{create_decoder, ControlCmd, FlushMode, VideoDecoder};
 pub use default_allocator::DefaultAllocator;
 pub use color::{
     ColorPrimaries, ColorRange, ColorSpace, MatrixCoefficients, PixelFormat,

@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use v_frame::plane::{Plane, PlaneOffset};
+use super::plane::{Plane, PlaneMut, PlaneOffset};
 
 use super::macroblock::{
     get_4x4chroma_block_location, get_4x4luma_block_location, get_4x4luma_block_neighbor,
@@ -25,7 +25,7 @@ struct Surroundings4x4 {
 }
 
 impl Surroundings4x4 {
-    pub fn load(&mut self, plane: &Plane<u8>, blk_loc: Point, substitute_right: bool) {
+    pub fn load(&mut self, plane: Plane<'_>, blk_loc: Point, substitute_right: bool) {
         let mut offset = point_to_plane_offset(blk_loc);
         offset.x -= 1;
         offset.y -= 1;
@@ -79,7 +79,7 @@ pub fn render_luma_4x4_intra_prediction(
     mb_addr: MbAddr,
     mb: &IMb,
     mb_loc: Point,
-    target: &mut Plane<u8>,
+    target: &mut PlaneMut<'_>,
     residuals: &[Block4x4],
 ) {
     let mut ctx = Surroundings4x4::default();
@@ -93,7 +93,7 @@ pub fn render_luma_4x4_intra_prediction(
             5 => !has_c_mb_neighbor,
             _ => false,
         };
-        ctx.load(target, blk_loc, substitute_right);
+        ctx.load(target.as_ref(), blk_loc, substitute_right);
         let mut target_slice = target.mut_slice(ctx.offset);
 
         let mode = mb.rem_intra4x4_pred_mode[blk_idx as usize];
@@ -307,7 +307,7 @@ impl Surroundings8x8 {
     // p[7, -1]).
     pub fn load(
         &mut self,
-        plane: &Plane<u8>,
+        plane: Plane<'_>,
         blk_loc: Point,
         has_top: bool,
         has_left: bool,
@@ -410,7 +410,7 @@ pub fn render_luma_8x8_intra_prediction(
     mb_addr: MbAddr,
     mb: &IMb,
     mb_loc: Point,
-    target: &mut Plane<u8>,
+    target: &mut PlaneMut<'_>,
     residuals: &[Block4x4],
 ) {
     let has_a = slice.has_mb_neighbor(mb_addr, MbNeighborName::A);
@@ -436,7 +436,7 @@ pub fn render_luma_8x8_intra_prediction(
             3 => (true, true, true, false),
             _ => unreachable!(),
         };
-        ctx.load(target, blk_loc, has_top, has_left, has_corner, has_top_right);
+        ctx.load(target.as_ref(), blk_loc, has_top, has_left, has_corner, has_top_right);
 
         let mode = mb.rem_intra8x8_pred_mode[blk_idx as usize];
         let mut pred = [[0u8; 8]; 8];
@@ -660,7 +660,7 @@ pub fn render_luma_16x16_intra_prediction(
     slice: &Slice,
     mb_addr: MbAddr,
     loc: Point,
-    target: &mut Plane<u8>,
+    target: &mut PlaneMut<'_>,
     mode: Intra_16x16_SamplePredMode,
     residuals: &[Block4x4],
 ) {
@@ -781,7 +781,7 @@ pub fn render_chroma_intra_prediction(
     slice: &Slice,
     mb_addr: MbAddr,
     loc: Point,
-    target: &mut Plane<u8>,
+    target: &mut PlaneMut<'_>,
     mode: Intra_Chroma_Pred_Mode,
     residuals: &[Block4x4],
 ) {

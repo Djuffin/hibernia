@@ -74,12 +74,16 @@ fn main() {
             info!("Writing frame #{} {} x {} to y4m", frame_count, display_width, display_height);
             frame_count += 1;
 
-            let mut planes = Vec::<Vec<u8>>::new();
-            if planes.len() < frame.planes.len() {
-                planes.resize_with(frame.planes.len(), Vec::new);
-            }
-
-            for (i, plane) in frame.planes.iter().enumerate() {
+            let mut planes: [Vec<u8>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+            for (i, color_plane) in [
+                hibernia::h264::ColorPlane::Y,
+                hibernia::h264::ColorPlane::Cb,
+                hibernia::h264::ColorPlane::Cr,
+            ]
+            .iter()
+            .enumerate()
+            {
+                let plane = frame.plane(*color_plane);
                 let (cw, ch, cx, cy) = if i == 0 {
                     (display_width, display_height, crop_left, crop_top)
                 } else {

@@ -1,5 +1,6 @@
 use hibernia::h264::decoder::{Decoder, Picture};
 use hibernia::h264::nal_parser::NalParser;
+use hibernia::h264::ColorPlane;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
@@ -11,47 +12,47 @@ pub struct WasmFrame {
 #[wasm_bindgen]
 impl WasmFrame {
     pub fn y_ptr(&self) -> *const u8 {
-        self.pic.frame.planes[0].data_origin().as_ptr()
+        self.pic.frame.plane(ColorPlane::Y).data_origin().as_ptr()
     }
 
     pub fn y_len(&self) -> usize {
-        self.pic.frame.planes[0].data_origin().len()
+        self.pic.frame.plane(ColorPlane::Y).data_origin().len()
     }
 
     pub fn y_stride(&self) -> usize {
-        self.pic.frame.planes[0].cfg.stride
+        self.pic.frame.plane(ColorPlane::Y).cfg.stride
     }
 
     pub fn u_ptr(&self) -> *const u8 {
-        self.pic.frame.planes[1].data_origin().as_ptr()
+        self.pic.frame.plane(ColorPlane::Cb).data_origin().as_ptr()
     }
 
     pub fn u_len(&self) -> usize {
-        self.pic.frame.planes[1].data_origin().len()
+        self.pic.frame.plane(ColorPlane::Cb).data_origin().len()
     }
 
     pub fn u_stride(&self) -> usize {
-        self.pic.frame.planes[1].cfg.stride
+        self.pic.frame.plane(ColorPlane::Cb).cfg.stride
     }
 
     pub fn v_ptr(&self) -> *const u8 {
-        self.pic.frame.planes[2].data_origin().as_ptr()
+        self.pic.frame.plane(ColorPlane::Cr).data_origin().as_ptr()
     }
 
     pub fn v_len(&self) -> usize {
-        self.pic.frame.planes[2].data_origin().len()
+        self.pic.frame.plane(ColorPlane::Cr).data_origin().len()
     }
 
     pub fn v_stride(&self) -> usize {
-        self.pic.frame.planes[2].cfg.stride
+        self.pic.frame.plane(ColorPlane::Cr).cfg.stride
     }
 
     pub fn width(&self) -> usize {
-        self.pic.frame.planes[0].cfg.width
+        self.pic.frame.plane(ColorPlane::Y).cfg.width
     }
 
     pub fn height(&self) -> usize {
-        self.pic.frame.planes[0].cfg.height
+        self.pic.frame.plane(ColorPlane::Y).cfg.height
     }
 
     pub fn display_width(&self) -> usize {

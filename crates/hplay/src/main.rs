@@ -259,11 +259,14 @@ fn decoder_loop(path: &Path, fps: f64, tx: mpsc::SyncSender<DecoderEvent>) {
 }
 
 fn render_frame(pic: &Picture) -> FrameImage {
+    use hibernia::h264::ColorPlane;
+
     let disp_w = pic.crop.display_width;
     let disp_h = pic.crop.display_height;
-    let planes = &pic.frame.planes;
-    let y_plane = &planes[0];
-    let has_chroma = planes.len() >= 3;
+
+    let y_plane = pic.frame.plane(ColorPlane::Y);
+    let u_plane = pic.frame.plane(ColorPlane::Cb);
+    let v_plane = pic.frame.plane(ColorPlane::Cr);
 
     let mut rgba = vec![0u8; disp_w * disp_h * 4];
 
@@ -272,45 +275,27 @@ fn render_frame(pic: &Picture) -> FrameImage {
     let y_stride = y_plane.cfg.stride;
     let y_xo = y_plane.cfg.xorigin + crop_x;
     let y_yo = y_plane.cfg.yorigin + crop_y;
-    let y_data: &[u8] = &y_plane.data;
+    let y_data = y_plane.data;
 
-    let (u_cfg, v_cfg, u_data, v_data, x_dec, y_dec) = if has_chroma {
-        let u = &planes[1];
-        let v = &planes[2];
-        (
-            Some(&u.cfg),
-            Some(&v.cfg),
-            Some(&u.data[..]),
-            Some(&v.data[..]),
-            u.cfg.xdec,
-            u.cfg.ydec,
-        )
-    } else {
-        (None, None, None, None, 0, 0)
-    };
+    // 4:2:0 chroma subsampling is the only format the decoder produces.
+    let x_dec = 1usize;
+    let y_dec = 1usize;
+    let u_cfg = u_plane.cfg;
+    let v_cfg = v_plane.cfg;
+    let u_data = u_plane.data;
+    let v_data = v_plane.data;
 
     for sy in 0..disp_h {
         let y_row = (y_yo + sy) * y_stride + y_xo;
-        let (u_row, v_row) = match (u_cfg, v_cfg) {
-            (Some(uc), Some(vc)) => {
-                let cy_abs = (sy + crop_y) >> y_dec;
-                (
-                    (uc.yorigin + cy_abs) * uc.stride + uc.xorigin,
-                    (vc.yorigin + cy_abs) * vc.stride + vc.xorigin,
-                )
-            }
-            _ => (0, 0),
-        };
+        let cy_abs = (sy + crop_y) >> y_dec;
+        let u_row = (u_cfg.yorigin + cy_abs) * u_cfg.stride + u_cfg.xorigin;
+        let v_row = (v_cfg.yorigin + cy_abs) * v_cfg.stride + v_cfg.xorigin;
         let out_row = sy * disp_w * 4;
         for sx in 0..disp_w {
             let y_val = y_data[y_row + sx];
-            let (u_val, v_val) = match (u_data, v_data) {
-                (Some(ud), Some(vd)) => {
-                    let cx_abs = (sx + crop_x) >> x_dec;
-                    (ud[u_row + cx_abs], vd[v_row + cx_abs])
-                }
-                _ => (128, 128),
-            };
+            let cx_abs = (sx + crop_x) >> x_dec;
+            let u_val = u_data[u_row + cx_abs];
+            let v_val = v_data[v_row + cx_abs];
             let (r, g, b) = yuv_to_rgb(y_val, u_val, v_val);
             let i = out_row + sx * 4;
             rgba[i] = r;

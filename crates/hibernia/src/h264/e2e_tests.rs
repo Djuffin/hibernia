@@ -39,12 +39,14 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
                 }
             }
 
-            let mut planes = Vec::<Vec<u8>>::new();
-            if planes.len() < frame.planes.len() {
-                planes.resize_with(frame.planes.len(), Vec::new);
-            }
+            let mut planes: [Vec<u8>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
-            for (i, plane) in frame.planes.iter().enumerate() {
+            for (i, color_plane) in
+                [crate::h264::ColorPlane::Y, crate::h264::ColorPlane::Cb, crate::h264::ColorPlane::Cr]
+                    .iter()
+                    .enumerate()
+            {
+                let plane = frame.plane(*color_plane);
                 let (cw, ch, cx, cy) = if i == 0 {
                     (display_width, display_height, crop_left, crop_top)
                 } else {
@@ -58,8 +60,9 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
                 }
 
                 for row in 0..ch {
-                    let src_offset =
-                        (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
+                    let src_offset = (plane.cfg.yorigin + cy + row) * plane.cfg.stride
+                        + plane.cfg.xorigin
+                        + cx;
                     let dst_offset = row * cw;
                     data[dst_offset..dst_offset + cw]
                         .copy_from_slice(&plane.data[src_offset..src_offset + cw]);

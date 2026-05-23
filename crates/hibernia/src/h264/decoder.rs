@@ -8,7 +8,11 @@ use super::slice::{
 use super::tables::mb_type_to_16x16_pred_mode;
 use super::ColorPlane;
 
+use crate::api::frame::VideoFrameAllocator;
+use crate::api::DefaultAllocator;
+
 use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
+use super::frame::BorderedFrame;
 use super::inter_pred::{
     build_implicit_weight_table, render_chroma_inter_prediction, render_chroma_inter_prediction_b,
     render_luma_inter_prediction, render_luma_inter_prediction_b, InterpolationBuffer,
@@ -29,9 +33,8 @@ use super::scaling_list::{
 use super::{deblocking, nal, parser, pps, slice, sps, tables, ChromaFormat, Point};
 use log::{info, trace};
 use smallvec::SmallVec;
-use v_frame::frame;
 
-pub type VideoFrame = frame::Frame<u8>;
+pub type VideoFrame = BorderedFrame;
 
 #[derive(Clone, Debug)]
 pub struct Picture {
@@ -366,6 +369,8 @@ pub struct Decoder {
     mb_pool: macroblock::MacroblockPool,
     // Reused across slices when the matrix-defining inputs are unchanged.
     dequant_cache: Option<(DequantCacheKey, DequantTables)>,
+    // Source of raw frame memory for newly allocated pictures.
+    allocator: Arc<dyn VideoFrameAllocator>,
 }
 
 impl std::fmt::Debug for Decoder {
@@ -387,6 +392,10 @@ impl Default for Decoder {
 
 impl Decoder {
     pub fn new() -> Decoder {
+        Decoder::with_allocator(Arc::new(DefaultAllocator))
+    }
+
+    pub fn with_allocator(allocator: Arc<dyn VideoFrameAllocator>) -> Decoder {
         Decoder {
             context: DecoderContext::default(),
             dpb: DecodedPictureBuffer::new(),
@@ -397,6 +406,7 @@ impl Decoder {
             residual_pool: super::residual::ResidualPool::default(),
             mb_pool: macroblock::MacroblockPool::default(),
             dequant_cache: None,
+            allocator,
         }
     }
 
@@ -539,12 +549,10 @@ impl Decoder {
         let sps = &slice.sps;
         let header = &slice.header;
 
-        let frame = Arc::new(VideoFrame::new_with_padding(
-            sps.pic_width(),
-            sps.pic_height(),
-            v_frame::pixel::ChromaSampling::Cs420,
-            16,
-        ));
+        let frame = Arc::new(
+            BorderedFrame::alloc_4_2_0(&*self.allocator, sps.pic_width(), sps.pic_height())
+                .map_err(|e| DecodingError::MisformedData(format!("frame allocation failed: {e:?}")))?,
+        );
 
         let disposition = if nal.nal_unit_type == nal::NalUnitType::IDRSlice {
             ReferenceDisposition::Idr
@@ -895,15 +903,18 @@ impl Decoder {
                 match mb {
                     Macroblock::PCM(block) => {
                         qp = 0;
-                        let y_plane = &mut frame.planes[0];
-                        let mut plane_slice = y_plane.mut_slice(point_to_plane_offset(mb_loc));
-
-                        for (idx, row) in
-                            plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
                         {
-                            let row_range = idx * tables::MB_WIDTH..(idx + 1) * tables::MB_WIDTH;
-                            row[..tables::MB_WIDTH]
-                                .copy_from_slice(&block.pcm_sample_luma[row_range]);
+                            let mut y_plane = frame.plane_mut(ColorPlane::Y);
+                            let mut plane_slice =
+                                y_plane.mut_slice(point_to_plane_offset(mb_loc));
+
+                            for (idx, row) in
+                                plane_slice.rows_iter_mut().take(tables::MB_HEIGHT).enumerate()
+                            {
+                                let row_range = idx * tables::MB_WIDTH..(idx + 1) * tables::MB_WIDTH;
+                                row[..tables::MB_WIDTH]
+                                    .copy_from_slice(&block.pcm_sample_luma[row_range]);
+                            }
                         }
 
                         let chroma_format = slice.sps.ChromaArrayType();
@@ -922,7 +933,7 @@ impl Decoder {
                             (ColorPlane::Cb, &block.pcm_sample_chroma_cb),
                             (ColorPlane::Cr, &block.pcm_sample_chroma_cr),
                         ] {
-                            let chroma_plane = &mut frame.planes[plane as usize];
+                            let mut chroma_plane = frame.plane_mut(plane);
                             let mut chroma_slice =
                                 chroma_plane.mut_slice(point_to_plane_offset(chroma_loc));
                             for (idx, row) in
@@ -942,7 +953,7 @@ impl Decoder {
                             &active_dequant,
                         );
 
-                        let luma_plane = &mut frame.planes[0];
+                        let mut luma_plane = frame.plane_mut(ColorPlane::Y);
                         let luma_prediction_mode = imb.MbPartPredMode(0);
                         match luma_prediction_mode {
                             MbPredictionMode::None => {
@@ -952,12 +963,12 @@ impl Decoder {
                             }
                             MbPredictionMode::Intra_4x4 => {
                                 render_luma_4x4_intra_prediction(
-                                    slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
+                                    slice, mb_addr, imb, mb_loc, &mut luma_plane, &residuals,
                                 );
                             }
                             MbPredictionMode::Intra_8x8 => {
                                 render_luma_8x8_intra_prediction(
-                                    slice, mb_addr, imb, mb_loc, luma_plane, &residuals,
+                                    slice, mb_addr, imb, mb_loc, &mut luma_plane, &residuals,
                                 );
                             }
                             MbPredictionMode::Intra_16x16 => {
@@ -965,7 +976,7 @@ impl Decoder {
                                     slice,
                                     mb_addr,
                                     mb_loc,
-                                    luma_plane,
+                                    &mut luma_plane,
                                     mb_type_to_16x16_pred_mode(imb.mb_type).ok_or_else(|| {
                                         DecodingError::OutOfRange(format!(
                                             "no 16x16 pred mode for mb_type {:?}",
@@ -982,11 +993,12 @@ impl Decoder {
                                 unreachable!("Inter prediction mode on I macroblock")
                             }
                         }
+                        drop(luma_plane);
 
                         for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
                             let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
                             let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c);
-                            let chroma_plane = &mut frame.planes[plane_name as usize];
+                            let mut chroma_plane = frame.plane_mut(plane_name);
                             let residuals = restore_residuals(
                                 imb.residual.as_deref(),
                                 plane_name,
@@ -997,7 +1009,7 @@ impl Decoder {
                                 slice,
                                 mb_addr,
                                 mb_loc,
-                                chroma_plane,
+                                &mut chroma_plane,
                                 imb.intra_chroma_pred_mode,
                                 &residuals,
                             )

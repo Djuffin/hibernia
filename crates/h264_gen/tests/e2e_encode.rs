@@ -129,9 +129,9 @@ fn test_generate_and_decode_video() {
             format!("in frame {}", frames_decoded)
         };
 
-        let y_plane = &frame.planes[0];
-        let u_plane = &frame.planes[1];
-        let v_plane = &frame.planes[2];
+        let y_plane = frame.plane(hibernia::h264::ColorPlane::Y);
+        let u_plane = frame.plane(hibernia::h264::ColorPlane::Cb);
+        let v_plane = frame.plane(hibernia::h264::ColorPlane::Cr);
 
         assert_eq!(y_plane.cfg.width, 256, "Width mismatch {}", msg);
         assert_eq!(y_plane.cfg.height, 256, "Height mismatch {}", msg);

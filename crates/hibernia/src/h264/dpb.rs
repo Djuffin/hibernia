@@ -393,13 +393,15 @@ fn calculate_pic_num_x(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::h264::decoder::VideoFrame;
+    use crate::api::DefaultAllocator;
+    use crate::h264::frame::BorderedFrame;
     use crate::h264::slice::DecRefPicMarking;
-    use v_frame::pixel::ChromaSampling;
 
     fn create_dummy_picture(frame_num: u16, pic_order_cnt: i32) -> Picture {
         Picture {
-            frame: Arc::new(VideoFrame::new_with_padding(16, 16, ChromaSampling::Cs420, 0)),
+            frame: Arc::new(
+                BorderedFrame::alloc_4_2_0(&DefaultAllocator, 16, 16).expect("alloc"),
+            ),
             frame_num,
             pic_order_cnt,
             motion_field: None,

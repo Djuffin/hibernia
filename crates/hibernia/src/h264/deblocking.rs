@@ -400,7 +400,7 @@ fn filter_luma_edge(
     alpha_offset: i32,
     beta_offset: i32,
 ) {
-    let plane = &mut frame.planes[ColorPlane::Y as usize];
+    let mut plane = frame.plane_mut(ColorPlane::Y);
     let stride = plane.cfg.stride;
     let data = plane.data_origin_mut();
 
@@ -569,7 +569,7 @@ fn filter_chroma_edge(
             continue;
         }
 
-        let plane = &mut frame.planes[plane_idx as usize];
+        let mut plane = frame.plane_mut(plane_idx);
         let stride = plane.cfg.stride;
         let data = plane.data_origin_mut();
 

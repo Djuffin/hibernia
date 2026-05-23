@@ -5,8 +5,8 @@ use super::macroblock::{
 };
 use super::slice::{Slice, SliceType};
 use super::residual::{add_residual_4x4, Block4x4};
+use super::plane::Plane;
 use super::{ColorPlane, Point};
-use v_frame::plane::Plane;
 
 /// Section 8.4.2.2.1 Luma sample interpolation process.
 /// This function interpolates a block of luma samples with quarter-sample accuracy.
@@ -22,7 +22,7 @@ use v_frame::plane::Plane;
 /// - `buffer`: Scratch buffer for interpolation.
 #[allow(clippy::too_many_arguments)]
 pub fn interpolate_luma(
-    ref_plane: &Plane<u8>,
+    ref_plane: Plane<'_>,
     mb_x: u32,
     mb_y: u32,
     blk_x: u8,
@@ -123,7 +123,7 @@ macro_rules! load_6_rows {
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn interpolate_luma_impl<const W: usize, const H: usize>(
-    ref_plane: &Plane<u8>,
+    ref_plane: Plane<'_>,
     mb_x: u32,
     mb_y: u32,
     blk_x: u8,
@@ -422,7 +422,7 @@ fn interpolate_luma_impl<const W: usize, const H: usize>(
 /// * `dst_stride` - The stride of the destination buffer.
 #[allow(clippy::too_many_arguments)]
 pub fn interpolate_chroma(
-    ref_plane: &Plane<u8>,
+    ref_plane: Plane<'_>,
     mb_x: u32,
     mb_y: u32,
     blk_x: u8,
@@ -748,7 +748,7 @@ pub fn render_luma_inter_prediction(
     ref_pics_l0: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
 ) -> Result<(), DecodingError> {
-    let y_plane = &mut frame.planes[0];
+    let mut y_plane = frame.plane_mut(ColorPlane::Y);
     let wp_mode = get_weighted_pred_mode(slice);
 
     let y_stride = y_plane.cfg.stride;
@@ -771,7 +771,7 @@ pub fn render_luma_inter_prediction(
                 ref_pics_l0.len()
             ))
         })?;
-        let ref_plane = &ref_pic.picture.frame.planes[0];
+        let ref_plane = ref_pic.picture.frame.plane(ColorPlane::Y);
         let lx = rect.grid_x as usize * 4;
         let ly = rect.grid_y as usize * 4;
         let lw = rect.grid_w as usize * 4;
@@ -927,7 +927,7 @@ pub fn render_chroma_inter_prediction(
     residuals: &[Block4x4],
     ref_pics_l0: &[&DpbPicture],
 ) -> Result<(), DecodingError> {
-    let chroma_plane = &mut frame.planes[plane as usize];
+    let mut chroma_plane = frame.plane_mut(plane);
     let mb_x_chroma = mb_loc.x >> 1;
     let mb_y_chroma = mb_loc.y >> 1;
     let wp_mode = get_weighted_pred_mode(slice);
@@ -952,7 +952,7 @@ pub fn render_chroma_inter_prediction(
                 ref_pics_l0.len()
             ))
         })?;
-        let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+        let ref_plane = ref_pic.picture.frame.plane(plane);
         let cx = rect.grid_x as usize * 2;
         let cy = rect.grid_y as usize * 2;
         let cw = rect.grid_w as usize * 2;
@@ -1031,7 +1031,7 @@ pub(crate) fn render_luma_inter_prediction_b(
     ref_pics_l1: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
 ) -> Result<(), DecodingError> {
-    let y_plane = &mut frame.planes[0];
+    let mut y_plane = frame.plane_mut(ColorPlane::Y);
     let wp_mode = get_weighted_pred_mode(slice);
 
     let y_stride = y_plane.cfg.stride;
@@ -1052,7 +1052,7 @@ pub(crate) fn render_luma_inter_prediction_b(
                 ref_pics_l0.len()
             ))
         })?;
-        let ref_plane = &ref_pic.picture.frame.planes[0];
+        let ref_plane = ref_pic.picture.frame.plane(ColorPlane::Y);
         let lx = rect.grid_x as usize * 4;
         let ly = rect.grid_y as usize * 4;
         let lw = rect.grid_w as usize * 4;
@@ -1081,7 +1081,7 @@ pub(crate) fn render_luma_inter_prediction_b(
                 ref_pics_l1.len()
             ))
         })?;
-        let ref_plane = &ref_pic.picture.frame.planes[0];
+        let ref_plane = ref_pic.picture.frame.plane(ColorPlane::Y);
         let lx = rect.grid_x as usize * 4;
         let ly = rect.grid_y as usize * 4;
         let lw = rect.grid_w as usize * 4;
@@ -1205,7 +1205,7 @@ pub(crate) fn render_chroma_inter_prediction_b(
     ref_pics_l1: &[&DpbPicture],
     implicit_weights: &ImplicitWeightTable,
 ) -> Result<(), DecodingError> {
-    let chroma_plane = &mut frame.planes[plane as usize];
+    let mut chroma_plane = frame.plane_mut(plane);
     let mb_x_chroma = mb_loc.x >> 1;
     let mb_y_chroma = mb_loc.y >> 1;
     let wp_mode = get_weighted_pred_mode(slice);
@@ -1229,7 +1229,7 @@ pub(crate) fn render_chroma_inter_prediction_b(
                 ref_pics_l0.len()
             ))
         })?;
-        let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+        let ref_plane = ref_pic.picture.frame.plane(plane);
         let cx = rect.grid_x as usize * 2;
         let cy = rect.grid_y as usize * 2;
         let cw = rect.grid_w as usize * 2;
@@ -1257,7 +1257,7 @@ pub(crate) fn render_chroma_inter_prediction_b(
                 ref_pics_l1.len()
             ))
         })?;
-        let ref_plane = &ref_pic.picture.frame.planes[plane as usize];
+        let ref_plane = ref_pic.picture.frame.plane(plane);
         let cx = rect.grid_x as usize * 2;
         let cy = rect.grid_y as usize * 2;
         let cw = rect.grid_w as usize * 2;
@@ -1490,20 +1490,44 @@ mod weighted_pred_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::h264::plane::{PlaneConfig, PlaneMut, PlaneOffset};
 
-    fn create_test_plane(width: usize, height: usize, fill: u8) -> Plane<u8> {
-        let mut p = Plane::new(width, height, 0, 0, 16, 16);
-        p.data.fill(fill);
-        p
+    fn test_plane_cfg(width: usize, height: usize) -> PlaneConfig {
+        PlaneConfig {
+            stride: width + 32,
+            width,
+            height,
+            xorigin: 16,
+            yorigin: 16,
+            alloc_height: height + 32,
+        }
+    }
+
+    fn create_test_plane(width: usize, height: usize, fill: u8) -> (Vec<u8>, PlaneConfig) {
+        let cfg = test_plane_cfg(width, height);
+        let buf = vec![fill; cfg.total_bytes()];
+        (buf, cfg)
+    }
+
+    fn alternating_plane(width: usize, height: usize) -> (Vec<u8>, PlaneConfig) {
+        let cfg = test_plane_cfg(width, height);
+        let mut buf = vec![0u8; cfg.total_bytes()];
+        for y in 0..cfg.alloc_height {
+            for x in 0..cfg.stride {
+                buf[y * cfg.stride + x] = if x % 2 == 0 { 100 } else { 200 };
+            }
+        }
+        (buf, cfg)
     }
 
     #[test]
     fn test_interpolate_integer() {
-        let plane = create_test_plane(32, 32, 100);
+        let (buf, cfg) = create_test_plane(32, 32, 100);
+        let plane = Plane { data: &buf, cfg };
         let mut dst = [0u8; 16];
         let mut buffer = InterpolationBuffer::new();
         interpolate_luma(
-            &plane,
+            plane,
             0,
             0,
             0,
@@ -1520,26 +1544,12 @@ mod tests {
 
     #[test]
     fn test_interpolate_half_pel_horizontal() {
-        // Create a plane with alternating 100 and 200
-        let mut plane = Plane::new(32, 32, 0, 0, 16, 16);
-        plane.data.fill(0); // Clear padding too
-        for y in 0..32 + 32 {
-            // Fill enough to cover padding and visible
-            let stride = plane.cfg.stride;
-            if y * stride >= plane.data.len() {
-                break;
-            }
-            let row_start = y * stride;
-            for x in 0..stride {
-                if row_start + x < plane.data.len() {
-                    plane.data[row_start + x] = if x % 2 == 0 { 100 } else { 200 };
-                }
-            }
-        }
+        let (buf, cfg) = alternating_plane(32, 32);
+        let plane = Plane { data: &buf, cfg };
         let mut dst = [0u8; 16];
         let mut buffer = InterpolationBuffer::new();
         interpolate_luma(
-            &plane,
+            plane,
             2,
             2,
             0,
@@ -1556,22 +1566,12 @@ mod tests {
 
     #[test]
     fn test_interpolate_quarter_pel_a() {
-        // Create a plane with alternating 100 and 200
-        let mut plane = Plane::new(32, 32, 0, 0, 16, 16);
-        plane.data.fill(0);
-        for y in 0..32 + 32 {
-            let stride = plane.cfg.stride;
-            if y * stride >= plane.data.len() {
-                break;
-            }
-            for x in 0..stride {
-                plane.data[y * stride + x] = if x % 2 == 0 { 100 } else { 200 };
-            }
-        }
+        let (buf, cfg) = alternating_plane(32, 32);
+        let plane = Plane { data: &buf, cfg };
         let mut dst = [0u8; 16];
         let mut buffer = InterpolationBuffer::new();
         interpolate_luma(
-            &plane,
+            plane,
             2,
             2,
             0,
@@ -1588,44 +1588,33 @@ mod tests {
 
     #[test]
     fn test_interpolate_chroma_integer() {
-        let plane = create_test_plane(16, 16, 50);
+        let (buf, cfg) = create_test_plane(16, 16, 50);
+        let plane = Plane { data: &buf, cfg };
         let mut dst = [0u8; 4];
-        interpolate_chroma(&plane, 0, 0, 0, 0, 2, 2, MotionVector { x: 0, y: 0 }, &mut dst, 2);
+        interpolate_chroma(plane, 0, 0, 0, 0, 2, 2, MotionVector { x: 0, y: 0 }, &mut dst, 2);
         assert_eq!(dst, [50; 4]);
     }
 
     #[test]
     fn test_interpolate_chroma_half() {
-        // Create a plane with alternating 100 and 200
-        let mut plane = Plane::new(16, 16, 0, 0, 16, 16);
-        plane.data.fill(0);
-        for y in 0..16 + 32 {
-            let stride = plane.cfg.stride;
-            if y * stride >= plane.data.len() {
-                break;
-            }
-            for x in 0..stride {
-                plane.data[y * stride + x] = if x % 2 == 0 { 100 } else { 200 };
-            }
-        }
+        let (buf, cfg) = alternating_plane(16, 16);
+        let plane = Plane { data: &buf, cfg };
         let mut dst = [0u8; 4];
-        interpolate_chroma(&plane, 0, 0, 0, 0, 2, 2, MotionVector { x: 4, y: 0 }, &mut dst, 2);
+        interpolate_chroma(plane, 0, 0, 0, 0, 2, 2, MotionVector { x: 4, y: 0 }, &mut dst, 2);
         assert_eq!(dst[0], 150);
-        assert_eq!(dst[1], 150); // Next pixel is B=200, C=100 -> avg 150
+        assert_eq!(dst[1], 150);
     }
 
     #[test]
     fn test_interpolate_chroma_eighth() {
-        let mut plane = Plane::new(16, 16, 0, 0, 16, 16);
-        plane.data.fill(100);
-        {
-            let mut slice = plane.mut_slice(v_frame::plane::PlaneOffset { x: 0, y: 0 });
-            let row0 = &mut slice.rows_iter_mut().next().unwrap();
-            row0[1] = 164;
-        }
-        assert_eq!(plane.p(1, 0), 164, "Setup failed");
+        let cfg = test_plane_cfg(16, 16);
+        let mut buf = vec![100u8; cfg.total_bytes()];
+        // Set visible (1, 0) = 164.
+        let one_off = cfg.yorigin * cfg.stride + cfg.xorigin + 1;
+        buf[one_off] = 164;
+        let plane = Plane { data: &buf, cfg };
         let mut dst = [0u8; 1];
-        interpolate_chroma(&plane, 0, 0, 0, 0, 1, 1, MotionVector { x: 1, y: 0 }, &mut dst, 1);
+        interpolate_chroma(plane, 0, 0, 0, 0, 1, 1, MotionVector { x: 1, y: 0 }, &mut dst, 1);
         assert_eq!(dst[0], 108);
     }
 }

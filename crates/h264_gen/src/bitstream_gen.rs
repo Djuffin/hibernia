@@ -297,9 +297,9 @@ mod tests {
 
         let mut check_frame = |frame: &hibernia::h264::decoder::VideoFrame| {
             frames_decoded += 1;
-            let y_plane = &frame.planes[0];
-            let u_plane = &frame.planes[1];
-            let v_plane = &frame.planes[2];
+            let y_plane = frame.plane(hibernia::h264::ColorPlane::Y);
+            let u_plane = frame.plane(hibernia::h264::ColorPlane::Cb);
+            let v_plane = frame.plane(hibernia::h264::ColorPlane::Cr);
 
             assert_eq!(y_plane.cfg.width, 256);
             assert_eq!(y_plane.cfg.height, 256);

@@ -15,5 +15,4 @@ path = "src/main.rs"
 [dependencies]
 hibernia = { workspace = true }
 log = { workspace = true }
-v_frame = { workspace = true }
 y4m = { workspace = true }

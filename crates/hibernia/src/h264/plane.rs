@@ -1,9 +1,12 @@
 //! Internal, lifetime-bound plane views.
 //!
-//! Mirrors the subset of `v_frame::plane` actually consulted by the
-//! prediction / deblocking code, but holds borrowed slices instead of
-//! owned `Vec<u8>`. Frame memory is provided by the user via
-//! `api::FrameBuffer`; the decoder borrows into it through these views.
+//! `Plane` / `PlaneMut` / `PlaneSlice` / `PlaneMutSlice` hold borrowed
+//! slices into a user-supplied bordered allocation (via `api::FrameBuffer`).
+//! The shape mirrors the accessors the H.264 prediction and deblocking
+//! code needs (`cfg.{stride,xorigin,yorigin,width,height}`,
+//! `data_origin`, `data_origin_mut`, `row`, `slice`, `mut_slice`,
+//! `rows_iter`, `rows_iter_mut`, `Index<usize>`), with `data` always
+//! beginning at the top-left of the full bordered allocation.
 
 use std::ops::{Index, IndexMut};
 
@@ -60,8 +63,7 @@ impl<'a> Plane<'a> {
         &self.data[self.cfg.origin_offset()..]
     }
 
-    /// Cropped row at `y` rows below the visible origin (matches
-    /// `v_frame::Plane::row`).
+    /// Cropped row at `y` rows below the visible origin.
     pub fn row(&self, y: isize) -> &[u8] {
         let base = row_range_cropped(&self.cfg, 0, y);
         &self.data[base]

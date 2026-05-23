@@ -4,6 +4,10 @@
 
 mod support;
 
+mod allocator;
 mod data_path;
+mod format;
+mod frame;
 mod framing;
+mod opaque;
 mod queue;

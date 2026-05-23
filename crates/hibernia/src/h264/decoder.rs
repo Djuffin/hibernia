@@ -632,8 +632,7 @@ impl Decoder {
         let header = &slice.header;
 
         let frame = Arc::new(
-            BorderedFrame::alloc_4_2_0(&*self.allocator, sps.pic_width(), sps.pic_height())
-                .map_err(|e| DecoderError::MisformedData(format!("frame allocation failed: {e:?}")))?,
+            BorderedFrame::alloc_4_2_0(&*self.allocator, sps.pic_width(), sps.pic_height())?,
         );
 
         let disposition = if nal.nal_unit_type == nal::NalUnitType::IDRSlice {

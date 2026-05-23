@@ -2,10 +2,21 @@ use std::fs;
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
-use crate::h264;
+use crate::api::{
+    create_decoder, Codec, DecodedPicture, DecoderConfig, DefaultAllocator, EncodedPacket,
+    FlushMode, StreamFormat, VideoDecoderCallbacks, VideoPlane,
+};
 use crate::h264::nal_parser::NalParser;
 use crate::y4m_cmp::compare_y4m_buffers;
+
+struct NoopCallbacks;
+
+impl VideoDecoderCallbacks for NoopCallbacks {
+    fn on_picture_available(&self) {}
+    fn on_format_changed(&self, _format: StreamFormat) {}
+}
 
 fn workspace_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap()
@@ -14,19 +25,23 @@ fn workspace_root() -> &'static Path {
 fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
     let cursor = Cursor::new(encoded_video_buffer);
     let nal_parser = NalParser::new(cursor);
-    let mut decoder = h264::decoder::Decoder::test_default();
+    let mut decoder = create_decoder(
+        DecoderConfig::new(Codec::H264),
+        Arc::new(DefaultAllocator),
+        Arc::new(NoopCallbacks),
+    )
+    .map_err(|e| format!("create_decoder failed: {e:?}"))?;
 
     let mut decoding_output = Vec::<u8>::new();
     {
         let mut writer_opt = Some(io::BufWriter::new(&mut decoding_output));
         let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<&mut Vec<u8>>>> = None;
 
-        let mut process_frame = |pic: h264::decoder::Picture| {
-            let frame = pic.frame;
-            let display_width = pic.crop.display_width;
-            let display_height = pic.crop.display_height;
-            let crop_left = pic.crop.crop_left;
-            let crop_top = pic.crop.crop_top;
+        let mut process_frame = |pic: DecodedPicture| {
+            let display_width = pic.format.display_width;
+            let display_height = pic.format.display_height;
+            let crop_left = pic.format.crop_left;
+            let crop_top = pic.format.crop_top;
 
             if encoder_opt.is_none() {
                 if let Some(writer) = writer_opt.take() {
@@ -41,31 +56,22 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
 
             let mut planes: [Vec<u8>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
-            for (i, color_plane) in
-                [crate::h264::ColorPlane::Y, crate::h264::ColorPlane::Cb, crate::h264::ColorPlane::Cr]
-                    .iter()
-                    .enumerate()
-            {
-                let plane = frame.plane(*color_plane);
+            for (i, channel) in [VideoPlane::Y, VideoPlane::U, VideoPlane::V].iter().enumerate() {
+                let view = pic.frame.plane(*channel).expect("plane present");
                 let (cw, ch, cx, cy) = if i == 0 {
                     (display_width, display_height, crop_left, crop_top)
                 } else {
                     (display_width / 2, display_height / 2, crop_left / 2, crop_top / 2)
                 };
 
-                let data_size = cw * ch;
                 let data: &mut Vec<u8> = &mut planes[i];
-                if data.len() != data_size {
-                    data.resize(data_size, 0);
-                }
+                data.resize(cw * ch, 0);
 
                 for row in 0..ch {
-                    let src_offset = (plane.cfg.yorigin + cy + row) * plane.cfg.stride
-                        + plane.cfg.xorigin
-                        + cx;
+                    let src_offset = (cy + row) * view.stride + cx;
                     let dst_offset = row * cw;
                     data[dst_offset..dst_offset + cw]
-                        .copy_from_slice(&plane.data[src_offset..src_offset + cw]);
+                        .copy_from_slice(&view.data[src_offset..src_offset + cw]);
                 }
             }
 
@@ -82,18 +88,25 @@ fn decode_to_y4m(encoded_video_buffer: &[u8]) -> Result<Vec<u8>, String> {
         let mut nal_idx = 0usize;
         for nal_result in nal_parser {
             let nal_data = nal_result.map_err(|e| format!("NAL error: {e:?}"))?;
+            let mut buf = Vec::with_capacity(nal_data.len() + 4);
+            buf.extend_from_slice(&[0, 0, 0, 1]);
+            buf.extend_from_slice(&nal_data);
             decoder
-                .decode_nal(&nal_data)
+                .decode(EncodedPacket::from_vec(buf))
                 .map_err(|e| format!("Decoding error at NAL #{nal_idx}: {e:?}"))?;
             nal_idx += 1;
 
-            while let Some(pic) = decoder.take_picture() {
+            while let Some(pic) =
+                decoder.get_picture().map_err(|e| format!("get_picture error: {e:?}"))?
+            {
                 process_frame(pic);
             }
         }
 
-        decoder.finalize_and_drain().map_err(|e| format!("Flush error: {e:?}"))?;
-        while let Some(pic) = decoder.take_picture() {
+        decoder.flush(FlushMode::Drain).map_err(|e| format!("Flush error: {e:?}"))?;
+        while let Some(pic) =
+            decoder.get_picture().map_err(|e| format!("get_picture error: {e:?}"))?
+        {
             process_frame(pic);
         }
     }

@@ -1,5 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hibernia::h264::decoder::{Decoder, DecoderContext};
+use hibernia::api::{
+    create_decoder, Codec, DecoderConfig, DefaultAllocator, EncodedPacket, FlushMode,
+    StreamFormat, VideoDecoderCallbacks,
+};
+use hibernia::h264::decoder::DecoderContext;
 use hibernia::h264::nal::NalUnitType;
 use hibernia::h264::nal_parser::NalParser;
 use hibernia::h264::cavlc::parse_slice_data_cavlc;
@@ -13,6 +17,14 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+
+struct NoopCallbacks;
+
+impl VideoDecoderCallbacks for NoopCallbacks {
+    fn on_picture_available(&self) {}
+    fn on_format_changed(&self, _format: StreamFormat) {}
+}
 
 fn workspace_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap()
@@ -85,17 +97,25 @@ fn bench_decoder(b: &mut criterion::Bencher, encoded_video_buffer: &[u8]) {
     b.iter(|| {
         let cursor = Cursor::new(black_box(encoded_video_buffer));
         let nal_parser = NalParser::new(cursor);
-        let mut decoder = Decoder::test_default();
+        let mut decoder = create_decoder(
+            DecoderConfig::new(Codec::H264),
+            Arc::new(DefaultAllocator),
+            Arc::new(NoopCallbacks),
+        )
+        .expect("create_decoder");
 
         for nal_result in nal_parser {
             let nal = nal_result.unwrap();
-            decoder.decode_nal(&nal).unwrap();
-            while let Some(_frame) = decoder.take_picture() {
+            let mut buf = Vec::with_capacity(nal.len() + 4);
+            buf.extend_from_slice(&[0, 0, 0, 1]);
+            buf.extend_from_slice(&nal);
+            decoder.decode(EncodedPacket::from_vec(buf)).unwrap();
+            while let Some(_frame) = decoder.get_picture().unwrap() {
                 // consume frame
             }
         }
-        decoder.finalize_and_drain().unwrap();
-        while let Some(_frame) = decoder.take_picture() {
+        decoder.flush(FlushMode::Drain).unwrap();
+        while let Some(_frame) = decoder.get_picture().unwrap() {
             // consume frame
         }
     });

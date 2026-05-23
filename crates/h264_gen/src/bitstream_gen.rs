@@ -288,53 +288,67 @@ mod tests {
         // Output shouldn't be empty
         assert!(!bitstream.is_empty());
 
-        // Decode the generated bitstream
-        let mut decoder = hibernia::h264::decoder::Decoder::test_default();
+        // Decode the generated bitstream through the public API.
+        use hibernia::api::{
+            create_decoder, Codec, DecoderConfig, DefaultAllocator, EncodedPacket, FlushMode,
+            StreamFormat, VideoDecoderCallbacks, VideoPlane,
+        };
+        use std::sync::Arc;
+
+        struct NoopCallbacks;
+        impl VideoDecoderCallbacks for NoopCallbacks {
+            fn on_picture_available(&self) {}
+            fn on_format_changed(&self, _format: StreamFormat) {}
+        }
+
+        let mut decoder = create_decoder(
+            DecoderConfig::new(Codec::H264),
+            Arc::new(DefaultAllocator),
+            Arc::new(NoopCallbacks),
+        )
+        .expect("create_decoder");
         let cursor = std::io::Cursor::new(bitstream);
         let nal_parser = hibernia::h264::nal_parser::NalParser::new(cursor);
 
         let mut frames_decoded = 0;
-
-        let mut check_frame = |frame: &hibernia::h264::decoder::VideoFrame| {
+        let mut check_frame = |pic: &hibernia::api::DecodedPicture| {
             frames_decoded += 1;
-            let y_plane = frame.plane(hibernia::h264::ColorPlane::Y);
-            let u_plane = frame.plane(hibernia::h264::ColorPlane::Cb);
-            let v_plane = frame.plane(hibernia::h264::ColorPlane::Cr);
+            let y = pic.frame.plane(VideoPlane::Y).expect("Y");
+            let u = pic.frame.plane(VideoPlane::U).expect("U");
+            let v = pic.frame.plane(VideoPlane::V).expect("V");
 
-            assert_eq!(y_plane.cfg.width, 256);
-            assert_eq!(y_plane.cfg.height, 256);
+            assert_eq!(y.width, 256);
+            assert_eq!(y.height, 256);
 
-            for y in 0..256 {
-                let row_start =
-                    (y_plane.cfg.yorigin + y) * y_plane.cfg.stride + y_plane.cfg.xorigin;
-                for x in 0..256 {
-                    assert_eq!(y_plane.data[row_start + x], 100);
+            for row in 0..256 {
+                let base = row * y.stride;
+                for col in 0..256 {
+                    assert_eq!(y.data[base + col], 100);
                 }
             }
-
-            for y in 0..128 {
-                let u_row_start =
-                    (u_plane.cfg.yorigin + y) * u_plane.cfg.stride + u_plane.cfg.xorigin;
-                let v_row_start =
-                    (v_plane.cfg.yorigin + y) * v_plane.cfg.stride + v_plane.cfg.xorigin;
-                for x in 0..128 {
-                    assert_eq!(u_plane.data[u_row_start + x], 101);
-                    assert_eq!(v_plane.data[v_row_start + x], 102);
+            for row in 0..128 {
+                let u_base = row * u.stride;
+                let v_base = row * v.stride;
+                for col in 0..128 {
+                    assert_eq!(u.data[u_base + col], 101);
+                    assert_eq!(v.data[v_base + col], 102);
                 }
             }
         };
 
         for nal_result in nal_parser {
-            let nal_data = nal_result.unwrap();
-            decoder.decode_nal(&nal_data).unwrap();
-            while let Some(pic) = decoder.take_picture() {
-                check_frame(&pic.frame);
+            let nal = nal_result.unwrap();
+            let mut buf = Vec::with_capacity(nal.len() + 4);
+            buf.extend_from_slice(&[0, 0, 0, 1]);
+            buf.extend_from_slice(&nal);
+            decoder.decode(EncodedPacket::from_vec(buf)).unwrap();
+            while let Some(pic) = decoder.get_picture().unwrap() {
+                check_frame(&pic);
             }
         }
-
-        decoder.finalize_and_drain().unwrap();
-        while let Some(pic) = decoder.take_picture() {
-            check_frame(&pic.frame);
+        decoder.flush(FlushMode::Drain).unwrap();
+        while let Some(pic) = decoder.get_picture().unwrap() {
+            check_frame(&pic);
         }
 
         assert_eq!(frames_decoded, 1);

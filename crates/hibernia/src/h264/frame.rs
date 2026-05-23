@@ -121,12 +121,12 @@ impl std::fmt::Debug for BorderedFrame {
 /// Public read-only `VideoFrame` view over a shared `BorderedFrame`.
 /// Constructed at publish time when the decoder hands a finished
 /// picture to the caller.
-pub struct PublishedFrame {
+pub(crate) struct PublishedFrame {
     inner: Arc<BorderedFrame>,
 }
 
 impl PublishedFrame {
-    pub fn new(inner: Arc<BorderedFrame>) -> Self {
+    pub(crate) fn new(inner: Arc<BorderedFrame>) -> Self {
         Self { inner }
     }
 }

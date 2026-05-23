@@ -1,7 +1,10 @@
 use h264_gen::nal_writer::create_annex_b_nal_unit;
 use h264_gen::rbsp_writer::RbspWriter;
 use h264_gen::writer::{write_pps, write_slice_header, write_sps};
-use hibernia::h264::decoder::Decoder;
+use hibernia::api::{
+    create_decoder, Codec, DecodedPicture, DecoderConfig, DefaultAllocator, EncodedPacket,
+    FlushMode, StreamFormat, VideoDecoderCallbacks, VideoPlane,
+};
 use hibernia::h264::nal::{NalHeader, NalUnitType};
 use hibernia::h264::nal_parser::NalParser;
 use hibernia::h264::pps::PicParameterSet;
@@ -9,6 +12,14 @@ use hibernia::h264::slice::{DeblockingFilterIdc, SliceHeader, SliceType};
 use hibernia::h264::sps::SequenceParameterSet;
 use hibernia::h264::{ChromaFormat, Profile};
 use std::io::Cursor;
+use std::sync::Arc;
+
+struct NoopCallbacks;
+
+impl VideoDecoderCallbacks for NoopCallbacks {
+    fn on_picture_available(&self) {}
+    fn on_format_changed(&self, _format: StreamFormat) {}
+}
 
 #[test]
 fn test_generate_and_decode_video() {
@@ -116,82 +127,74 @@ fn test_generate_and_decode_video() {
 
     let cursor = Cursor::new(bitstream);
     let nal_parser = NalParser::new(cursor);
-    let mut decoder = Decoder::test_default();
+    let mut decoder = create_decoder(
+        DecoderConfig::new(Codec::H264),
+        Arc::new(DefaultAllocator),
+        Arc::new(NoopCallbacks),
+    )
+    .expect("create_decoder");
 
     let mut frames_decoded = 0;
 
-    let check_frame = |frame: &hibernia::h264::decoder::VideoFrame,
-                       frames_decoded: usize,
-                       is_flush: bool| {
+    let check_frame = |pic: &DecodedPicture, frames_decoded: usize, is_flush: bool| {
         let msg = if is_flush {
             format!("in flushed frame {}", frames_decoded)
         } else {
             format!("in frame {}", frames_decoded)
         };
 
-        let y_plane = frame.plane(hibernia::h264::ColorPlane::Y);
-        let u_plane = frame.plane(hibernia::h264::ColorPlane::Cb);
-        let v_plane = frame.plane(hibernia::h264::ColorPlane::Cr);
+        let y = pic.frame.plane(VideoPlane::Y).expect("Y");
+        let u = pic.frame.plane(VideoPlane::U).expect("U");
+        let v = pic.frame.plane(VideoPlane::V).expect("V");
 
-        assert_eq!(y_plane.cfg.width, 256, "Width mismatch {}", msg);
-        assert_eq!(y_plane.cfg.height, 256, "Height mismatch {}", msg);
-        assert_eq!(u_plane.cfg.width, 128, "Cb width mismatch {}", msg);
-        assert_eq!(u_plane.cfg.height, 128, "Cb height mismatch {}", msg);
-        assert_eq!(v_plane.cfg.width, 128, "Cr width mismatch {}", msg);
-        assert_eq!(v_plane.cfg.height, 128, "Cr height mismatch {}", msg);
+        assert_eq!(y.width, 256, "Width mismatch {}", msg);
+        assert_eq!(y.height, 256, "Height mismatch {}", msg);
+        assert_eq!(u.width, 128, "Cb width mismatch {}", msg);
+        assert_eq!(u.height, 128, "Cb height mismatch {}", msg);
+        assert_eq!(v.width, 128, "Cr width mismatch {}", msg);
+        assert_eq!(v.height, 128, "Cr height mismatch {}", msg);
 
-        for y in 0..256 {
-            let row_start = (y_plane.cfg.yorigin + y) * y_plane.cfg.stride + y_plane.cfg.xorigin;
-            for x in 0..256 {
+        for row in 0..256 {
+            let base = row * y.stride;
+            for col in 0..256 {
                 assert_eq!(
-                    y_plane.data[row_start + x],
+                    y.data[base + col],
                     100,
                     "Luma mismatch at {}x{} {}",
-                    x,
-                    y,
+                    col,
+                    row,
                     msg
                 );
             }
         }
 
-        for y in 0..128 {
-            let u_row_start = (u_plane.cfg.yorigin + y) * u_plane.cfg.stride + u_plane.cfg.xorigin;
-            let v_row_start = (v_plane.cfg.yorigin + y) * v_plane.cfg.stride + v_plane.cfg.xorigin;
-            for x in 0..128 {
-                assert_eq!(
-                    u_plane.data[u_row_start + x],
-                    101,
-                    "Cb mismatch at {}x{} {}",
-                    x,
-                    y,
-                    msg
-                );
-                assert_eq!(
-                    v_plane.data[v_row_start + x],
-                    102,
-                    "Cr mismatch at {}x{} {}",
-                    x,
-                    y,
-                    msg
-                );
+        for row in 0..128 {
+            let u_base = row * u.stride;
+            let v_base = row * v.stride;
+            for col in 0..128 {
+                assert_eq!(u.data[u_base + col], 101, "Cb mismatch at {}x{} {}", col, row, msg);
+                assert_eq!(v.data[v_base + col], 102, "Cr mismatch at {}x{} {}", col, row, msg);
             }
         }
     };
 
     for nal_result in nal_parser {
-        let nal_data = nal_result.unwrap();
-        decoder.decode_nal(&nal_data).unwrap();
+        let nal = nal_result.unwrap();
+        let mut buf = Vec::with_capacity(nal.len() + 4);
+        buf.extend_from_slice(&[0, 0, 0, 1]);
+        buf.extend_from_slice(&nal);
+        decoder.decode(EncodedPacket::from_vec(buf)).unwrap();
 
-        while let Some(pic) = decoder.take_picture() {
+        while let Some(pic) = decoder.get_picture().unwrap() {
             frames_decoded += 1;
-            check_frame(&pic.frame, frames_decoded, false);
+            check_frame(&pic, frames_decoded, false);
         }
     }
 
-    decoder.finalize_and_drain().unwrap();
-    while let Some(pic) = decoder.take_picture() {
+    decoder.flush(FlushMode::Drain).unwrap();
+    while let Some(pic) = decoder.get_picture().unwrap() {
         frames_decoded += 1;
-        check_frame(&pic.frame, frames_decoded, true);
+        check_frame(&pic, frames_decoded, true);
     }
 
     assert_eq!(frames_decoded, 5);

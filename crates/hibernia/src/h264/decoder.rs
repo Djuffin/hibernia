@@ -25,8 +25,10 @@ use super::frame::PublishedFrame;
 const DEFAULT_QUEUE_DEPTH: usize = 64;
 
 /// Noop callbacks for internal test fixtures.
+#[cfg(test)]
 struct NoopCallbacks;
 
+#[cfg(test)]
 impl VideoDecoderCallbacks for NoopCallbacks {
     fn on_picture_available(&self) {}
     fn on_format_changed(&self, _format: StreamFormat) {}
@@ -133,14 +135,6 @@ pub struct MotionFieldStorage {
     pub slice_ref_pocs: Vec<(Vec<i32>, Vec<i32>)>,
 }
 
-#[derive(Debug, Clone)]
-pub enum DecodingError {
-    MisformedData(String),
-    OutOfRange(String),
-    FeatureNotSupported(String),
-    ReferenceNotFound(String),
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct DecoderContext {
     sps: Vec<sps::SequenceParameterSet>,
@@ -188,7 +182,7 @@ pub struct SliceDeblockParams {
 /// `CurrentPicture` is finalized (deblocked, motion field built, stored in DPB,
 /// emitted for output) and a fresh one is started.
 #[derive(Debug)]
-pub struct CurrentPicture {
+pub(crate) struct CurrentPicture {
     // The DPB-bound picture being assembled. Slice decoding writes pixels
     // directly into `dpb_pic.picture.frame`.
     pub dpb_pic: DpbPicture,
@@ -483,11 +477,6 @@ impl Decoder {
         .expect("test_default config is well-formed")
     }
 
-    /// The allocator the decoder draws frame memory from.
-    pub(crate) fn allocator(&self) -> Arc<dyn VideoFrameAllocator> {
-        Arc::clone(&self.allocator)
-    }
-
     /// Attach `opaque` to the next primary coded picture that starts.
     /// If a picture is already in progress, the opaque attaches to the
     /// in-progress picture instead.
@@ -501,12 +490,12 @@ impl Decoder {
         self.pending_opaque = Some(opaque);
     }
 
-    pub(crate) fn decode_nal(&mut self, nal_data: &[u8]) -> Result<(), DecodingError> {
+    pub(crate) fn decode_nal(&mut self, nal_data: &[u8]) -> Result<(), DecoderError> {
         use nal::NalUnitType;
 
         let rbsp_data = parser::remove_emulation_if_needed(nal_data);
         let mut input = parser::BitReader::new(&rbsp_data);
-        let parse_error_handler = DecodingError::MisformedData;
+        let parse_error_handler = DecoderError::MisformedData;
 
         let nal = parser::parse_nal_header(&mut input).map_err(parse_error_handler)?;
         debug_assert!(input.is_aligned());
@@ -527,7 +516,7 @@ impl Decoder {
                 // derivation) is not implemented. Reject before any further
                 // processing so we never reach the panic sites downstream.
                 if matches!(slice.header.slice_type, SliceType::SP | SliceType::SI) {
-                    return Err(DecodingError::FeatureNotSupported(format!(
+                    return Err(DecoderError::FeatureNotSupported(format!(
                         "{:?} slices are not supported",
                         slice.header.slice_type
                     )));
@@ -553,7 +542,7 @@ impl Decoder {
                 // decode into it, then put it back. On decode error the `?`
                 // drops `current` -- partial pictures are not retained.
                 let mut current = self.current_picture.take().ok_or_else(|| {
-                    DecodingError::MisformedData(
+                    DecoderError::MisformedData(
                         "internal: current_picture missing after start".into(),
                     )
                 })?;
@@ -565,18 +554,18 @@ impl Decoder {
                 let sps = parser::parse_sps(&mut input).map_err(parse_error_handler)?;
                 info!("SPS: {:#?}", sps);
                 if sps.ChromaArrayType() != ChromaFormat::YUV420 {
-                    return Err(DecodingError::FeatureNotSupported(format!(
+                    return Err(DecoderError::FeatureNotSupported(format!(
                         "chroma format {:?} is not supported, only YUV420",
                         sps.ChromaArrayType()
                     )));
                 }
                 if !sps.frame_mbs_only_flag {
-                    return Err(DecodingError::FeatureNotSupported(
+                    return Err(DecoderError::FeatureNotSupported(
                         "interlaced video (frame_mbs_only_flag=0) is not supported".into(),
                     ));
                 }
                 if sps.gaps_in_frame_num_value_allowed_flag {
-                    return Err(DecodingError::FeatureNotSupported(
+                    return Err(DecoderError::FeatureNotSupported(
                         "gaps_in_frame_num_value_allowed_flag=1 is not supported".into(),
                     ));
                 }
@@ -599,12 +588,12 @@ impl Decoder {
                 let pps = parser::parse_pps(&mut input).map_err(parse_error_handler)?;
                 info!("PPS: {:#?}", pps);
                 if pps.slice_group.is_some() {
-                    return Err(DecodingError::FeatureNotSupported(
+                    return Err(DecoderError::FeatureNotSupported(
                         "slice groups are not supported".into(),
                     ));
                 }
                 if pps.constrained_intra_pred_flag {
-                    return Err(DecodingError::FeatureNotSupported(
+                    return Err(DecoderError::FeatureNotSupported(
                         "constrained intra prediction is not supported".into(),
                     ));
                 }
@@ -638,13 +627,13 @@ impl Decoder {
         &mut self,
         slice: &Slice,
         nal: &nal::NalHeader,
-    ) -> Result<CurrentPicture, DecodingError> {
+    ) -> Result<CurrentPicture, DecoderError> {
         let sps = &slice.sps;
         let header = &slice.header;
 
         let frame = Arc::new(
             BorderedFrame::alloc_4_2_0(&*self.allocator, sps.pic_width(), sps.pic_height())
-                .map_err(|e| DecodingError::MisformedData(format!("frame allocation failed: {e:?}")))?,
+                .map_err(|e| DecoderError::MisformedData(format!("frame allocation failed: {e:?}")))?,
         );
 
         let disposition = if nal.nal_unit_type == nal::NalUnitType::IDRSlice {
@@ -729,7 +718,7 @@ impl Decoder {
         current: &mut CurrentPicture,
         slice: &mut Slice,
         input: &mut parser::BitReader,
-    ) -> Result<(), DecodingError> {
+    ) -> Result<(), DecoderError> {
         let pic_order_cnt = current.dpb_pic.picture.pic_order_cnt;
 
         // Section 7.4.3: `first_mb_in_slice` is strictly increasing across
@@ -737,7 +726,7 @@ impl Decoder {
         // overlap or move backwards -- they would silently overwrite already
         // decoded MBs.
         if slice.header.first_mb_in_slice < current.next_mb_addr {
-            return Err(DecodingError::MisformedData(format!(
+            return Err(DecoderError::MisformedData(format!(
                 "slice first_mb_in_slice={} would overlap already-decoded MBs (next expected {})",
                 slice.header.first_mb_in_slice, current.next_mb_addr
             )));
@@ -794,12 +783,12 @@ impl Decoder {
             .collect();
 
         parser::parse_slice_data(input, slice, &mut self.residual_pool)
-            .map_err(DecodingError::MisformedData)?;
+            .map_err(DecoderError::MisformedData)?;
         let pic_size = current.macroblocks.len();
         let mb_count = slice.get_macroblock_count();
         let end_mb = (slice.header.first_mb_in_slice as usize).saturating_add(mb_count);
         if end_mb > pic_size {
-            return Err(DecodingError::MisformedData(format!(
+            return Err(DecoderError::MisformedData(format!(
                 "slice extends past picture: first_mb_in_slice={}, count={}, pic_size_in_mbs={}",
                 slice.header.first_mb_in_slice, mb_count, pic_size
             )));
@@ -826,14 +815,14 @@ impl Decoder {
     /// Applies MMCO / `dec_ref_pic_marking`, drops dead references, stores the
     /// picture in the DPB (with output bumping), and updates POC state.
     /// Consumes the `CurrentPicture`.
-    fn finalize_picture(&mut self, mut current: CurrentPicture) -> Result<(), DecodingError> {
+    fn finalize_picture(&mut self, mut current: CurrentPicture) -> Result<(), DecoderError> {
         // Every MB must have been decoded by some slice. Truncated slices are
         // caught earlier by `parse_slice_data`, but a missing slice (multi-slice
         // picture where one slice never arrived) leaves sentinels behind that
         // would silently produce a corrupted frame. `macroblocks` and
         // `mb_slice_id` are written together, so checking either suffices.
         if current.mb_slice_id.iter().any(|&id| id == u16::MAX) {
-            return Err(DecodingError::MisformedData(
+            return Err(DecoderError::MisformedData(
                 "picture has macroblocks with no slice owner at finalize".into(),
             ));
         }
@@ -912,16 +901,10 @@ impl Decoder {
         Ok(())
     }
 
-    /// Take the next picture from the inner H.264 output queue.
-    /// External callers go through [`VideoDecoder::get_picture`].
-    pub(crate) fn take_picture(&mut self) -> Option<Picture> {
-        self.output_pictures.pop_front()
-    }
-
     /// Drain the DPB into the inner output queue (end-of-stream
     /// semantics). External callers use [`VideoDecoder::flush`] with
     /// `FlushMode::Drain`.
-    pub(crate) fn finalize_and_drain(&mut self) -> Result<(), DecodingError> {
+    pub(crate) fn finalize_and_drain(&mut self) -> Result<(), DecoderError> {
         self.finalize_pending_picture()?;
         let pictures = self.dpb.flush();
         self.output_pictures.extend(pictures.into_iter().map(|p| p.picture));
@@ -931,7 +914,7 @@ impl Decoder {
     /// Finalizes the in-progress picture, if any. No-op when no picture is
     /// being assembled. Used to drain the boundary state machine on flush,
     /// `EndOfSeq`, or `EndOfStream`.
-    fn finalize_pending_picture(&mut self) -> Result<(), DecodingError> {
+    fn finalize_pending_picture(&mut self) -> Result<(), DecoderError> {
         if let Some(cur) = self.current_picture.take() {
             self.finalize_picture(cur)?;
         }
@@ -946,7 +929,7 @@ impl Decoder {
         &mut self,
         slice: &mut Slice,
         current: &mut CurrentPicture,
-    ) -> Result<(), DecodingError> {
+    ) -> Result<(), DecoderError> {
         let frame = Arc::get_mut(&mut current.dpb_pic.picture.frame)
             .expect("frame uniquely owned during decode");
         let qp_bd_offset_y = 6 * slice.sps.bit_depth_luma_minus8 as i32;
@@ -1012,7 +995,7 @@ impl Decoder {
 
                         let chroma_format = slice.sps.ChromaArrayType();
                         if chroma_format == super::ChromaFormat::Monochrome {
-                            return Err(DecodingError::FeatureNotSupported(
+                            return Err(DecoderError::FeatureNotSupported(
                                 "monochrome chroma format is not supported".into(),
                             ));
                         }
@@ -1050,7 +1033,7 @@ impl Decoder {
                         let luma_prediction_mode = imb.MbPartPredMode(0);
                         match luma_prediction_mode {
                             MbPredictionMode::None => {
-                                return Err(DecodingError::MisformedData(
+                                return Err(DecoderError::MisformedData(
                                     "Macroblock::I has I_PCM mb_type (None pred mode)".into(),
                                 ));
                             }
@@ -1071,7 +1054,7 @@ impl Decoder {
                                     mb_loc,
                                     &mut luma_plane,
                                     mb_type_to_16x16_pred_mode(imb.mb_type).ok_or_else(|| {
-                                        DecodingError::OutOfRange(format!(
+                                        DecoderError::OutOfRange(format!(
                                             "no 16x16 pred mode for mb_type {:?}",
                                             imb.mb_type
                                         ))
@@ -1232,7 +1215,7 @@ impl Decoder {
         &self,
         slice: &mut Slice,
         current_poc: i32,
-    ) -> Result<(), DecodingError> {
+    ) -> Result<(), DecoderError> {
         if slice.header.slice_type == SliceType::I || slice.header.slice_type == SliceType::SI {
             slice.ref_pic_list0.clear();
             return Ok(());
@@ -1465,7 +1448,7 @@ impl Decoder {
         &self,
         slice: &mut Slice,
         current_poc: i32,
-    ) -> Result<(), DecodingError> {
+    ) -> Result<(), DecoderError> {
         let ref_list0 = &slice.ref_pic_list0;
         let mut ref_list1 = self.initialize_ref_pic_list1(current_poc);
 
@@ -1579,7 +1562,7 @@ impl VideoDecoder for Decoder {
             }
             AvcBitstreamFormat::Avc => {
                 for nal in AvcSplitter::new(bytes, self.avc_length_size) {
-                    let nal = nal.map_err(|e| DecoderError::BitstreamCorrupted(e.into()))?;
+                    let nal = nal.map_err(|e| DecoderError::MisformedData(e.into()))?;
                     if nal.is_empty() {
                         continue;
                     }
@@ -1629,13 +1612,13 @@ fn resolve_ref_pic_list<'a>(
     ref_list: &[usize],
     dpb_pictures: &'a [DpbPicture],
     list_name: &str,
-) -> Result<Vec<&'a DpbPicture>, DecodingError> {
+) -> Result<Vec<&'a DpbPicture>, DecoderError> {
     ref_list
         .iter()
         .enumerate()
         .map(|(i, &dpb_idx)| {
             dpb_pictures.get(dpb_idx).ok_or_else(|| {
-                DecodingError::ReferenceNotFound(format!(
+                DecoderError::ReferenceNotFound(format!(
                     "{list_name}[{i}]: DPB index {dpb_idx} not in DPB (size {})",
                     dpb_pictures.len()
                 ))
@@ -1669,14 +1652,14 @@ fn next_qp(qp: i32, mb_qp_delta: i32, qp_bd_offset_y: i32) -> i32 {
 /// Validate a parsed SPS against limits the parser doesn't enforce: Annex A.3
 /// per-level frame-size caps, and frame-cropping arithmetic that would
 /// underflow `crop_dimensions()` in sps.rs.
-fn check_sps_level_limits(sps: &sps::SequenceParameterSet) -> Result<(), DecodingError> {
+fn check_sps_level_limits(sps: &sps::SequenceParameterSet) -> Result<(), DecoderError> {
     let max_fs = super::levels::max_frame_size_in_mbs(sps);
     let pic_w_mbs = sps.pic_width_in_mbs() as u32;
     let pic_h_mbs = sps.pic_height_in_mbs() as u32;
 
     let pic_size = pic_w_mbs.saturating_mul(pic_h_mbs);
     if pic_size > max_fs {
-        return Err(DecodingError::OutOfRange(format!(
+        return Err(DecoderError::OutOfRange(format!(
             "picture size {} MBs ({}x{}) exceeds level {}.{} MaxFS={}",
             pic_size,
             pic_w_mbs,
@@ -1691,7 +1674,7 @@ fn check_sps_level_limits(sps: &sps::SequenceParameterSet) -> Result<(), Decodin
     // <= sqrt(8 * MaxFS). Compared via squaring to avoid floating point.
     let dim_sq_limit: u64 = 8u64 * max_fs as u64;
     if (pic_w_mbs as u64) * (pic_w_mbs as u64) > dim_sq_limit {
-        return Err(DecodingError::OutOfRange(format!(
+        return Err(DecoderError::OutOfRange(format!(
             "picture width {} MBs exceeds level {}.{} sqrt(8*MaxFS) cap",
             pic_w_mbs,
             sps.level_idc / 10,
@@ -1699,7 +1682,7 @@ fn check_sps_level_limits(sps: &sps::SequenceParameterSet) -> Result<(), Decodin
         )));
     }
     if (pic_h_mbs as u64) * (pic_h_mbs as u64) > dim_sq_limit {
-        return Err(DecodingError::OutOfRange(format!(
+        return Err(DecoderError::OutOfRange(format!(
             "picture height {} MBs exceeds level {}.{} sqrt(8*MaxFS) cap",
             pic_h_mbs,
             sps.level_idc / 10,
@@ -1723,14 +1706,14 @@ fn check_sps_level_limits(sps: &sps::SequenceParameterSet) -> Result<(), Decodin
         let crop_h = (crop.left as u64 + crop.right as u64) * crop_unit_x as u64;
         let crop_v = (crop.top as u64 + crop.bottom as u64) * crop_unit_y as u64;
         if crop_h >= sps.pic_width() as u64 {
-            return Err(DecodingError::OutOfRange(format!(
+            return Err(DecoderError::OutOfRange(format!(
                 "frame_crop_left + frame_crop_right ({} samples) >= pic_width ({})",
                 crop_h,
                 sps.pic_width()
             )));
         }
         if crop_v >= sps.pic_height() as u64 {
-            return Err(DecodingError::OutOfRange(format!(
+            return Err(DecoderError::OutOfRange(format!(
                 "frame_crop_top + frame_crop_bottom ({} samples) >= pic_height ({})",
                 crop_v,
                 sps.pic_height()
@@ -1777,7 +1760,7 @@ mod tests {
         // Level 6.2 MaxFS=696_320, sqrt(8*MaxFS) ~= 2360 MBs. Width 4096 alone
         // exceeds that.
         match check_sps_level_limits(&sps_dim(62, 4095, 0)) {
-            Err(DecodingError::OutOfRange(msg)) => {
+            Err(DecoderError::OutOfRange(msg)) => {
                 assert!(msg.contains("width"), "expected width-cap error, got: {}", msg);
             }
             other => panic!("expected OutOfRange(width), got: {:?}", other),
@@ -1787,7 +1770,7 @@ mod tests {
     #[test]
     fn level_limits_reject_height_over_sqrt_cap() {
         match check_sps_level_limits(&sps_dim(62, 0, 4095)) {
-            Err(DecodingError::OutOfRange(msg)) => {
+            Err(DecoderError::OutOfRange(msg)) => {
                 assert!(msg.contains("height"), "expected height-cap error, got: {}", msg);
             }
             other => panic!("expected OutOfRange(height), got: {:?}", other),
@@ -1799,7 +1782,7 @@ mod tests {
         // level_idc=255 falls back to Level 6.2 MaxFS, which still rejects a
         // 65535x65535 SPS.
         match check_sps_level_limits(&sps_dim(255, 65534, 65534)) {
-            Err(DecodingError::OutOfRange(_)) => {}
+            Err(DecoderError::OutOfRange(_)) => {}
             other => panic!("expected OutOfRange, got: {:?}", other),
         }
     }
@@ -1822,7 +1805,7 @@ mod tests {
         let mut sps = sps_dim(10, 3, 3);
         sps.frame_cropping = Some(FrameCrop { left: 16, right: 16, top: 0, bottom: 0 });
         match check_sps_level_limits(&sps) {
-            Err(DecodingError::OutOfRange(msg)) => {
+            Err(DecoderError::OutOfRange(msg)) => {
                 assert!(msg.contains("frame_crop_left"), "got: {}", msg);
             }
             other => panic!("expected OutOfRange (horizontal crop), got: {:?}", other),
@@ -1836,7 +1819,7 @@ mod tests {
         let mut sps = sps_dim(10, 3, 3);
         sps.frame_cropping = Some(FrameCrop { left: 0, right: 0, top: 16, bottom: 16 });
         match check_sps_level_limits(&sps) {
-            Err(DecodingError::OutOfRange(msg)) => {
+            Err(DecoderError::OutOfRange(msg)) => {
                 assert!(msg.contains("frame_crop_top"), "got: {}", msg);
             }
             other => panic!("expected OutOfRange (vertical crop), got: {:?}", other),

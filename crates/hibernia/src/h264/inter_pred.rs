@@ -1,4 +1,6 @@
-use super::decoder::{DecodingError, VideoFrame};
+use crate::api::DecoderError;
+
+use super::decoder::VideoFrame;
 use super::dpb::DpbPicture;
 use super::macroblock::{
     self, get_4x4chroma_block_location, BMb, MbPredictionMode, MotionVector, PMb, PartitionInfo,
@@ -739,7 +741,7 @@ pub(crate) fn build_implicit_weight_table(
     table
 }
 
-pub fn render_luma_inter_prediction(
+pub(crate) fn render_luma_inter_prediction(
     slice: &Slice,
     mb: &PMb,
     mb_loc: Point,
@@ -747,7 +749,7 @@ pub fn render_luma_inter_prediction(
     residuals: &[Block4x4],
     ref_pics_l0: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
-) -> Result<(), DecodingError> {
+) -> Result<(), DecoderError> {
     let mut y_plane = frame.plane_mut(ColorPlane::Y);
     let wp_mode = get_weighted_pred_mode(slice);
 
@@ -765,7 +767,7 @@ pub fn render_luma_inter_prediction(
     );
     for rect in &rects[..n_rects] {
         let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecodingError::ReferenceNotFound(format!(
+            DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
                 rect.ref_idx,
                 ref_pics_l0.len()
@@ -918,7 +920,7 @@ fn classify_b_l1(p: &PartitionInfo) -> Option<(u8, MotionVector)> {
         .then_some((p.ref_idx_l1, p.mv_l1))
 }
 
-pub fn render_chroma_inter_prediction(
+pub(crate) fn render_chroma_inter_prediction(
     slice: &Slice,
     mb: &PMb,
     mb_loc: Point,
@@ -926,7 +928,7 @@ pub fn render_chroma_inter_prediction(
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
     ref_pics_l0: &[&DpbPicture],
-) -> Result<(), DecodingError> {
+) -> Result<(), DecoderError> {
     let mut chroma_plane = frame.plane_mut(plane);
     let mb_x_chroma = mb_loc.x >> 1;
     let mb_y_chroma = mb_loc.y >> 1;
@@ -946,7 +948,7 @@ pub fn render_chroma_inter_prediction(
     );
     for rect in &rects[..n_rects] {
         let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecodingError::ReferenceNotFound(format!(
+            DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
                 rect.ref_idx,
                 ref_pics_l0.len()
@@ -1030,7 +1032,7 @@ pub(crate) fn render_luma_inter_prediction_b(
     ref_pics_l0: &[&DpbPicture],
     ref_pics_l1: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
-) -> Result<(), DecodingError> {
+) -> Result<(), DecoderError> {
     let mut y_plane = frame.plane_mut(ColorPlane::Y);
     let wp_mode = get_weighted_pred_mode(slice);
 
@@ -1046,7 +1048,7 @@ pub(crate) fn render_luma_inter_prediction_b(
     let n_l0 = collect_pred_rects(&mb.motion.partitions, classify_b_l0, &mut rects);
     for rect in &rects[..n_l0] {
         let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecodingError::ReferenceNotFound(format!(
+            DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
                 rect.ref_idx,
                 ref_pics_l0.len()
@@ -1075,7 +1077,7 @@ pub(crate) fn render_luma_inter_prediction_b(
     let n_l1 = collect_pred_rects(&mb.motion.partitions, classify_b_l1, &mut rects);
     for rect in &rects[..n_l1] {
         let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecodingError::ReferenceNotFound(format!(
+            DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l1 {} out of bounds (list length {})",
                 rect.ref_idx,
                 ref_pics_l1.len()
@@ -1204,7 +1206,7 @@ pub(crate) fn render_chroma_inter_prediction_b(
     ref_pics_l0: &[&DpbPicture],
     ref_pics_l1: &[&DpbPicture],
     implicit_weights: &ImplicitWeightTable,
-) -> Result<(), DecodingError> {
+) -> Result<(), DecoderError> {
     let mut chroma_plane = frame.plane_mut(plane);
     let mb_x_chroma = mb_loc.x >> 1;
     let mb_y_chroma = mb_loc.y >> 1;
@@ -1223,7 +1225,7 @@ pub(crate) fn render_chroma_inter_prediction_b(
     let n_l0 = collect_pred_rects(&mb.motion.partitions, classify_b_l0, &mut rects);
     for rect in &rects[..n_l0] {
         let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecodingError::ReferenceNotFound(format!(
+            DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
                 rect.ref_idx,
                 ref_pics_l0.len()
@@ -1251,7 +1253,7 @@ pub(crate) fn render_chroma_inter_prediction_b(
     let n_l1 = collect_pred_rects(&mb.motion.partitions, classify_b_l1, &mut rects);
     for rect in &rects[..n_l1] {
         let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecodingError::ReferenceNotFound(format!(
+            DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l1 {} out of bounds (list length {})",
                 rect.ref_idx,
                 ref_pics_l1.len()

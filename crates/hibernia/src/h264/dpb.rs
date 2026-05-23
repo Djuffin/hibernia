@@ -41,7 +41,7 @@ pub enum DpbPictureStructure {
 }
 
 #[derive(Debug)]
-pub struct DpbPicture {
+pub(crate) struct DpbPicture {
     pub picture: Picture,
     pub marking: DpbMarking,
     pub is_idr: bool,
@@ -51,7 +51,7 @@ pub struct DpbPicture {
 
 // Annex C: Decoded Picture Buffer (DPB)
 #[derive(Debug)]
-pub struct DecodedPictureBuffer {
+pub(crate) struct DecodedPictureBuffer {
     pub pictures: Vec<DpbPicture>,
     pub max_size: usize, // max_dec_frame_buffering
 }
@@ -84,7 +84,7 @@ impl DecodedPictureBuffer {
 
     /// Stores a picture in the DPB.
     /// Manages the "bumping" process (Section C.4.5.3) if the DPB is full.
-    pub fn store_picture(&mut self, dpb_picture: DpbPicture) -> Vec<Picture> {
+    pub(crate) fn store_picture(&mut self, dpb_picture: DpbPicture) -> Vec<Picture> {
         let mut output_pictures = Vec::new();
         while self.is_full() {
             match self.bump_one() {
@@ -136,7 +136,7 @@ impl DecodedPictureBuffer {
     }
 
     /// Outputs all non-reference pictures that are needed for output, sorted by POC.
-    pub fn get_pictures_for_output(&mut self) -> Vec<Picture> {
+    pub(crate) fn get_pictures_for_output(&mut self) -> Vec<Picture> {
         let mut output = Vec::new();
         let mut i = 0;
         while i < self.pictures.len() {
@@ -163,7 +163,7 @@ impl DecodedPictureBuffer {
     /// Returns a tuple containing:
     /// - `true` if MMCO 5 was processed (indicating POC state should be reset).
     /// - A `Vec<Picture>` of any pictures that were flushed and need to be output.
-    pub fn mark_prior_references(
+    pub(crate) fn mark_prior_references(
         &mut self,
         header: &SliceHeader,
         disposition: ReferenceDisposition,

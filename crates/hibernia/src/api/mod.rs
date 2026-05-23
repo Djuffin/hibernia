@@ -12,6 +12,7 @@
 //! Concrete decoder traits and the `create_decoder` factory are added in
 //! later phases.
 
+pub mod bitstream;
 pub mod callbacks;
 pub mod color;
 pub mod config;
@@ -20,6 +21,7 @@ pub mod format;
 pub mod frame;
 pub mod packet;
 
+pub use bitstream::{AnnexBSplitter, AvcBitstreamFormat, AvcSplitter, H264Config};
 pub use callbacks::{DecoderError, VideoDecoderCallbacks};
 pub use default_allocator::DefaultAllocator;
 pub use color::{

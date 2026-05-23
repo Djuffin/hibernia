@@ -15,11 +15,13 @@
 pub mod callbacks;
 pub mod color;
 pub mod config;
+pub mod default_allocator;
 pub mod format;
 pub mod frame;
 pub mod packet;
 
 pub use callbacks::{DecoderError, VideoDecoderCallbacks};
+pub use default_allocator::DefaultAllocator;
 pub use color::{
     ColorPrimaries, ColorRange, ColorSpace, MatrixCoefficients, PixelFormat,
     TransferCharacteristics, VideoPlane,

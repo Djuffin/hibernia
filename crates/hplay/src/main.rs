@@ -5,10 +5,20 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hibernia::h264::decoder::{Decoder, Picture};
+use hibernia::api::{
+    create_decoder, Codec, DecodedPicture, DecoderConfig, DefaultAllocator, EncodedPacket,
+    FlushMode, StreamFormat, VideoDecoder, VideoDecoderCallbacks, VideoPlane,
+};
 use hibernia::h264::nal_parser::NalParser;
 use iced::widget::{column, container, image, row, text};
 use iced::{Element, Length, Subscription, Task, Theme};
+
+struct PlayerCallbacks;
+
+impl VideoDecoderCallbacks for PlayerCallbacks {
+    fn on_picture_available(&self) {}
+    fn on_format_changed(&self, _format: StreamFormat) {}
+}
 
 const HELP: &str = "\
 Usage: hplay <input.h264> [fps]
@@ -73,7 +83,7 @@ enum DecoderEvent {
 
 struct Source {
     nal_iter: Box<dyn Iterator<Item = std::io::Result<Vec<u8>>> + Send>,
-    decoder: Decoder,
+    decoder: Box<dyn VideoDecoder>,
     drained: bool,
     done: bool,
 }
@@ -83,31 +93,35 @@ impl Source {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let nal_parser = NalParser::new(reader);
-        Ok(Self {
-            nal_iter: Box::new(nal_parser),
-            decoder: Decoder::new(),
-            drained: false,
-            done: false,
-        })
+        let decoder = create_decoder(
+            DecoderConfig::new(Codec::H264),
+            std::sync::Arc::new(DefaultAllocator),
+            std::sync::Arc::new(PlayerCallbacks),
+        )
+        .expect("create_decoder");
+        Ok(Self { nal_iter: Box::new(nal_parser), decoder, drained: false, done: false })
     }
 
-    fn next_picture(&mut self) -> Option<Picture> {
+    fn next_picture(&mut self) -> Option<DecodedPicture> {
         if self.done {
             return None;
         }
         loop {
-            if let Some(pic) = self.decoder.retrieve_picture() {
+            if let Ok(Some(pic)) = self.decoder.get_picture() {
                 return Some(pic);
             }
             match self.nal_iter.next() {
                 Some(Ok(nal)) => {
-                    let _ = self.decoder.decode(&nal);
+                    let mut buf = Vec::with_capacity(nal.len() + 4);
+                    buf.extend_from_slice(&[0, 0, 0, 1]);
+                    buf.extend_from_slice(&nal);
+                    let _ = self.decoder.decode(EncodedPacket::from_vec(buf));
                 }
                 Some(Err(_)) => continue,
                 None => {
                     if !self.drained {
                         self.drained = true;
-                        let _ = self.decoder.flush();
+                        let _ = self.decoder.flush(FlushMode::Drain);
                         continue;
                     }
                     self.done = true;
@@ -258,44 +272,34 @@ fn decoder_loop(path: &Path, fps: f64, tx: mpsc::SyncSender<DecoderEvent>) {
     let _ = tx.send(DecoderEvent::End);
 }
 
-fn render_frame(pic: &Picture) -> FrameImage {
-    use hibernia::h264::ColorPlane;
+fn render_frame(pic: &DecodedPicture) -> FrameImage {
+    let disp_w = pic.format.display_width;
+    let disp_h = pic.format.display_height;
 
-    let disp_w = pic.crop.display_width;
-    let disp_h = pic.crop.display_height;
-
-    let y_plane = pic.frame.plane(ColorPlane::Y);
-    let u_plane = pic.frame.plane(ColorPlane::Cb);
-    let v_plane = pic.frame.plane(ColorPlane::Cr);
+    let y_plane = pic.frame.plane(VideoPlane::Y).expect("luma");
+    let u_plane = pic.frame.plane(VideoPlane::U).expect("u plane");
+    let v_plane = pic.frame.plane(VideoPlane::V).expect("v plane");
 
     let mut rgba = vec![0u8; disp_w * disp_h * 4];
 
-    let crop_x = pic.crop.crop_left;
-    let crop_y = pic.crop.crop_top;
-    let y_stride = y_plane.cfg.stride;
-    let y_xo = y_plane.cfg.xorigin + crop_x;
-    let y_yo = y_plane.cfg.yorigin + crop_y;
-    let y_data = y_plane.data;
+    let crop_x = pic.format.crop_left;
+    let crop_y = pic.format.crop_top;
 
     // 4:2:0 chroma subsampling is the only format the decoder produces.
     let x_dec = 1usize;
     let y_dec = 1usize;
-    let u_cfg = u_plane.cfg;
-    let v_cfg = v_plane.cfg;
-    let u_data = u_plane.data;
-    let v_data = v_plane.data;
 
     for sy in 0..disp_h {
-        let y_row = (y_yo + sy) * y_stride + y_xo;
+        let y_row = (crop_y + sy) * y_plane.stride + crop_x;
         let cy_abs = (sy + crop_y) >> y_dec;
-        let u_row = (u_cfg.yorigin + cy_abs) * u_cfg.stride + u_cfg.xorigin;
-        let v_row = (v_cfg.yorigin + cy_abs) * v_cfg.stride + v_cfg.xorigin;
+        let u_row = cy_abs * u_plane.stride;
+        let v_row = cy_abs * v_plane.stride;
         let out_row = sy * disp_w * 4;
         for sx in 0..disp_w {
-            let y_val = y_data[y_row + sx];
+            let y_val = y_plane.data[y_row + sx];
             let cx_abs = (sx + crop_x) >> x_dec;
-            let u_val = u_data[u_row + cx_abs];
-            let v_val = v_data[v_row + cx_abs];
+            let u_val = u_plane.data[u_row + cx_abs];
+            let v_val = v_plane.data[v_row + cx_abs];
             let (r, g, b) = yuv_to_rgb(y_val, u_val, v_val);
             let i = out_row + sx * 4;
             rgba[i] = r;

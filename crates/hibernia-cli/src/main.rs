@@ -9,17 +9,27 @@
 #![allow(clippy::large_enum_variant)]
 #![allow(non_snake_case)]
 
+use hibernia::api::{
+    create_decoder, Codec, DecodedPicture, DecoderConfig, DecoderError, DefaultAllocator,
+    EncodedPacket, FlushMode, StreamFormat, VideoDecoder, VideoDecoderCallbacks, VideoPlane,
+};
 use hibernia::diag;
-use hibernia::h264;
+use hibernia::h264::nal_parser::NalParser;
 
 use std::env;
 use std::fs;
-use std::io;
+use std::io::{self, BufReader};
+use std::sync::Arc;
 use std::time::Instant;
 
-use hibernia::h264::nal_parser::NalParser;
 use log::info;
-use std::io::BufReader;
+
+struct CliCallbacks;
+
+impl VideoDecoderCallbacks for CliCallbacks {
+    fn on_picture_available(&self) {}
+    fn on_format_changed(&self, _format: StreamFormat) {}
+}
 
 fn main() {
     diag::init(false);
@@ -35,28 +45,34 @@ fn main() {
         return;
     }
 
-    let file =
-        fs::File::open(&input_filename).unwrap_or_else(|_| panic!("can't read file: {input_filename}"));
-    let reader = BufReader::new(file);
-    let nal_parser = NalParser::new(reader);
-    let mut decoder = h264::decoder::Decoder::new();
+    let file = fs::File::open(&input_filename)
+        .unwrap_or_else(|_| panic!("can't read file: {input_filename}"));
+    let nal_parser = NalParser::new(BufReader::new(file));
+
+    let mut decoder = create_decoder(
+        DecoderConfig::new(Codec::H264),
+        Arc::new(DefaultAllocator),
+        Arc::new(CliCallbacks),
+    )
+    .expect("create_decoder");
 
     let mut frame_count = 0;
-
     {
-        let mut writer_opt = output_filename.map(|f| io::BufWriter::new(fs::File::create(&f).unwrap_or_else(|_| panic!("can't create {f}"))));
+        let mut writer_opt = output_filename.map(|f| {
+            io::BufWriter::new(fs::File::create(&f).unwrap_or_else(|_| panic!("can't create {f}")))
+        });
         let mut encoder_opt: Option<y4m::Encoder<io::BufWriter<fs::File>>> = None;
 
-        let mut process_frame = |pic: h264::decoder::Picture| {
-            let frame = pic.frame;
-            let display_width = pic.crop.display_width;
-            let display_height = pic.crop.display_height;
-            let crop_left = pic.crop.crop_left;
-            let crop_top = pic.crop.crop_top;
+        let mut process_frame = |pic: DecodedPicture, frame_count: &mut usize| {
+            let format = &pic.format;
+            let display_width = format.display_width;
+            let display_height = format.display_height;
+            let crop_left = format.crop_left;
+            let crop_top = format.crop_top;
 
             if writer_opt.is_none() && encoder_opt.is_none() {
                 info!("Decoded frame #{} {} x {}", frame_count, display_width, display_height);
-                frame_count += 1;
+                *frame_count += 1;
                 return;
             }
 
@@ -71,37 +87,28 @@ fn main() {
                 }
             }
 
-            info!("Writing frame #{} {} x {} to y4m", frame_count, display_width, display_height);
-            frame_count += 1;
+            info!(
+                "Writing frame #{} {} x {} to y4m",
+                frame_count, display_width, display_height
+            );
+            *frame_count += 1;
 
+            // Copy each plane's visible cropped region into a tight buffer
+            // the y4m encoder expects.
             let mut planes: [Vec<u8>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-            for (i, color_plane) in [
-                hibernia::h264::ColorPlane::Y,
-                hibernia::h264::ColorPlane::Cb,
-                hibernia::h264::ColorPlane::Cr,
-            ]
-            .iter()
-            .enumerate()
-            {
-                let plane = frame.plane(*color_plane);
+            for (i, channel) in [VideoPlane::Y, VideoPlane::U, VideoPlane::V].iter().enumerate() {
+                let view = pic.frame.plane(*channel).expect("plane present");
                 let (cw, ch, cx, cy) = if i == 0 {
                     (display_width, display_height, crop_left, crop_top)
                 } else {
                     (display_width / 2, display_height / 2, crop_left / 2, crop_top / 2)
                 };
-
-                let data_size = cw * ch;
-                let data = &mut planes[i];
-                if data.len() != data_size {
-                    data.resize(data_size, 0);
-                }
-
+                planes[i].resize(cw * ch, 0);
                 for row in 0..ch {
-                    let src_offset =
-                        (plane.cfg.yorigin + cy + row) * plane.cfg.stride + plane.cfg.xorigin + cx;
-                    let dst_offset = row * cw;
-                    data[dst_offset..dst_offset + cw]
-                        .copy_from_slice(&plane.data[src_offset..src_offset + cw]);
+                    let src_base = (cy + row) * view.stride + cx;
+                    let dst_base = row * cw;
+                    planes[i][dst_base..dst_base + cw]
+                        .copy_from_slice(&view.data[src_base..src_base + cw]);
                 }
             }
 
@@ -115,18 +122,21 @@ fn main() {
             }
         };
 
+        // Re-wrap each NAL with an Annex-B start code prefix so the
+        // adapter's splitter can parse it.
         for nal_result in nal_parser {
-            let nal_data = nal_result.expect("Error parsing NAL");
-            decoder.decode(&nal_data).expect("Decoding error");
-
-            while let Some(pic) = decoder.retrieve_picture() {
-                process_frame(pic);
+            let nal = nal_result.expect("nal parse");
+            let mut buf = Vec::with_capacity(nal.len() + 4);
+            buf.extend_from_slice(&[0, 0, 0, 1]);
+            buf.extend_from_slice(&nal);
+            decoder.decode(EncodedPacket::from_vec(buf)).expect("decode");
+            while let Some(pic) = decoder.get_picture().expect("get_picture") {
+                process_frame(pic, &mut frame_count);
             }
         }
-
-        decoder.flush().expect("Flush error");
-        while let Some(pic) = decoder.retrieve_picture() {
-            process_frame(pic);
+        decoder.flush(FlushMode::Drain).expect("flush");
+        while let Some(pic) = decoder.get_picture().expect("get_picture") {
+            process_frame(pic, &mut frame_count);
         }
     }
 

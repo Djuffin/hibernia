@@ -127,6 +127,7 @@ impl DecodedPictureBuffer {
                 pic_order_cnt: src.picture.pic_order_cnt,
                 motion_field: None,
                 crop: src.picture.crop.clone(),
+                format: src.picture.format.clone(),
                 opaque: src.picture.opaque.take(),
             };
             src.needed_for_output = false;
@@ -415,6 +416,18 @@ mod tests {
                 display_height: 16,
                 crop_left: 0,
                 crop_top: 0,
+            },
+            format: crate::api::StreamFormat {
+                codec: crate::api::Codec::H264,
+                coded_width: 16,
+                coded_height: 16,
+                crop_left: 0,
+                crop_top: 0,
+                display_width: 16,
+                display_height: 16,
+                color_space: None,
+                pixel_format: crate::api::PixelFormat::I420,
+                bit_depth: 8,
             },
             opaque: None,
         }

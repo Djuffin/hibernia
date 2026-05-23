@@ -9,7 +9,8 @@ use super::tables::mb_type_to_16x16_pred_mode;
 use super::ColorPlane;
 
 use crate::api::frame::VideoFrameAllocator;
-use crate::api::DefaultAllocator;
+use crate::api::h264_adapter::stream_format_from_sps;
+use crate::api::{DefaultAllocator, StreamFormat};
 
 use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
 use super::frame::BorderedFrame;
@@ -51,6 +52,10 @@ pub struct Picture {
     /// is shared with each B-slice that picks this picture as colocated.
     pub motion_field: Option<Arc<MotionFieldStorage>>,
     pub crop: sps::CropDimensions,
+    /// Stream-level format derived from the SPS active at start time.
+    /// Lets the API adapter detect format changes without peeking
+    /// into the inner decoder's state.
+    pub format: StreamFormat,
     /// Caller-supplied metadata attached when the picture's first slice
     /// arrived; emitted alongside the picture when it leaves the DPB.
     pub opaque: Option<Box<dyn std::any::Any + Send>>,
@@ -418,6 +423,11 @@ impl Decoder {
         }
     }
 
+    /// The allocator the decoder draws frame memory from.
+    pub fn allocator(&self) -> Arc<dyn VideoFrameAllocator> {
+        Arc::clone(&self.allocator)
+    }
+
     /// Attach `opaque` to the next primary coded picture that starts.
     /// If a picture is already in progress, the opaque attaches to the
     /// in-progress picture instead.
@@ -594,6 +604,7 @@ impl Decoder {
             pic_order_cnt,
             motion_field: None,
             crop: crop_dims,
+            format: stream_format_from_sps(sps),
             opaque: None,
         };
         let dpb_pic = DpbPicture {

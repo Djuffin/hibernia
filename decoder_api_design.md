@@ -8,9 +8,10 @@ This document defines the object-safe Rust API design for a codec-independent so
 1.  **Codec Independence**: Unified interface for all common codec properties, with support for
     arbitrary, strongly-typed codec-specific parameters.
 2.  **Runtime Codec Swapping**: Decoupled dynamic interfaces allowing different codec implementations
-    (H.264, VP8, AV1) to be loaded and swapped interchangeably.
-3.  **Zero-Copy Allocation**: Memory allocation delegated to the caller, using a unique write-only
-    phase for decoding and a shared read-only phase for reference and display.
+    to be used interchangeably.
+3.  **Zero-Copy Allocation**: Frame memory delegated to the caller via the `FrameBuffer` trait. The
+    decoder writes through raw pointers internally; user code sees only the read-only `VideoFrame`
+    view, which borrows directly into the user-supplied allocation without copies.
 4.  **Unified Execution Flow**: Single, identical data-flow interface for both synchronous
     (blocking) and asynchronous (threaded) implementations.
 5.  **Context & Timestamp Tracking**: Type-safe, automatic propagation of packet-specific
@@ -23,45 +24,81 @@ This document defines the object-safe Rust API design for a codec-independent so
 ## API Definition
 
 ```rust
-use std::any::Any;
-use std::sync::Arc;
-
 // ===========================================================================
 // 1. Core Enums & Configuration
 // ===========================================================================
 
 /// Supported video codecs.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Codec {
-    /// H.264 / Advanced Video Coding (AVC)
     H264,
-    /// H.265 / High Efficiency Video Coding (HEVC)
-    H265,
-    /// Google VP8
     VP8,
-    /// Google VP9
     VP9,
-    /// AOMedia Video 1 (AV1)
     AV1,
-    /// AOMedia Video 2 (AV2)
     AV2,
 }
 
-/// Supported color spaces for video stream mapping.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ColorSpace {
-    /// Color space is unspecified or unknown.
-    Unknown,
-    /// ITU-R BT.601 (standard definition video).
-    Bt601,
-    /// ITU-R BT.709 (high definition video).
+/// Color primaries (ISO/IEC 23091-2 §8.1).
+pub enum ColorPrimaries {
+    Unspecified,
     Bt709,
-    /// ITU-R BT.2020 (ultra high definition / HDR video).
+    /// BT.601 525-line (NTSC).
+    Smpte170m,
+    /// BT.601 625-line (PAL/SECAM).
+    Bt470bg,
     Bt2020,
+    /// Display P3 (SMPTE EG 432-1, D65 white point).
+    Smpte432,
+}
+
+/// Opto-electronic transfer characteristic (ISO/IEC 23091-2 §8.2).
+pub enum TransferCharacteristics {
+    Unspecified,
+    Bt709,
+    Bt601,
+    Smpte240,
+    Linear,
+    Srgb,
+    Bt2020_10,
+    Bt2020_12,
+    /// SMPTE ST 2084 / HDR10.
+    SmptePq,
+    /// ARIB STD-B67 / HLG.
+    AribStdB67,
+}
+
+/// YUV → RGB matrix (ISO/IEC 23091-2 §8.3).
+pub enum MatrixCoefficients {
+    Unspecified,
+    /// RGB / GBR — no YUV conversion.
+    Identity,
+    Bt709,
+    Bt601,
+    Smpte240,
+    /// BT.2020 non-constant luminance.
+    Bt2020Ncl,
+    /// BT.2020 constant luminance.
+    Bt2020Cl,
+}
+
+/// Sample range. When the bitstream doesn't signal range, decoders
+/// default to `Limited`.
+pub enum ColorRange {
+    Limited,
+    Full,
+}
+
+/// Full color signaling for a stream. Primaries, transfer, and matrix
+/// are orthogonal in the spec and codecs may carry them independently
+/// (H.264/HEVC/AV1 VUI). Legacy codecs that carry only a combined
+/// label (VP9's 3-bit field) map onto this struct via a fixed table.
+pub struct ColorSpace {
+    pub primaries: ColorPrimaries,
+    pub transfer: TransferCharacteristics,
+    pub matrix: MatrixCoefficients,
+    pub range: ColorRange,
 }
 
 /// Pixel memory layout and chroma subsampling format.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
     /// Planar YUV 4:2:0 (e.g., I420: Y plane, then U plane, then V plane).
     I420,
@@ -71,20 +108,39 @@ pub enum PixelFormat {
     I422,
     /// Planar YUV 4:4:4 (e.g., I444).
     I444,
+    /// Planar YUV 4:2:0 with alpha plane (I420 + A).
+    I420A,
     /// Single Y plane (grayscale).
     Monochrome,
-    /// Packed Red-Green-Blue-Alpha.
-    Rgba,
+}
+
+/// Plane channels inside a video frame.
+pub enum VideoPlane {
+    /// Luma plane.
+    Y,
+    /// Chroma Cb plane (planar formats only).
+    U,
+    /// Chroma Cr plane (planar formats only).
+    V,
+    /// Interleaved Cb/Cr plane (semi-planar formats like NV12).
+    UV,
+    /// Transparency plane.
+    Alpha,
+}
+
+/// Optimize for end-to-end latency vs. throughput.
+pub enum LatencyMode {
+    /// Maximize throughput; allow frame reordering and lookahead.
+    Throughput,
+    /// Minimize latency; disable reordering / lookahead where possible.
+    LowLatency,
 }
 
 /// General configuration for instantiating a video decoder.
 pub struct DecoderConfig {
     /// The target video codec to decode.
     pub codec: Codec,
-    /// Maximum number of worker threads for parallel decoding (0 or 1 indicates single-threaded).
-    pub max_threads: usize,
-    /// Optimize for low latency rather than throughput (e.g., disable frame reordering if possible).
-    pub low_latency: bool,
+    pub latency_mode: LatencyMode,
     /// Strongly-typed, codec-specific configuration struct (e.g., `H264Config`, `Vp9Config`)
     pub custom_params: Option<Box<dyn Any + Send>>,
 }
@@ -96,7 +152,6 @@ pub struct DecoderConfig {
 // ===========================================================================
 
 /// Active stream geometric and color format parameters.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamFormat {
     /// The active video codec.
     pub codec: Codec,
@@ -112,26 +167,21 @@ pub struct StreamFormat {
     pub display_width: usize,
     /// Visible height of the picture in pixels.
     pub display_height: usize,
-    /// Active color space of the stream.
-    pub color_space: ColorSpace,
-    /// Memory layout and pixel format of the decoded pictures.
+    /// Active color space of the stream, if specified.
+    pub color_space: Option<ColorSpace>,
+    /// Pixel format of the decoded pictures.
     pub pixel_format: PixelFormat,
     /// Bits per pixel component (typically 8 for standard, 10 or 12 for HDR).
     pub bit_depth: u8,
 }
 
-/// A read-only chunk of compressed bitstream data.
-/// Implement this to wrap your own memory storage (e.g., mapped files,
-/// network rings) without copying bytes.
-pub trait EncodedData: Send + Sync {
-    /// Get a read-only slice of the underlying bitstream bytes.
-    fn as_slice(&self) -> &[u8];
-}
-
 /// An encoded packet containing compressed bitstream data and optional metadata.
 pub struct EncodedPacket {
-    /// The compressed bitstream data, wrapped in a zero-copy thread-safe pointer.
-    pub data: Arc<dyn EncodedData>,
+    /// The compressed bitstream bytes. Any type that implements
+    /// [`AsRef<[u8]>`] works — `Vec<u8>`, `Box<[u8]>`, or a user-defined
+    /// wrapper around mapped files, network ring buffers, etc. — so the
+    /// decoder can ingest existing storage without copying.
+    pub data: Arc<dyn AsRef<[u8]> + Send + Sync>,
     /// Opaque user metadata (e.g., PTS, DTS, custom IDs) propagated through the decoder
     pub opaque: Option<Box<dyn Any + Send>>,
 }
@@ -152,21 +202,7 @@ pub struct DecodedPicture {
 // 3. Memory Allocation Traits (Zero-Copy)
 // ===========================================================================
 
-/// Plane channels inside a video frame.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum VideoPlane {
-    /// Luma (Y) plane, or the single packed plane for packed formats (like RGBA).
-    Y,
-    /// Chroma Cb (U) plane, or the interleaved UV plane for semi-planar formats (like NV12).
-    U,
-    /// Chroma Cr (V) plane.
-    V,
-    /// Alpha (transparency) plane. Optional.
-    Alpha,
-}
-
 /// A safe, immutable window into a single video plane's geometric layout.
-#[derive(Debug, Clone, Copy)]
 pub struct PlaneView<'a> {
     /// The channel type this plane represents.
     pub plane: VideoPlane,
@@ -174,68 +210,60 @@ pub struct PlaneView<'a> {
     pub data: &'a [u8],
     /// Row stride (width + horizontal padding) in bytes.
     pub stride: usize,
-    /// Active visible width in pixels.
+    /// Active visible width in pixels / samples.
     pub width: usize,
-    /// Active visible height in pixels.
+    /// Active visible height in pixels / samples.
     pub height: usize,
 }
 
-/// A safe, mutable window into a single video plane's geometric layout.
-#[derive(Debug)]
-pub struct PlaneViewMut<'a> {
-    /// The channel type this plane represents.
-    pub plane: VideoPlane,
-    /// Mutable borrow of the underlying pixel memory slice.
-    pub data: &'a mut [u8],
-    /// Row stride (width + horizontal padding) in bytes.
-    pub stride: usize,
-    /// Active visible width in pixels.
-    pub width: usize,
-    /// Active visible height in pixels.
-    pub height: usize,
-}
-
-
-/// Represents a unique, writeable video frame owned exclusively by the decoder loop.
-/// Does not require `Sync` because it is owned by a single thread at a time.
-pub trait WritableVideoFrame: Send {
-    /// Get a mutable geometric view of the specified plane.
-    /// Returns `None` if the plane is not present, or if the memory is not CPU-mappable.
-    fn plane_mut(&mut self, plane: VideoPlane) -> Option<PlaneViewMut<'_>>;
-
-    /// Retrieve mutable views of all active planes in the frame concurrently.
-    fn planes_mut(&mut self) -> Vec<PlaneViewMut<'_>>;
-
-    /// "Freezes" this writeable frame, consuming it and returning a shared,
-    /// read-only `VideoFrame` thread-safe pointer.
-    fn freeze(self: Box<Self>) -> Arc<dyn VideoFrame>;
-}
-
-/// Represents a shared, read-only video frame. Safe to be read concurrently
-/// by the rendering engine and DPB reference engines.
+/// Shared, read-only video frame. Safe to read concurrently from the
+/// DPB and the renderer. The concrete impl is decoder-internal; user
+/// code only sees `Arc<dyn VideoFrame>`.
 pub trait VideoFrame: Send + Sync {
-    /// Get a read-only geometric view of the specified plane.
-    /// Returns `None` if the plane is not present.
+    /// Read-only view of one plane's visible area, or `None` if absent.
     fn plane(&self, plane: VideoPlane) -> Option<PlaneView<'_>>;
 
-    /// Retrieve read-only views of all active planes in the frame.
-    fn planes(&self) -> Vec<PlaneView<'_>>;
+    /// Read-only views of all active planes.
+    fn planes(&self) -> [Option<PlaneView<'_>>; 4];
 }
 
+/// Per-plane memory request handed to the allocator. The decoder
+/// derives this from its internal pixel geometry; the allocator
+/// never sees video semantics.
+pub struct PlaneAllocation {
+    pub plane: VideoPlane,
+    /// Total bytes the decoder needs for this plane, already including
+    /// stride padding and per-side border bytes.
+    pub size_bytes: usize,
+    /// Required base-pointer alignment in bytes.
+    pub alignment: usize,
+}
 
-/// Implemented by the API user to allocate and manage video frame memory.
-/// Enables zero-copy decoding by allowing the user to supply custom buffers.
+/// Full memory request for one frame.
+pub struct BufferAllocation {
+    pub planes: [Option<PlaneAllocation>; 4],
+}
+
+/// User-implemented backing storage for one frame. Responsibility is
+/// memory provision and (optionally) pool bookkeeping on `Drop`.
+pub trait FrameBuffer: Send + Sync {
+    /// Raw pointer to the start of `plane`'s allocation, sized and
+    /// aligned per the matching `PlaneAllocation` the decoder
+    /// requested. `None` for planes not present in the request.
+    fn plane_ptr(&self, plane: VideoPlane) -> Option<NonNull<u8>>;
+}
+
 pub trait VideoFrameAllocator: Send + Sync {
-    /// Request a unique, writeable video frame for decoding.
-    fn alloc_frame(&self, format: &StreamFormat) -> Result<Box<dyn WritableVideoFrame>, AllocError>;
+    /// Materialize the requested per-plane allocations. Return
+    /// `UnsupportedAlignment` if a plane's alignment can't be honored.
+    fn alloc_frame(
+        &self,
+        alloc: &BufferAllocation,
+    ) -> Result<Box<dyn FrameBuffer>, AllocError>;
 }
 
-/// Error types returned during video frame memory allocation.
-#[derive(Debug, Clone)]
 pub enum AllocError {
-    /// The allocator does not support the requested stream format (resolution, chroma subsampling, etc.).
-    UnsupportedFormat(String),
-    /// The allocator has run out of memory buffers (Out of Memory).
+    UnsupportedAlignment,
     OutOfMemory,
 }
 
@@ -244,24 +272,22 @@ pub enum AllocError {
 // 4. Asynchronous Notification & Errors
 // ===========================================================================
 
-/// Callback interface implemented by the API user to receive asynchronous decoder events.
-/// In async execution, background threads will call these methods to signal picture
-/// availability or format changes.
+/// Decoder event sink. Callbacks may fire from any thread, including
+/// synchronously inside a `VideoDecoder` method before it returns.
+/// Implementations must not call back into the decoder from a callback.
 pub trait VideoDecoderCallbacks: Send + Sync {
     /// Signaled when one or more pictures are decoded and ready in the output queue.
     /// The user should call `VideoDecoder::get_picture` to retrieve them.
     fn on_picture_available(&self);
 
-    /// Signaled when resolution, color space, or cropping parameters change.
-    /// The user should update their rendering pipeline and buffer pool.
+    /// Signaled when resolution, color space, or cropping parameters
+    /// change. The user should update their rendering pipeline.
+    /// Per-plane allocation sizes / alignments arrive separately
+    /// through `alloc_frame`.
     fn on_format_changed(&self, format: StreamFormat);
-
-    /// Signaled on non-fatal or fatal decoding errors.
-    fn on_error(&self, error: DecoderError);
 }
 
 /// Error types returned by the video decoder.
-#[derive(Debug, Clone)]
 pub enum DecoderError {
     /// Failed to initialize the decoder (e.g., invalid parameters, unsupported codec config).
     InitializationFailed(String),
@@ -269,10 +295,10 @@ pub enum DecoderError {
     BitstreamCorrupted(String),
     /// The bitstream requires a codec feature not implemented by this decoder.
     FeatureNotSupported(String),
-    /// The internal packet queue is full. The caller must drain pictures to continue.
+    /// The output queue is full. The caller must drain pictures to continue.
     QueueFull,
-    /// The decoder encountered a resource allocation failure (Out of Memory).
-    OutOfMemory,
+    /// The user-supplied frame allocator rejected an allocation request.
+    Alloc(AllocError),
     /// An unrecoverable internal system error occurred (the decoder is now dead).
     Fatal(String),
 }
@@ -284,7 +310,6 @@ pub enum DecoderError {
 // ===========================================================================
 
 /// Modes for flushing the decoder pipeline.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FlushMode {
     /// Fast discard: instantly clears input/output queues and DPB.
     /// In-flight thread work is allowed to finish but its results are discarded.
@@ -302,13 +327,34 @@ pub trait VideoDecoder: Send {
     /// Submit an encoded packet to the decoder's input queue. Non-blocking in async mode.
     fn decode(&mut self, packet: EncodedPacket) -> Result<(), DecoderError>;
 
-    /// Pull the next available decoded picture from the output queue.
-    /// Returns `Ok(None)` if the queue is empty (non-blocking).
+    /// Pull the next decoded picture from the output queue, or
+    /// `Ok(None)` if the queue is empty.
+    ///
+    /// One `decode()` can yield zero or several pictures: B-frame
+    /// reordering holds pictures back until their display order is
+    /// resolved, then releases them in a batch. Pictures are emitted
+    /// in display order. Callers should drain after each `decode()`:
+    ///
+    /// The queue holds `Arc<dyn VideoFrame>` clones, so undrained
+    /// pictures keep their frame buffers alive in the user's
+    /// allocator. A caller that stops draining will eventually see
+    /// `QueueFull` from `decode()`.
     fn get_picture(&mut self) -> Result<Option<DecodedPicture>, DecoderError>;
 
     /// Flushes the decoder pipeline according to the specified `FlushMode`.
     fn flush(&mut self, mode: FlushMode) -> Result<(), DecoderError>;
+
+    /// Dispatch a codec-specific command. The payload is downcast by
+    /// the concrete decoder; unknown payload types should return
+    /// `DecoderError::FeatureNotSupported`. Outputs are written back
+    /// through `&mut` fields on the payload.
+    fn control(&mut self, cmd: &mut ControlCmd) -> Result<(), DecoderError>;
 }
+
+/// Codec-specific control payload. Concrete decoders define their own
+/// command structs (e.g. `Vp8SetReference`, `H264GetLastQuantizer`)
+/// and downcast to them.
+pub type ControlCmd = dyn Any;
 
 
 // ===========================================================================
@@ -321,40 +367,13 @@ pub fn create_decoder(
     config: DecoderConfig,
     allocator: Arc<dyn VideoFrameAllocator>,
     callback: Arc<dyn VideoDecoderCallbacks>,
-) -> Result<Box<dyn VideoDecoder>, DecoderError> {
-    match config.codec {
-        Codec::H264 => {
-            #[cfg(feature = "h264")]
-            {
-                // Concrete decoders extract their strongly-typed configuration struct
-                // from `config.custom_params` using `downcast_ref`.
-                h264::H264Decoder::new(config, allocator, callback)
-            }
-            #[cfg(not(feature = "h264"))]
-            {
-                Err(DecoderError::FeatureNotSupported("H.264 decoder feature not enabled".into()))
-            }
-        }
-        Codec::VP8 => {
-            #[cfg(feature = "vp8")]
-            {
-                vp8::Vp8Decoder::new(config, allocator, callback)
-            }
-            #[cfg(not(feature = "vp8"))]
-            {
-                Err(DecoderError::FeatureNotSupported("VP8 decoder feature not enabled".into()))
-            }
-        }
-        _ => Err(DecoderError::FeatureNotSupported("Requested codec not supported".into())),
-    }
-}
+) -> Result<Box<dyn VideoDecoder>, DecoderError>;
 
 // ===========================================================================
 // 7. Codec-Specific Configurations
 // ===========================================================================
 
 /// H.264/AVC bitstream packaging formats.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AvcBitstreamFormat {
     /// Bitstream with start codes (0x000001 or 0x00000001) separating NAL units.
     /// Common in raw bitstream files (.264) and MPEG-TS.
@@ -377,30 +396,35 @@ pub struct H264Config {
 
 ---
 
-## Memory Safety & Two-Phase Frame Lifecycle
+## Memory Safety & Frame Lifecycle
 
-Decoded pictures must often be retained inside an internal Decoded Picture
-Buffer (DPB) to serve as reference frames for future temporal predictions. This requires shared ownership (`Arc`)
-between the decoder's DPB, the output queue, and the API user's rendering engine.
+Decoded pictures are retained inside the decoder's internal DPB as reference frames for future
+temporal predictions, *and* surfaced to the caller for rendering. Both paths need read access
+concurrently — the DPB while decoding the next frame, the renderer while displaying. That requires
+shared ownership (`Arc`).
 
-If the allocator returns a shared `Arc` directly to the decoder, any write operation (like decoding slices or performing
-post-processing deblocking filters) requires exclusive mutable access (`&mut self`). In Rust, getting a mutable reference
-from an `Arc` requires calling `Arc::get_mut`, which succeeds **only if the reference count is exactly 1**.
+The challenge is that "shared" and "mutable" don't compose safely in Rust. The decoder needs
+exclusive write access while reconstructing a picture (decoding slices, loop filtering, edge
+replication); after that, multiple readers need concurrent access. Patterns like
+`Arc<Mutex<Frame>>` or `Arc::get_mut` push the conflict to runtime — `get_mut` succeeds only when
+refcount == 1, and any early DPB clone breaks it. Either route forces runtime checks (panics,
+stalls) or `unsafe` raw pointers in user code.
 
-If any other thread or internal structure clones the `Arc` early (e.g., during parallel frame decoding or early DPB
-registration), the reference count exceeds 1, causing `Arc::get_mut` to fail (`None`) at runtime. This leads to runtime
-panics, stalls, or forces the developer to use dangerous `unsafe` raw pointers to bypass the borrow checker.
+### The Design: Decoder Owns the View; User Owns the Memory
 
-### The Solution: Two-Phase Freeze Lifecycle
-To solve this, the API enforces a strict **two-phase lifecycle** directly in the type system, shifting safety checks
-from **runtime panics to compile-time guarantees**:
+The split: the user supplies raw backing memory via `FrameBuffer`; the decoder owns the
+`VideoFrame` impl that interprets it.
 
-1.  **Phase 1: Uniquely Owned Write-Handle (`Box<dyn WritableVideoFrame>`)**
-    *   The allocator returns a `Box<dyn WritableVideoFrame>`. A `Box` guarantees 100% exclusive, single-thread ownership.
-    *   The decoder can mutate the frame freely (decoding slices, applying loop filters) using standard, safe Rust
-        borrowing (`&mut self`) with absolutely no runtime overhead or safety checks.
-2.  **Phase 2: Shared Read-Only Pointer (`Arc<dyn VideoFrame>`)**
-    *   Once the picture is fully reconstructed and post-processed, the decoder calls `freeze(self: Box<Self>)`.
-    *   This consumes the unique write-handle forever, returning a shared, read-only `Arc<dyn VideoFrame>`.
-    *   This `Arc` can be cloned safely and shared concurrently among the DPB and the output queue. Because the
-        `VideoFrame` trait lacks any mutable methods, the compiler statically guarantees it can never be mutated again.
+1. **Allocation phase.** The decoder builds a `BufferAllocation` (per-plane size + alignment) and
+   calls `VideoFrameAllocator::alloc_frame`. The user returns a `Box<dyn FrameBuffer>` that exposes
+   raw `NonNull<u8>` pointers per plane. The user's surface ends here — no slice math, no
+   knowledge of borders or visible-area geometry.
+
+2. **Decode phase.** The decoder constructs decoder-internal bordered views over the buffer's raw
+   pointers and writes through them: visible-area samples, edge-replicate border, reads from
+   reference frames. All bordered access lives in decoder-internal helpers, never visible to user code.
+
+3. **Publish phase.** When the picture is final, the decoder wraps the `Box<dyn FrameBuffer>` and
+   its pixel geometry in a decoder-internal `VideoFrame` impl, hands the caller an
+   `Arc<dyn VideoFrame>`. The `Box` is consumed and gone; no further mutation is possible because
+   `VideoFrame` has no `&mut self` methods. Multiple readers (DPB, renderer) clone the `Arc` freely.

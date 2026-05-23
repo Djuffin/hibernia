@@ -33,19 +33,10 @@ pub enum ReferenceDisposition {
     NonReference,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DpbPictureStructure {
-    Frame,
-    TopField,
-    BottomField,
-}
-
 #[derive(Debug)]
 pub(crate) struct DpbPicture {
     pub picture: Picture,
     pub marking: DpbMarking,
-    pub is_idr: bool,
-    pub structure: DpbPictureStructure,
     pub needed_for_output: bool,
 }
 
@@ -441,8 +432,6 @@ mod tests {
         DpbPicture {
             picture: create_dummy_picture(frame_num, pic_order_cnt),
             marking,
-            is_idr: false,
-            structure: DpbPictureStructure::Frame,
             needed_for_output: true,
         }
     }

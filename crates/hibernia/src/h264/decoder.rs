@@ -662,8 +662,6 @@ impl Decoder {
             } else {
                 DpbMarking::UnusedForReference
             },
-            is_idr: nal.nal_unit_type == nal::NalUnitType::IDRSlice,
-            structure: super::dpb::DpbPictureStructure::Frame,
             needed_for_output: true,
         };
 

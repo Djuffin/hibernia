@@ -2,9 +2,10 @@
 //! [`crate::api::VideoDecoder::control`].
 
 /// Replace or refresh the decoder's parameter-set tables at runtime.
-/// The blob format matches [`crate::api::H264Config::extradata`]: an
-/// avcC record (`bytes[0] == 1`) or a concatenation of Annex-B-framed
-/// SPS+PPS NALs.
+/// The blob format matches `H264Config::extradata`: an avcC record
+/// (`bytes[0] == 1`) or a concatenation of Annex-B-framed SPS+PPS
+/// NALs. For the construction-time equivalent, see
+/// [`crate::api::H264Config::extradata`].
 ///
 /// Typical use:
 ///

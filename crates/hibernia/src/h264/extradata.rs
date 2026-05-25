@@ -14,7 +14,7 @@
 //!   demuxers emit this shape into `extradata`; FFmpeg's
 //!   `ff_h264_decode_extradata` accepts it as a fallback.
 //!
-//! [`parse_extradata`] sniffs which shape it has (avcC iff
+//! `parse_extradata` sniffs which shape it has (avcC iff
 //! `bytes[0] == 1`) and returns a uniform `ParsedExtradata` carrying
 //! the constituent NAL byte arrays plus, for avcC, the implied
 //! length-prefix size.

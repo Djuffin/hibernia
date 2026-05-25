@@ -35,6 +35,11 @@ pub struct H264Config {
     /// For an avcC blob, the `lengthSizeMinusOne` field overrides the
     /// default 4-byte NAL length prefix used by
     /// `AvcBitstreamFormat::Avc`.
+    ///
+    /// See also [`crate::api::H264SetExtradata`] for the runtime
+    /// equivalent (sent via `VideoDecoder::control`), and
+    /// [`crate::api::build_avcc`] for packing raw SPS/PPS NAL bytes
+    /// into a well-formed avcC record.
     pub extradata: Option<Vec<u8>>,
 }
 

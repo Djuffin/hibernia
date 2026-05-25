@@ -1,23 +1,5 @@
-//! Out-of-band H.264 parameter-set delivery.
-//!
-//! Two on-the-wire shapes show up in containers and signaling protocols:
-//!
-//! - **avcC** (ISO/IEC 14496-15 AVCDecoderConfigurationRecord): the
-//!   `avcC` box in MP4, the `CodecPrivate` in MKV / WebM. Structured
-//!   record starting with `configurationVersion = 1`. Carries one or
-//!   more SPS NALs, one or more PPS NALs, and `lengthSizeMinusOne`
-//!   which dictates the byte width of the length prefix on each
-//!   sample's NAL.
-//!
-//! - **Annex-B SPS+PPS**: a concatenation of SPS and PPS NAL units
-//!   with start codes (`0x000001` or `0x00000001`) between them. Some
-//!   demuxers emit this shape into `extradata`; FFmpeg's
-//!   `ff_h264_decode_extradata` accepts it as a fallback.
-//!
-//! `parse_extradata` sniffs which shape it has (avcC iff
-//! `bytes[0] == 1`) and returns a uniform `ParsedExtradata` carrying
-//! the constituent NAL byte arrays plus, for avcC, the implied
-//! length-prefix size.
+//! Out-of-band H.264 parameter-set delivery: avcC (ISO/IEC 14496-15)
+//! and Annex-B-framed SPS+PPS.
 
 use crate::api::bitstream::AnnexBSplitter;
 use crate::api::callbacks::DecoderError;
@@ -27,32 +9,21 @@ use super::nal::NalUnitType;
 /// Parsed contents of an ISO/IEC 14496-15 AVCDecoderConfigurationRecord.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Avcc {
-    /// NAL length-prefix size in bytes (1, 2, or 4). Value 3 is
-    /// reserved by the standard; we reject it.
+    /// NAL length-prefix size in bytes (1, 2, or 4).
     pub length_size: usize,
-    /// SPS NAL byte arrays, in record order.
     pub sps_nals: Vec<Vec<u8>>,
-    /// PPS NAL byte arrays, in record order.
     pub pps_nals: Vec<Vec<u8>>,
 }
 
-/// Outcome of sniffing an extradata blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedExtradata {
-    /// SPS+PPS NALs to feed through the regular NAL pipeline, in
-    /// record order (SPSes first, then PPSes for avcC; whatever
-    /// AnnexBSplitter yielded for the Annex-B fallback).
     pub nals: Vec<Vec<u8>>,
-    /// `Some(size)` when avcC's `lengthSizeMinusOne` is authoritative;
-    /// `None` for Annex-B-form extradata (no length size guidance).
+    /// Set when avcC dictates a length prefix size; `None` for Annex-B form.
     pub length_size: Option<usize>,
 }
 
-/// Sniff and parse an extradata blob.
-///
-/// Recognizes avcC by `bytes[0] == 1`. Otherwise treats the input as
-/// a concatenation of Annex-B-framed SPS+PPS NALs. An empty input
-/// returns an empty `ParsedExtradata` and is not an error.
+/// Recognize avcC by `bytes[0] == 1`; otherwise treat input as
+/// concatenated Annex-B-framed SPS+PPS NALs. Empty input is a no-op.
 pub(crate) fn parse_extradata(bytes: &[u8]) -> Result<ParsedExtradata, DecoderError> {
     if bytes.is_empty() {
         return Ok(ParsedExtradata { nals: Vec::new(), length_size: None });
@@ -63,19 +34,13 @@ pub(crate) fn parse_extradata(bytes: &[u8]) -> Result<ParsedExtradata, DecoderEr
         nals.extend(avcc.pps_nals);
         return Ok(ParsedExtradata { nals, length_size: Some(avcc.length_size) });
     }
-    // Annex-B fallback: concatenated SPS+PPS NALs with start codes.
     let nals: Vec<Vec<u8>> =
         AnnexBSplitter::new(bytes).filter(|n| !n.is_empty()).map(|n| n.to_vec()).collect();
     Ok(ParsedExtradata { nals, length_size: None })
 }
 
-/// Parse an avcC blob. Returns the constituent NAL byte arrays and
-/// the NAL length-prefix size implied by `lengthSizeMinusOne`.
-///
-/// Trailing bytes after the PPS list (High-profile chroma/bit-depth
-/// extension) are intentionally ignored: the inner SPS is the
-/// authoritative source for that information, and we don't currently
-/// surface anything in those fields.
+/// Parse an ISO/IEC 14496-15 AVCDecoderConfigurationRecord. Trailing
+/// bytes after the PPS list (High-profile sps_ext) are ignored.
 pub(crate) fn parse_avcc(bytes: &[u8]) -> Result<Avcc, DecoderError> {
     if bytes.len() < 7 {
         return Err(DecoderError::MisformedData(format!(
@@ -89,9 +54,8 @@ pub(crate) fn parse_avcc(bytes: &[u8]) -> Result<Avcc, DecoderError> {
             bytes[0],
         )));
     }
-    // bytes[1..4] = AVCProfileIndication, profile_compatibility,
-    // AVCLevelIndication. The inner SPS is authoritative; we don't
-    // cross-check here.
+    // bytes[1..4]: profile, profile_compatibility, level (ignored;
+    // the inner SPS is authoritative).
 
     let length_size_minus_one = bytes[4] & 0x03;
     if length_size_minus_one == 2 {
@@ -122,9 +86,6 @@ pub(crate) fn parse_avcc(bytes: &[u8]) -> Result<Avcc, DecoderError> {
         validate_nal_type(&nal, NalUnitType::PicParameterSet, &format!("avcC PPS[{i}]"))?;
         pps_nals.push(nal);
     }
-
-    // Trailing bytes (the High-profile sps_ext / chroma_format / bit_depth_*
-    // section) are accepted and ignored.
 
     Ok(Avcc { length_size, sps_nals, pps_nals })
 }
@@ -175,14 +136,9 @@ fn validate_nal_type(
     Ok(())
 }
 
-/// Build an avcC blob (ISO/IEC 14496-15
-/// AVCDecoderConfigurationRecord) from a list of SPS NAL byte arrays
-/// and PPS NAL byte arrays, with the given NAL length-prefix size in
-/// bytes (1, 2, or 4 — 3 is reserved by the standard and rejected).
-///
-/// The first SPS supplies the profile / compatibility / level bytes
-/// in the record header. With an empty `sps_list`, those fields are
-/// zero — useful for tests but won't decode anything real.
+/// Build an avcC blob from SPS/PPS NAL bytes. `length_size` must be
+/// 1, 2, or 4 (3 is reserved). Profile/level fields come from the
+/// first SPS, or zero if `sps_list` is empty.
 pub fn build_avcc(
     sps_list: &[Vec<u8>],
     pps_list: &[Vec<u8>],
@@ -229,13 +185,8 @@ fn push_u16_be(out: &mut Vec<u8>, v: u16) {
 mod tests {
     use super::*;
 
-    // Minimal NAL payloads accepted by the structural parser: the
-    // first byte's low 5 bits encode the NAL unit type. Anything past
-    // that byte is opaque to parse_avcc (we don't decode SPS / PPS
-    // contents at this layer).
-    //
-    // 0x67 = forbidden_zero_bit=0 | nal_ref_idc=3 | nal_unit_type=7 (SPS)
-    // 0x68 = forbidden_zero_bit=0 | nal_ref_idc=3 | nal_unit_type=8 (PPS)
+    // 0x67 = SPS NAL header (nal_unit_type=7); 0x68 = PPS (=8).
+    // Body bytes past the header are opaque to the structural parser.
     const SPS_NAL: &[u8] = &[0x67, 0x42, 0x00, 0x1E, 0xAB, 0xCD];
     const SPS_NAL_2: &[u8] = &[0x67, 0x4D, 0x40, 0x29, 0x11, 0x22];
     const PPS_NAL: &[u8] = &[0x68, 0xEE, 0x12];

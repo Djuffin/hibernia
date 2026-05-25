@@ -21,25 +21,11 @@ pub enum AvcBitstreamFormat {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct H264Config {
     pub bitstream_format: AvcBitstreamFormat,
-    /// Out-of-band parameter sets (avcC or Annex-B-framed SPS+PPS).
-    /// Parsed once during decoder construction and the resulting
-    /// SPS/PPS NALs are pre-loaded into the parameter-set tables
-    /// before any sample arrives.
-    ///
-    /// MP4-style callers extract this from the `avcC` box; MKV / WebM
-    /// from `CodecPrivate`; WebRTC from the `sprop-parameter-sets`
-    /// SDP attribute. When the blob starts with `0x01` the decoder
-    /// interprets it as a `AVCDecoderConfigurationRecord`; otherwise
-    /// as a concatenation of Annex-B-framed parameter-set NALs.
-    ///
-    /// For an avcC blob, the `lengthSizeMinusOne` field overrides the
-    /// default 4-byte NAL length prefix used by
-    /// `AvcBitstreamFormat::Avc`.
-    ///
-    /// See also [`crate::api::H264SetExtradata`] for the runtime
-    /// equivalent (sent via `VideoDecoder::control`), and
-    /// [`crate::api::build_avcc`] for packing raw SPS/PPS NAL bytes
-    /// into a well-formed avcC record.
+    /// Out-of-band parameter sets (avcC if `bytes[0] == 1`, otherwise
+    /// Annex-B-framed SPS+PPS). Parsed once at construction; avcC's
+    /// `lengthSizeMinusOne` overrides the default 4-byte NAL length
+    /// prefix. See also [`crate::api::H264SetExtradata`] (runtime)
+    /// and [`crate::api::build_avcc`].
     pub extradata: Option<Vec<u8>>,
 }
 

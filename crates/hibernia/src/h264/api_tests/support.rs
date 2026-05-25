@@ -123,11 +123,8 @@ pub fn split_avc_buffer(bytes: &[u8], length_size: usize) -> Result<Vec<Vec<u8>>
     Ok(nals)
 }
 
-/// Encode a sequence of `DecodedPicture`s as a y4m byte stream.
-/// Each picture's cropped display region (Y / U / V) is copied into
-/// a tight buffer and emitted as one y4m frame. Mirrors the encoder
-/// pattern in `h264::e2e_tests::decode_to_y4m` so the resulting
-/// bytes are directly comparable via `crate::y4m_cmp::compare_y4m_buffers`.
+/// Encode pictures as a y4m byte stream comparable via
+/// `crate::y4m_cmp::compare_y4m_buffers`.
 pub fn pictures_to_y4m_bytes(
     pictures: &[DecodedPicture],
     framerate: y4m::Ratio,

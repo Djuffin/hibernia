@@ -15,7 +15,7 @@ use crate::api::VideoPlane;
 use crate::h264::decoder::Decoder;
 
 use super::support::{
-    baseline_bframe_packets, drive_through, CountingCallbacks, TrackingAllocator,
+    baseline_bframe_packets, drive_through, CountingCallbacks, TrackingAllocator, PoolAllocator,
 };
 
 #[test]
@@ -138,3 +138,38 @@ fn from_alloc_error_for_decoder_error_works() {
     let dec: DecoderError = AllocError::OutOfMemory.into();
     assert_eq!(dec, DecoderError::Alloc(AllocError::OutOfMemory));
 }
+
+#[test]
+fn recycles_dropped_buffers() {
+    let callbacks = CountingCallbacks::shared();
+    let allocator = PoolAllocator::new();
+    let alloc_dyn: Arc<dyn VideoFrameAllocator> = allocator.clone();
+
+    let mut decoder = Decoder::new(DecoderConfig::new(Codec::H264), alloc_dyn, callbacks)
+        .expect("create");
+
+    // Decode 20 frames, allowing the DPB reference queue to fully fill and stabilize:
+    for packet in baseline_bframe_packets().into_iter().take(20) {
+        decoder.decode(packet).expect("decode failed");
+        while let Some(_pic) = decoder.get_picture().expect("get_picture failed") {
+            // Retrieve and immediately drop/discard the picture
+        }
+    }
+
+    let initial_allocs = allocator.count();
+    assert!(initial_allocs > 0, "expected some allocations");
+
+    // Decode 5 more frames. Since the DPB is stable, every newly decoded frame
+    // will bump an old frame out of the DPB, dropping/recycling its buffer.
+    // No new fresh allocations should occur!
+    for packet in baseline_bframe_packets().into_iter().skip(20).take(5) {
+        decoder.decode(packet).expect("decode failed");
+        while let Some(_pic) = decoder.get_picture().expect("get_picture failed") {
+            // Retrieve and immediately drop/discard the picture
+        }
+    }
+
+    let final_allocs = allocator.count();
+    assert_eq!(final_allocs, initial_allocs, "Memory pool failed: fresh allocations occurred instead of recycling!");
+}
+

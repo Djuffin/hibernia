@@ -149,12 +149,14 @@ fn streams_at_different_resolutions_report_different_formats() {
 
     decoder.flush(FlushMode::Discard).expect("discard");
 
-    // mandelbrot_720p_main is 1280x720 main profile.
-    let large_nals = read_fixture_nals(&fixture("data/mandelbrot_720p_main.264"));
+    // CAWP1_TOSHIBA_E is 352x288 CIF, distinct from SVA_BA2_D's
+    // 176x144 QCIF. Both fixtures are committed in-tree so CI can
+    // see them.
+    let large_nals = read_fixture_nals(&fixture("data/CAWP1_TOSHIBA_E/CAWP1_TOSHIBA_E.264"));
     let large_packets: Vec<_> = large_nals.iter().map(|n| annexb_packet(n)).collect();
     let large = drive_through(&mut decoder, large_packets).expect("large");
 
-    assert!(!large.is_empty(), "720p fixture must decode");
+    assert!(!large.is_empty(), "second-resolution fixture must decode");
     let large_format = large[0].format.clone();
     assert_ne!(small_format.coded_width, large_format.coded_width);
     assert_ne!(small_format.coded_height, large_format.coded_height);

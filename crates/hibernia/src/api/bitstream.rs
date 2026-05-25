@@ -21,8 +21,10 @@ pub enum AvcBitstreamFormat {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct H264Config {
     pub bitstream_format: AvcBitstreamFormat,
-    /// Out-of-band parameter sets (avcC if `bytes[0] == 1`, otherwise
-    /// Annex-B-framed SPS+PPS). Parsed once at construction; avcC's
+    /// Out-of-band parameter sets. Either an ISO/IEC 14496-15
+    /// `AVCDecoderConfigurationRecord` (a.k.a. avcC, recognized by
+    /// `bytes[0] == 1`) or a concatenation of Annex-B-framed
+    /// SPS+PPS NALs. Parsed once at construction; avcC's
     /// `lengthSizeMinusOne` overrides the default 4-byte NAL length
     /// prefix. See also [`crate::api::H264SetExtradata`] (runtime)
     /// and [`crate::api::build_avcc`].

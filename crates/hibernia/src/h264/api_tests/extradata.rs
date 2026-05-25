@@ -7,6 +7,7 @@ use crate::api::bitstream::{AvcBitstreamFormat, H264Config};
 use crate::api::callbacks::DecoderError;
 use crate::api::config::{Codec, DecoderConfig};
 use crate::api::decoder::{FlushMode, VideoDecoder};
+use crate::api::h264_commands::H264SetExtradata;
 use crate::api::{build_avcc, DefaultAllocator};
 use crate::h264::decoder::Decoder;
 
@@ -171,6 +172,122 @@ fn h264_config_default_has_no_extradata() {
     assert_eq!(config.bitstream_format, AvcBitstreamFormat::AnnexB);
     assert!(config.extradata.is_none());
 }
+
+// ---------------------------------------------------------------
+// H264SetExtradata via control()
+// ---------------------------------------------------------------
+
+#[test]
+fn set_extradata_via_control_preloads_parameter_sets() {
+    // Fresh decoder with no extradata at construction. Send the
+    // parameter sets via control() instead, then feed only slice
+    // NALs as AVC-framed packets.
+    let (sps, pps, samples) = bucket_fixture_nals(&fixture(BASELINE_BFRAME_FIXTURE));
+    let avcc = build_avcc(&sps, &pps, 4);
+
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::Avc,
+        extradata: None,
+    });
+    let mut decoder: Box<dyn VideoDecoder> = Box::new(
+        Decoder::new(config, Arc::new(DefaultAllocator), CountingCallbacks::shared())
+            .expect("construct without extradata"),
+    );
+
+    let mut cmd = H264SetExtradata { data: avcc };
+    decoder.control(&mut cmd).expect("set_extradata via control");
+
+    let packets = avc_packets_from_nals(&samples, 4);
+    let pics = drive_through(decoder.as_mut(), packets).expect("drive after control");
+    assert!(!pics.is_empty(), "samples must decode after control() preload");
+}
+
+#[test]
+fn set_extradata_via_control_with_annexb_blob_works() {
+    // Runtime path also accepts Annex-B-form extradata.
+    let (sps, pps, samples) = bucket_fixture_nals(&fixture(BASELINE_BFRAME_FIXTURE));
+    let mut nals_in_extradata = sps;
+    nals_in_extradata.extend(pps);
+    let extradata = annexb_extradata_blob(&nals_in_extradata);
+
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::AnnexB,
+        extradata: None,
+    });
+    let mut decoder: Box<dyn VideoDecoder> = Box::new(
+        Decoder::new(config, Arc::new(DefaultAllocator), CountingCallbacks::shared())
+            .expect("construct"),
+    );
+
+    let mut cmd = H264SetExtradata { data: extradata };
+    decoder.control(&mut cmd).expect("Annex-B extradata via control");
+
+    let packets = annexb_packets_from_nals(&samples);
+    let pics = drive_through(decoder.as_mut(), packets).expect("drive");
+    assert!(!pics.is_empty());
+}
+
+#[test]
+fn set_extradata_via_control_after_partial_decode() {
+    // The runtime path overwrites parameter-set table entries with
+    // matching IDs. Feed an in-band SPS+PPS, then replace them via
+    // control() with the same parameter sets re-packaged as avcC.
+    // Subsequent slices must continue to decode.
+    let (sps, pps, samples) = bucket_fixture_nals(&fixture(BASELINE_BFRAME_FIXTURE));
+
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::AnnexB,
+        extradata: None,
+    });
+    let mut decoder: Box<dyn VideoDecoder> = Box::new(
+        Decoder::new(config, Arc::new(DefaultAllocator), CountingCallbacks::shared())
+            .expect("construct"),
+    );
+
+    // In-band: SPS + PPS first.
+    for nal in sps.iter().chain(pps.iter()) {
+        decoder
+            .decode(annexb_packet(nal))
+            .expect("decode parameter-set NAL");
+    }
+
+    // Now replace them via control() with the same blob wrapped as avcC.
+    let avcc = build_avcc(&sps, &pps, 4);
+    let mut cmd = H264SetExtradata { data: avcc };
+    decoder.control(&mut cmd).expect("re-set extradata mid-stream");
+
+    // Feeding the slice NALs must still work.
+    let packets = annexb_packets_from_nals(&samples);
+    let pics = drive_through(decoder.as_mut(), packets).expect("drive");
+    assert!(!pics.is_empty());
+}
+
+#[test]
+fn malformed_extradata_via_control_returns_misformed_data() {
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::Avc,
+        extradata: None,
+    });
+    let mut decoder: Box<dyn VideoDecoder> = Box::new(
+        Decoder::new(config, Arc::new(DefaultAllocator), CountingCallbacks::shared())
+            .expect("construct"),
+    );
+
+    let mut cmd = H264SetExtradata { data: vec![0x01, 0x02] }; // truncated avcC
+    let err = decoder.control(&mut cmd).unwrap_err();
+    assert!(
+        matches!(err, DecoderError::MisformedData(_)),
+        "expected MisformedData from malformed extradata, got {err:?}",
+    );
+}
+
+// `control()` with unknown payloads is covered in
+// `api_tests/control.rs` -- the same FeatureNotSupported path that
+// existed before extradata gained a downcast arm.
+
+// ---------------------------------------------------------------
+// Other smoke tests
+// ---------------------------------------------------------------
 
 #[test]
 fn extradata_then_decode_succeeds_via_avc_framing() {

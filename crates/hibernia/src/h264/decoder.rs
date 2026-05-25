@@ -1619,9 +1619,12 @@ impl VideoDecoder for Decoder {
         Ok(())
     }
 
-    fn control(&mut self, _cmd: &mut ControlCmd) -> Result<(), DecoderError> {
+    fn control(&mut self, cmd: &mut ControlCmd) -> Result<(), DecoderError> {
+        if let Some(set) = cmd.downcast_mut::<crate::api::H264SetExtradata>() {
+            return self.apply_extradata(&set.data);
+        }
         Err(DecoderError::FeatureNotSupported(
-            "H.264 Decoder defines no control commands".into(),
+            "unknown control payload for H.264 Decoder".into(),
         ))
     }
 }

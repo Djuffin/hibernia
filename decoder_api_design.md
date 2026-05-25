@@ -390,8 +390,23 @@ pub enum AvcBitstreamFormat {
 pub struct H264Config {
     /// The format of the input bitstream.
     pub bitstream_format: AvcBitstreamFormat,
+    /// Optional out-of-band parameter sets. Either an ISO/IEC 14496-15
+    /// `AVCDecoderConfigurationRecord` (avcC) or a concatenation of
+    /// Annex-B-framed SPS+PPS NALs.
+    pub extradata: Option<Vec<u8>>,
 }
 
+/// Control command (passed via `VideoDecoder::control`) that replaces
+/// the decoder's parameter-set tables at runtime. `data` uses the same
+/// blob format as `H264Config::extradata`.
+pub struct H264SetExtradata {
+    pub data: Vec<u8>,
+}
+
+// Usage:
+//
+//     let mut cmd = H264SetExtradata { data: avcc_blob };
+//     decoder.control(&mut cmd)?;
 ```
 
 ---

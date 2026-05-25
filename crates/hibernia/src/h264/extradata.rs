@@ -183,7 +183,7 @@ fn validate_nal_type(
 /// The first SPS supplies the profile / compatibility / level bytes
 /// in the record header. With an empty `sps_list`, those fields are
 /// zero — useful for tests but won't decode anything real.
-pub(crate) fn build_avcc(
+pub fn build_avcc(
     sps_list: &[Vec<u8>],
     pps_list: &[Vec<u8>],
     length_size: u8,

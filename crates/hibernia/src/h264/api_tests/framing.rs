@@ -29,7 +29,10 @@ fn avc_decoder() -> Box<dyn VideoDecoder> {
     Box::new(
         default_decoder(
             DecoderConfig::new(Codec::H264)
-                .with_custom_params(H264Config { bitstream_format: AvcBitstreamFormat::Avc }),
+                .with_custom_params(H264Config {
+                    bitstream_format: AvcBitstreamFormat::Avc,
+                    extradata: None,
+                }),
             callbacks,
         )
         .expect("construct"),

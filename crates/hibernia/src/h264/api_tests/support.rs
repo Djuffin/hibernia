@@ -244,6 +244,45 @@ pub fn baseline_bframe_packets() -> Vec<EncodedPacket> {
     nals.iter().map(|n| annexb_packet(n)).collect()
 }
 
+/// Read a fixture's NALs and bucket them into (SPSes, PPSes,
+/// non-parameter-set NALs). Useful for the out-of-band parameter
+/// tests where the extradata path takes SPS+PPS and the sample
+/// stream is everything else.
+pub fn bucket_fixture_nals(
+    path: &Path,
+) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    let nals = read_fixture_nals(path);
+    let mut sps = Vec::new();
+    let mut pps = Vec::new();
+    let mut samples = Vec::new();
+    for nal in nals {
+        if nal.is_empty() {
+            continue;
+        }
+        let nal_type = nal[0] & 0x1F;
+        match nal_type {
+            7 => sps.push(nal),
+            8 => pps.push(nal),
+            _ => samples.push(nal),
+        }
+    }
+    (sps, pps, samples)
+}
+
+/// Wrap NALs as Annex-B-framed packets with 4-byte start codes.
+pub fn annexb_packets_from_nals(nals: &[Vec<u8>]) -> Vec<EncodedPacket> {
+    nals.iter().map(|n| annexb_packet(n)).collect()
+}
+
+/// Wrap NALs as AVC-framed packets with the given length-prefix size
+/// (1, 2, or 4 bytes). Each NAL becomes its own packet so the
+/// default queue depth stays in budget.
+pub fn avc_packets_from_nals(nals: &[Vec<u8>], length_size: usize) -> Vec<EncodedPacket> {
+    nals.iter()
+        .map(|n| EncodedPacket::from_vec(avc_packet_with_length_size(n, length_size)))
+        .collect()
+}
+
 /// Tagging variant of `baseline_bframe_packets`: each packet carries
 /// its zero-based input index as `Box<usize>` opaque metadata.
 pub fn baseline_bframe_tagged_packets() -> Vec<EncodedPacket> {

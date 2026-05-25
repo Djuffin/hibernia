@@ -23,6 +23,7 @@ pub mod frame;
 pub mod packet;
 
 pub use bitstream::{AnnexBSplitter, AvcBitstreamFormat, AvcSplitter, H264Config};
+pub use crate::h264::extradata::build_avcc;
 pub use callbacks::{DecoderError, VideoDecoderCallbacks};
 pub use decoder::{create_decoder, ControlCmd, FlushMode, VideoDecoder};
 pub use default_allocator::DefaultAllocator;

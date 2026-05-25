@@ -434,16 +434,17 @@ impl Decoder {
                 config.codec
             )));
         }
-        let (bitstream_format, avc_length_size) = if let Some(params) = config.custom_params {
-            let h264_cfg = params.downcast::<H264Config>().map_err(|_| {
-                DecoderError::InitializationFailed("custom_params is not H264Config".into())
-            })?;
-            (h264_cfg.bitstream_format, 4)
-        } else {
-            (AvcBitstreamFormat::AnnexB, 4)
-        };
+        let (bitstream_format, avc_length_size, extradata) =
+            if let Some(params) = config.custom_params {
+                let h264_cfg = *params.downcast::<H264Config>().map_err(|_| {
+                    DecoderError::InitializationFailed("custom_params is not H264Config".into())
+                })?;
+                (h264_cfg.bitstream_format, 4, h264_cfg.extradata)
+            } else {
+                (AvcBitstreamFormat::AnnexB, 4, None)
+            };
 
-        Ok(Decoder {
+        let mut decoder = Decoder {
             context: DecoderContext::default(),
             dpb: DecodedPictureBuffer::new(),
             output_pictures: VecDeque::new(),
@@ -461,7 +462,27 @@ impl Decoder {
             out_queue: VecDeque::new(),
             last_format: None,
             max_queue_depth: DEFAULT_QUEUE_DEPTH,
-        })
+        };
+        if let Some(bytes) = extradata {
+            decoder.apply_extradata(&bytes)?;
+        }
+        Ok(decoder)
+    }
+
+    /// Pre-load out-of-band SPS/PPS parameter sets from an extradata
+    /// blob (avcC or Annex-B-framed SPS+PPS concatenation). For avcC,
+    /// `lengthSizeMinusOne` updates the decoder's NAL length-prefix
+    /// size; for Annex-B-form extradata, length-size guidance is
+    /// absent and the existing value is preserved.
+    pub(crate) fn apply_extradata(&mut self, bytes: &[u8]) -> Result<(), DecoderError> {
+        let parsed = super::extradata::parse_extradata(bytes)?;
+        for nal in &parsed.nals {
+            self.decode_nal(nal)?;
+        }
+        if let Some(len) = parsed.length_size {
+            self.avc_length_size = len;
+        }
+        Ok(())
     }
 
     /// In-crate test helper: a `Decoder` over `DefaultAllocator`

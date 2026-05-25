@@ -89,7 +89,10 @@ fn decode_propagates_decoder_error_type() {
     use crate::api::bitstream::{AvcBitstreamFormat, H264Config};
     let callbacks = CountingCallbacks::shared();
     let config = DecoderConfig::new(Codec::H264)
-        .with_custom_params(H264Config { bitstream_format: AvcBitstreamFormat::Avc });
+        .with_custom_params(H264Config {
+            bitstream_format: AvcBitstreamFormat::Avc,
+            extradata: None,
+        });
     let mut decoder = default_decoder(config, callbacks).expect("construct");
     let err = decoder
         .decode(crate::api::EncodedPacket::from_vec(vec![0xff]))

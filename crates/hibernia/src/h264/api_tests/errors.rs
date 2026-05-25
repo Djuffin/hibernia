@@ -70,7 +70,10 @@ fn unsupported_codec_returns_feature_not_supported() {
 fn malformed_avc_length_yields_misformed_data() {
     let mut decoder = default_decoder(
         DecoderConfig::new(Codec::H264)
-            .with_custom_params(H264Config { bitstream_format: AvcBitstreamFormat::Avc }),
+            .with_custom_params(H264Config {
+                bitstream_format: AvcBitstreamFormat::Avc,
+                extradata: None,
+            }),
         CountingCallbacks::shared(),
     )
     .expect("construct");

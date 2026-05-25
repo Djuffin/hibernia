@@ -24,6 +24,7 @@ fn create_decoder_with_default_config_succeeds() {
 fn create_decoder_with_explicit_annexb_config_succeeds() {
     let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
         bitstream_format: AvcBitstreamFormat::AnnexB,
+        extradata: None,
     });
     let result = create_decoder(config, Arc::new(DefaultAllocator), CountingCallbacks::shared());
     assert!(result.is_ok());
@@ -33,6 +34,7 @@ fn create_decoder_with_explicit_annexb_config_succeeds() {
 fn create_decoder_with_avc_config_succeeds() {
     let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
         bitstream_format: AvcBitstreamFormat::Avc,
+        extradata: None,
     });
     let result = create_decoder(config, Arc::new(DefaultAllocator), CountingCallbacks::shared());
     assert!(result.is_ok());
@@ -49,7 +51,10 @@ fn create_decoder_low_latency_accepted() {
 fn decoder_config_builder_chain_works() {
     let config = DecoderConfig::new(Codec::H264)
         .with_latency_mode(LatencyMode::Throughput)
-        .with_custom_params(H264Config { bitstream_format: AvcBitstreamFormat::AnnexB });
+        .with_custom_params(H264Config {
+            bitstream_format: AvcBitstreamFormat::AnnexB,
+            extradata: None,
+        });
     assert_eq!(config.codec, Codec::H264);
     assert_eq!(config.latency_mode, LatencyMode::Throughput);
     assert!(config.custom_params.is_some());

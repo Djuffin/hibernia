@@ -10,6 +10,7 @@ mod construction;
 mod control;
 mod data_path;
 mod errors;
+mod extradata;
 mod flush;
 mod format;
 mod frame;

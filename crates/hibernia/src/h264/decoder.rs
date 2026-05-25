@@ -26,6 +26,7 @@ const DEFAULT_QUEUE_DEPTH: usize = 64;
 
 /// Noop callbacks for internal test fixtures.
 #[cfg(test)]
+#[allow(dead_code)]
 struct NoopCallbacks;
 
 #[cfg(test)]
@@ -489,6 +490,7 @@ impl Decoder {
     /// with noop callbacks and Annex-B framing. External callers use
     /// [`crate::api::create_decoder`].
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn test_default() -> Decoder {
         Decoder::new(
             DecoderConfig::new(Codec::H264),

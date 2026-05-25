@@ -7,9 +7,10 @@
 #![allow(dead_code)] // some helpers are used only by later phases.
 
 use std::collections::VecDeque;
-use std::fs::File;
-use std::io::BufReader;
+use std::fs::{self, File};
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -28,12 +29,123 @@ use crate::h264::nal_parser::NalParser;
 
 /// Resolve a path under the workspace root from a path relative to it.
 pub fn fixture(rel: &str) -> PathBuf {
+    workspace_root().join(rel)
+}
+
+/// Path to the cargo workspace root.
+pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap()
-        .join(rel)
+        .to_path_buf()
+}
+
+/// Scratch directory created relative to the workspace root. Removed
+/// on drop. Mirrors the helper in h264::e2e_tests.
+pub struct TestDir {
+    path: PathBuf,
+}
+
+impl TestDir {
+    pub fn new(rel: &str) -> io::Result<Self> {
+        let path = workspace_root().join(rel);
+        fs::create_dir_all(&path)?;
+        Ok(Self { path })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn join(&self, name: &str) -> PathBuf {
+        self.path.join(name)
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Invoke `ffmpeg` with the given arguments. Returns `Ok(true)` on
+/// success, `Ok(false)` when ffmpeg is absent (caller is expected to
+/// skip the test), and `Err(_)` on any other failure to spawn it.
+pub fn run_ffmpeg(args: &[&str]) -> Result<bool, String> {
+    let output = match Command::new("ffmpeg").args(args).output() {
+        Ok(o) => o,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            println!("ffmpeg not found, skipping test");
+            return Ok(false);
+        }
+        Err(e) => return Err(format!("failed to execute ffmpeg: {e}")),
+    };
+    if !output.status.success() {
+        println!(
+            "ffmpeg execution failed (exit={:?}), skipping test\nstderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Walk an AVC-framed buffer (concatenated length-prefixed NALs) and
+/// return each NAL as a separate byte vector. `length_size` matches
+/// `lengthSizeMinusOne + 1` from the avcC record (typically 4).
+pub fn split_avc_buffer(bytes: &[u8], length_size: usize) -> Result<Vec<Vec<u8>>, String> {
+    let mut nals = Vec::new();
+    let mut off = 0;
+    while off < bytes.len() {
+        if off + length_size > bytes.len() {
+            return Err(format!(
+                "truncated NAL length prefix at offset {off} ({} bytes remaining)",
+                bytes.len() - off,
+            ));
+        }
+        let mut len = 0usize;
+        for i in 0..length_size {
+            len = (len << 8) | bytes[off + i] as usize;
+        }
+        off += length_size;
+        if off + len > bytes.len() {
+            return Err(format!(
+                "NAL payload at offset {off} declares {len} bytes but only {} remain",
+                bytes.len() - off,
+            ));
+        }
+        nals.push(bytes[off..off + len].to_vec());
+        off += len;
+    }
+    Ok(nals)
+}
+
+/// Byte-compare the visible region of two `PlaneView`s sample by
+/// sample. Panics with a precise location on first mismatch.
+pub fn assert_visible_planes_equal(
+    a: &crate::api::PlaneView<'_>,
+    b: &crate::api::PlaneView<'_>,
+    context: &str,
+) {
+    assert_eq!(a.width, b.width, "{context}: width mismatch");
+    assert_eq!(a.height, b.height, "{context}: height mismatch");
+    for y in 0..a.height {
+        let a_row = &a.data[y * a.stride..y * a.stride + a.width];
+        let b_row = &b.data[y * b.stride..y * b.stride + b.width];
+        if a_row != b_row {
+            for x in 0..a.width {
+                if a_row[x] != b_row[x] {
+                    panic!(
+                        "{context}: pixel mismatch at ({x},{y}): {} vs {}",
+                        a_row[x], b_row[x],
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Read every NAL out of an Annex-B fixture file. Each entry is the

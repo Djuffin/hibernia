@@ -286,7 +286,85 @@ fn malformed_extradata_via_control_returns_misformed_data() {
 // existed before extradata gained a downcast arm.
 
 // ---------------------------------------------------------------
-// Other smoke tests
+// Real-world avcC: bear.mp4's avcC blob, hard-coded.
+//
+// BEAR_AVCC is the actual avcC byte sequence inside data/bear.mp4's
+// `avc1` sample entry, extracted once with:
+//   ffprobe -v error -select_streams v:0 -show_streams -show_data \
+//           -of json data/bear.mp4
+// Hard-coded here so the test doesn't need to parse MP4 boxes. The
+// goal of these tests is to exercise the extradata-parsing path
+// against output from a real-world encoder (x264).
+//
+// We don't try to decode bear.mp4's mdat samples directly: the very
+// first sample is a non-IDR slice (an x264 open-GOP intra refresh,
+// not an IDR), which Hibernia's slice handler cannot start fresh
+// on. A real out-of-band-parameters bitstream consumer would either
+// require an IDR or honor a recovery_point SEI -- neither path is
+// in scope for these tests. The cross-pixel cross-check that would
+// catch decoder-side regressions belongs in a fixture engineered
+// for it.
+// ---------------------------------------------------------------
+
+/// avcC blob from data/bear.mp4. High profile, 320x180, 30fps.
+const BEAR_AVCC: &[u8] = &[
+    0x01,                   // configurationVersion
+    0x64, 0x00, 0x0d,       // profile=High(100), compat=0, level=13 (1.3)
+    0xff,                   // reserved(6) | lengthSizeMinusOne=3 (4-byte)
+    0xe1,                   // reserved(3) | numOfSPS=1
+    0x00, 0x18,             // SPS length = 24
+    0x67, 0x64, 0x00, 0x0d, 0xac, 0x34, 0xe5, 0x05,
+    0x06, 0x7e, 0x78, 0x40, 0x00, 0x00, 0x19, 0x00,
+    0x00, 0x05, 0xda, 0xa3, 0xc5, 0x0a, 0x45, 0x80,
+    0x01,                   // numOfPPS=1
+    0x00, 0x05,             // PPS length = 5
+    0x68, 0xee, 0xb2, 0xc8, 0xb0,
+];
+
+#[test]
+fn bear_avcc_parses_through_extradata_pipeline() {
+    // Real-world x264 avcC must parse cleanly via parse_extradata
+    // and surface SPS+PPS NALs of the expected NAL types. This
+    // catches regressions where our parser would reject real-world
+    // encoder output (e.g., trailing High-profile fields, specific
+    // reserved-bit patterns).
+    let parsed = crate::h264::extradata::parse_extradata(BEAR_AVCC).expect("parse BEAR_AVCC");
+    assert_eq!(parsed.length_size, Some(4));
+    assert_eq!(parsed.nals.len(), 2, "one SPS + one PPS expected");
+    assert_eq!(parsed.nals[0][0] & 0x1F, 7, "first NAL must be SPS");
+    assert_eq!(parsed.nals[1][0] & 0x1F, 8, "second NAL must be PPS");
+}
+
+#[test]
+fn bear_avcc_at_construction_initializes_decoder() {
+    // Constructing a decoder with bear.mp4's avcC as extradata must
+    // succeed: the parser accepts it, the inner SPS parser accepts
+    // the High-profile SPS, and the parameter-set tables get
+    // populated. No actual samples are fed.
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::Avc,
+        extradata: Some(BEAR_AVCC.to_vec()),
+    });
+    let _decoder = default_decoder(config, CountingCallbacks::shared())
+        .expect("construct with bear.mp4's avcC");
+}
+
+#[test]
+fn bear_avcc_via_control_initializes_decoder() {
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::Avc,
+        extradata: None,
+    });
+    let mut decoder: Box<dyn VideoDecoder> = Box::new(
+        Decoder::new(config, Arc::new(DefaultAllocator), CountingCallbacks::shared())
+            .expect("construct"),
+    );
+    let mut cmd = H264SetExtradata { data: BEAR_AVCC.to_vec() };
+    decoder.control(&mut cmd).expect("apply BEAR_AVCC via control");
+}
+
+// ---------------------------------------------------------------
+// Smoke tests
 // ---------------------------------------------------------------
 
 #[test]

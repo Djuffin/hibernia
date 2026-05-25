@@ -163,15 +163,3 @@ fn streams_at_different_resolutions_report_different_formats() {
     // Each format announcement should have fired.
     assert_eq!(callbacks.format_change_count(), 2);
 }
-
-#[test]
-fn color_range_defaults_to_limited_when_absent() {
-    // Without a VUI, the API doesn't construct a ColorSpace at all.
-    // This is the "absent => None" path verified in no_color_space_when_vui_absent.
-    // What we additionally check here is the unit-test helper in
-    // h264::format that maps a hypothetical "VUI present but no
-    // color description" case to Limited. The behavior is exercised
-    // by the format-mapping unit tests in h264::format::tests; this
-    // test just asserts the type-level default for ColorRange.
-    assert_eq!(ColorRange::default(), ColorRange::Limited);
-}

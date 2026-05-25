@@ -383,8 +383,12 @@ const BEAR_SAMPLES: &[(usize, usize)] = &[
     (35895, 1368), (37263, 358),  (37621, 1433), (39054, 403),  (39925, 1075),
 ];
 
-#[test]
-fn bear_avc_path_matches_ffmpeg_golden_y4m() -> Result<(), String> {
+/// Decode bear.mp4 via the AVC + out-of-band-parameters path with
+/// the given `extradata_delivery` strategy, then compare the
+/// resulting y4m against ffmpeg's golden.
+fn bear_avc_matches_ffmpeg_golden_with(
+    extradata_delivery: ExtradataDelivery,
+) -> Result<(), String> {
     use std::fs;
 
     use super::support::{pictures_to_y4m_bytes, run_ffmpeg, workspace_root, TestDir};
@@ -398,7 +402,6 @@ fn bear_avc_path_matches_ffmpeg_golden_y4m() -> Result<(), String> {
     }
     let mp4_bytes = fs::read(&bear_mp4).map_err(|e| format!("read bear.mp4: {e}"))?;
 
-    // Generate the golden y4m via ffmpeg at test time.
     let test_dir =
         TestDir::new("target/tmp_extradata_bear_golden").map_err(|e| e.to_string())?;
     let golden_path = test_dir.join("golden.y4m");
@@ -409,27 +412,56 @@ fn bear_avc_path_matches_ffmpeg_golden_y4m() -> Result<(), String> {
     }
     let expected_y4m = fs::read(&golden_path).map_err(|e| format!("read golden: {e}"))?;
 
-    // Decode bear.mp4 via the AVC + extradata path, slicing samples
-    // straight out of the mp4 by hard-coded offsets.
-    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
-        bitstream_format: AvcBitstreamFormat::Avc,
-        extradata: Some(BEAR_AVCC.to_vec()),
-    });
-    let mut decoder = default_decoder(config, CountingCallbacks::shared())
-        .map_err(|e| format!("construct: {e:?}"))?;
+    let (config, send_control) = match extradata_delivery {
+        ExtradataDelivery::AtConstruction => (
+            DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+                bitstream_format: AvcBitstreamFormat::Avc,
+                extradata: Some(BEAR_AVCC.to_vec()),
+            }),
+            false,
+        ),
+        ExtradataDelivery::ViaControl => (
+            DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+                bitstream_format: AvcBitstreamFormat::Avc,
+                extradata: None,
+            }),
+            true,
+        ),
+    };
+    let mut decoder: Box<dyn VideoDecoder> = Box::new(
+        Decoder::new(config, Arc::new(DefaultAllocator), CountingCallbacks::shared())
+            .map_err(|e| format!("construct: {e:?}"))?,
+    );
+    if send_control {
+        let mut cmd = H264SetExtradata { data: BEAR_AVCC.to_vec() };
+        decoder.control(&mut cmd).map_err(|e| format!("control: {e:?}"))?;
+    }
 
     let packets: Vec<_> = BEAR_SAMPLES
         .iter()
         .map(|(off, size)| EncodedPacket::from_vec(mp4_bytes[*off..*off + *size].to_vec()))
         .collect();
-    let pictures = drive_through(&mut decoder, packets).map_err(|e| format!("drive: {e:?}"))?;
+    let pictures =
+        drive_through(decoder.as_mut(), packets).map_err(|e| format!("drive: {e:?}"))?;
     assert_eq!(pictures.len(), 30, "expected 30 frames, got {}", pictures.len());
 
-    // bear.mp4's framerate is 30000/1001 (29.97 fps). The y4m header
-    // ratio is cosmetic for compare_y4m_buffers -- only frame bytes
-    // are compared -- so any value works here.
     let actual_y4m = pictures_to_y4m_bytes(&pictures, y4m::Ratio { num: 30000, den: 1001 });
     compare_y4m_buffers(&actual_y4m, &expected_y4m)
+}
+
+enum ExtradataDelivery {
+    AtConstruction,
+    ViaControl,
+}
+
+#[test]
+fn bear_avc_extradata_at_construction_matches_ffmpeg_golden() -> Result<(), String> {
+    bear_avc_matches_ffmpeg_golden_with(ExtradataDelivery::AtConstruction)
+}
+
+#[test]
+fn bear_avc_extradata_via_control_matches_ffmpeg_golden() -> Result<(), String> {
+    bear_avc_matches_ffmpeg_golden_with(ExtradataDelivery::ViaControl)
 }
 
 // ---------------------------------------------------------------

@@ -38,8 +38,13 @@ struct DefaultFrameBuffer {
 }
 
 impl FrameBuffer for DefaultFrameBuffer {
-    fn plane_ptr(&self, plane: VideoPlane) -> Option<NonNull<u8>> {
-        self.buffers.iter().flatten().find(|b| b.plane == plane).map(|b| b.ptr)
+    fn plane_ptr(&self, plane: VideoPlane) -> Option<NonNull<[u8]>> {
+        self.buffers.iter().flatten()
+            .find(|b| b.plane == plane)
+            .map(|b| {
+                let slice_ptr = std::ptr::slice_from_raw_parts_mut(b.ptr.as_ptr(), b.layout.size());
+                NonNull::new(slice_ptr).unwrap()
+            })
     }
 }
 
@@ -94,9 +99,9 @@ mod tests {
         let u = buf.plane_ptr(VideoPlane::U).expect("U present");
         let v = buf.plane_ptr(VideoPlane::V).expect("V present");
         assert!(buf.plane_ptr(VideoPlane::Alpha).is_none());
-        assert_eq!(y.as_ptr() as usize % 16, 0);
-        assert_eq!(u.as_ptr() as usize % 16, 0);
-        assert_eq!(v.as_ptr() as usize % 16, 0);
+        assert_eq!(y.cast::<u8>().as_ptr() as usize % 16, 0);
+        assert_eq!(u.cast::<u8>().as_ptr() as usize % 16, 0);
+        assert_eq!(v.cast::<u8>().as_ptr() as usize % 16, 0);
     }
 
     #[test]
@@ -127,7 +132,7 @@ mod tests {
         };
         let buf = DefaultAllocator.alloc_frame(&req).expect("alloc");
         let ptr = buf.plane_ptr(VideoPlane::Y).unwrap();
-        let bytes = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), 64) };
+        let bytes = unsafe { ptr.as_ref() };
         assert!(bytes.iter().all(|&b| b == 0));
     }
 }

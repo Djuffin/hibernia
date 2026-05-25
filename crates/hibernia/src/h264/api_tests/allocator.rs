@@ -32,7 +32,7 @@ fn default_allocator_returns_aligned_pointers() {
     let buf = alloc.alloc_frame(&req).expect("alloc");
     for ch in [VideoPlane::Y, VideoPlane::U, VideoPlane::V] {
         let ptr = buf.plane_ptr(ch).expect("plane present");
-        assert_eq!(ptr.as_ptr() as usize % 16, 0, "plane {:?} not 16-aligned", ch);
+        assert_eq!(ptr.cast::<u8>().as_ptr() as usize % 16, 0, "plane {:?} not 16-aligned", ch);
     }
 }
 

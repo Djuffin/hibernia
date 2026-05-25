@@ -67,6 +67,14 @@ impl BorderedFrame {
             ],
         };
         let buffer = alloc.alloc_frame(&req)?;
+        let y_ptr = buffer.plane_ptr(VideoPlane::Y).ok_or(AllocError::OutOfMemory)?;
+        let u_ptr = buffer.plane_ptr(VideoPlane::U).ok_or(AllocError::OutOfMemory)?;
+        let v_ptr = buffer.plane_ptr(VideoPlane::V).ok_or(AllocError::OutOfMemory)?;
+
+        assert!(y_ptr.len() >= luma_cfg.total_bytes(), "Allocator returned undersized Y plane");
+        assert!(u_ptr.len() >= chroma_cfg.total_bytes(), "Allocator returned undersized U plane");
+        assert!(v_ptr.len() >= chroma_cfg.total_bytes(), "Allocator returned undersized V plane");
+
         Ok(Self {
             buffer,
             luma: PlaneSlot { plane: VideoPlane::Y, cfg: luma_cfg },
@@ -87,23 +95,19 @@ impl BorderedFrame {
     pub fn plane(&self, plane: ColorPlane) -> Plane<'_> {
         let slot = self.slot(plane).expect("plane present");
         let ptr = self.buffer.plane_ptr(slot.plane).expect("buffer has plane");
-        // SAFETY: `buffer` owns the underlying allocation for `slot.plane`
-        // sized to `slot.cfg.total_bytes()`. The returned slice borrows
-        // from `&self`, so the allocation outlives the slice. No other
-        // mutable access is possible while this shared borrow exists.
-        let data = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), slot.cfg.total_bytes()) };
+        // SAFETY: ptr is a fat slice pointer owned by buffer. We already verified 
+        // ptr.len() is large enough at allocation time. The returned reference 
+        // borrows securely from &self.
+        let data = unsafe { ptr.as_ref() };
         Plane { data, cfg: slot.cfg }
     }
 
     /// Mutable view of a plane.
     pub fn plane_mut(&mut self, plane: ColorPlane) -> PlaneMut<'_> {
         let slot = *self.slot(plane).expect("plane present");
-        let ptr = self.buffer.plane_ptr(slot.plane).expect("buffer has plane");
-        // SAFETY: same as `plane`, but with `&mut self` enforcing
-        // exclusive access. Each plane has a distinct allocation, so
-        // even multiple sequential `plane_mut` calls return slices
-        // over disjoint memory.
-        let data = unsafe { std::slice::from_raw_parts_mut(ptr.as_ptr(), slot.cfg.total_bytes()) };
+        let mut ptr = self.buffer.plane_ptr(slot.plane).expect("buffer has plane");
+        // SAFETY: Same as above, with &mut self enforcing exclusive borrow.
+        let data = unsafe { ptr.as_mut() };
         PlaneMut { data, cfg: slot.cfg }
     }
 }
@@ -143,13 +147,10 @@ impl VideoFrame for PublishedFrame {
         let cfg = slot.cfg;
         let visible_bytes = (cfg.height.saturating_sub(1)) * cfg.stride + cfg.width;
         let origin = cfg.yorigin * cfg.stride + cfg.xorigin;
-        // SAFETY: slot's allocation is sized to total_bytes(), which is
-        // strictly larger than `origin + visible_bytes`. The published
-        // frame is read-only and shared via `Arc`, so no mutation
-        // happens for the lifetime of the returned borrow.
-        let data = unsafe {
-            std::slice::from_raw_parts(ptr.as_ptr().add(origin), visible_bytes)
-        };
+        
+        let slice_ref = unsafe { ptr.as_ref() };
+        let data = &slice_ref[origin..(origin + visible_bytes)];
+
         Some(PlaneView {
             plane: slot.plane,
             data,

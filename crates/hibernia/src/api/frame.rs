@@ -49,10 +49,10 @@ pub struct BufferAllocation {
 /// User-implemented backing storage for one frame. Responsibility is
 /// memory provision and (optionally) pool bookkeeping on `Drop`.
 pub trait FrameBuffer: Send + Sync {
-    /// Raw pointer to the start of `plane`'s allocation, sized and
+    /// Sized fat pointer to the `plane`'s allocation, sized and
     /// aligned per the matching `PlaneAllocation` the decoder
     /// requested. `None` for planes not present in the request.
-    fn plane_ptr(&self, plane: VideoPlane) -> Option<NonNull<u8>>;
+    fn plane_ptr(&self, plane: VideoPlane) -> Option<NonNull<[u8]>>;
 }
 
 pub trait VideoFrameAllocator: Send + Sync {

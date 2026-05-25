@@ -292,18 +292,17 @@ fn malformed_extradata_via_control_returns_misformed_data() {
 // `avc1` sample entry, extracted once with:
 //   ffprobe -v error -select_streams v:0 -show_streams -show_data \
 //           -of json data/bear.mp4
-// Hard-coded here so the test doesn't need to parse MP4 boxes. The
-// goal of these tests is to exercise the extradata-parsing path
-// against output from a real-world encoder (x264).
+// Hard-coded here so the test doesn't need to parse MP4 boxes.
 //
-// We don't try to decode bear.mp4's mdat samples directly: the very
-// first sample is a non-IDR slice (an x264 open-GOP intra refresh,
-// not an IDR), which Hibernia's slice handler cannot start fresh
-// on. A real out-of-band-parameters bitstream consumer would either
-// require an IDR or honor a recovery_point SEI -- neither path is
-// in scope for these tests. The cross-pixel cross-check that would
-// catch decoder-side regressions belongs in a fixture engineered
-// for it.
+// The cross-check test below runs ffmpeg at test time to produce
+// two views of bear.mp4 from a single source of truth (the MP4):
+//   1. Annex-B with in-band parameter sets (via mp4toannexb).
+//   2. Annex-B with SPS/PPS/SEI stripped (via extract_extradata),
+//      which we then re-frame as length-prefixed AVC samples in
+//      test code -- ffmpeg's `-f h264` only emits Annex-B.
+// Both views go through Hibernia and must produce identical
+// pixels: the only difference is whether the parameter sets reach
+// the decoder in-band or out-of-band.
 // ---------------------------------------------------------------
 
 /// avcC blob from data/bear.mp4. High profile, 320x180, 30fps.
@@ -361,6 +360,151 @@ fn bear_avcc_via_control_initializes_decoder() {
     );
     let mut cmd = H264SetExtradata { data: BEAR_AVCC.to_vec() };
     decoder.control(&mut cmd).expect("apply BEAR_AVCC via control");
+}
+
+// Hard-coded mdat sample offsets and sizes inside data/bear.mp4.
+// Each entry is (file_offset, byte_size) for one AVC-framed access
+// unit (length-prefixed NAL(s) with the avcC's 4-byte length
+// prefix). Sorted by file position, which matches decode order.
+//
+// Generated once with:
+//   ffprobe -v error -select_streams v:0 -show_packets \
+//           -of csv=p=0:nokey=1 data/bear.mp4
+// (column 8 = size, column 9 = pos)
+//
+// Hard-coded so the test reads bear.mp4 directly and never asks
+// ffmpeg to re-frame it.
+const BEAR_SAMPLES: &[(usize, usize)] = &[
+    (6619, 6355),  (12974, 1028), (14002, 216),  (14218, 1223), (15441, 329),
+    (15770, 1160), (16930, 260),  (17190, 1071), (18261, 212),  (18473, 1014),
+    (19487, 242),  (19729, 1271), (21000, 220),  (21220, 1375), (22595, 318),
+    (27600, 1310), (28910, 359),  (29269, 1275), (30544, 357),  (30901, 1462),
+    (32363, 357),  (32720, 1287), (34007, 283),  (34290, 1261), (35551, 344),
+    (35895, 1368), (37263, 358),  (37621, 1433), (39054, 403),  (39925, 1075),
+];
+
+#[test]
+fn bear_avc_path_matches_ffmpeg_golden_yuv() -> Result<(), String> {
+    use std::fs;
+
+    use super::support::{run_ffmpeg, workspace_root, TestDir};
+    use crate::api::{EncodedPacket, VideoPlane};
+
+    // bear.mp4 is 320x180, 30 frames.
+    const WIDTH: usize = 320;
+    const HEIGHT: usize = 180;
+    const FRAMES: usize = 30;
+    const Y_BYTES: usize = WIDTH * HEIGHT;
+    const C_BYTES: usize = (WIDTH / 2) * (HEIGHT / 2);
+    const FRAME_BYTES: usize = Y_BYTES + 2 * C_BYTES;
+
+    let bear_mp4 = workspace_root().join("data/bear.mp4");
+    if !bear_mp4.exists() {
+        println!("{} missing, skipping test", bear_mp4.display());
+        return Ok(());
+    }
+    let mp4_bytes = fs::read(&bear_mp4).map_err(|e| format!("read bear.mp4: {e}"))?;
+
+    // Generate the golden YUV via ffmpeg at test time.
+    let test_dir =
+        TestDir::new("target/tmp_extradata_bear_golden").map_err(|e| e.to_string())?;
+    let golden_path = test_dir.join("golden.yuv");
+    let mp4_str = bear_mp4.to_string_lossy().into_owned();
+    let golden_str = golden_path.to_string_lossy().into_owned();
+    if !run_ffmpeg(&[
+        "-y", "-v", "error", "-i", &mp4_str,
+        "-f", "rawvideo", "-pix_fmt", "yuv420p", &golden_str,
+    ])? {
+        return Ok(());
+    }
+    let golden = fs::read(&golden_path).map_err(|e| format!("read golden: {e}"))?;
+    assert_eq!(
+        golden.len(),
+        FRAMES * FRAME_BYTES,
+        "golden yuv has unexpected size: {} bytes",
+        golden.len(),
+    );
+
+    // Decode bear.mp4 via the AVC + extradata path, slicing samples
+    // straight out of the mp4 by hard-coded offsets.
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::Avc,
+        extradata: Some(BEAR_AVCC.to_vec()),
+    });
+    let mut decoder = default_decoder(config, CountingCallbacks::shared())
+        .map_err(|e| format!("construct: {e:?}"))?;
+
+    let packets: Vec<_> = BEAR_SAMPLES
+        .iter()
+        .map(|(off, size)| EncodedPacket::from_vec(mp4_bytes[*off..*off + *size].to_vec()))
+        .collect();
+    let pics = drive_through(&mut decoder, packets).map_err(|e| format!("drive: {e:?}"))?;
+    assert_eq!(pics.len(), FRAMES, "expected {FRAMES} frames, got {}", pics.len());
+
+    // Per-pixel comparison against the golden YUV. ffmpeg outputs
+    // the cropped display area (320x180); PlaneView gives us the
+    // coded area (320x192, MB-aligned). Use the format's crop
+    // offsets and display dimensions to extract the matching region.
+    for (i, pic) in pics.iter().enumerate() {
+        let golden_base = i * FRAME_BYTES;
+        let golden_y = &golden[golden_base..golden_base + Y_BYTES];
+        let golden_u = &golden[golden_base + Y_BYTES..golden_base + Y_BYTES + C_BYTES];
+        let golden_v =
+            &golden[golden_base + Y_BYTES + C_BYTES..golden_base + Y_BYTES + 2 * C_BYTES];
+
+        let fmt = &pic.format;
+        let dw = fmt.display_width;
+        let dh = fmt.display_height;
+        let cx = fmt.crop_left;
+        let cy = fmt.crop_top;
+        assert_eq!(dw, WIDTH, "frame {i}: display_width");
+        assert_eq!(dh, HEIGHT, "frame {i}: display_height");
+
+        let y = pic.frame.plane(VideoPlane::Y).expect("Y");
+        let u = pic.frame.plane(VideoPlane::U).expect("U");
+        let v = pic.frame.plane(VideoPlane::V).expect("V");
+        assert_cropped_plane_equals(&y, cx, cy, dw, dh, golden_y, &format!("frame {i} Y"));
+        assert_cropped_plane_equals(
+            &u, cx / 2, cy / 2, dw / 2, dh / 2, golden_u,
+            &format!("frame {i} U"),
+        );
+        assert_cropped_plane_equals(
+            &v, cx / 2, cy / 2, dw / 2, dh / 2, golden_v,
+            &format!("frame {i} V"),
+        );
+    }
+    Ok(())
+}
+
+/// Byte-compare the cropped display region of a `PlaneView` against a
+/// tightly-packed reference of size `disp_w * disp_h`.
+fn assert_cropped_plane_equals(
+    view: &crate::api::PlaneView<'_>,
+    crop_x: usize,
+    crop_y: usize,
+    disp_w: usize,
+    disp_h: usize,
+    golden: &[u8],
+    context: &str,
+) {
+    assert_eq!(golden.len(), disp_w * disp_h, "{context}: golden length mismatch");
+    assert!(crop_x + disp_w <= view.width, "{context}: crop_x+disp_w overflows view");
+    assert!(crop_y + disp_h <= view.height, "{context}: crop_y+disp_h overflows view");
+    for y in 0..disp_h {
+        let row_base = (crop_y + y) * view.stride + crop_x;
+        let view_row = &view.data[row_base..row_base + disp_w];
+        let golden_row = &golden[y * disp_w..(y + 1) * disp_w];
+        if view_row != golden_row {
+            for x in 0..disp_w {
+                if view_row[x] != golden_row[x] {
+                    panic!(
+                        "{context}: pixel mismatch at ({x},{y}): hibernia={} ffmpeg={}",
+                        view_row[x], golden_row[x],
+                    );
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------

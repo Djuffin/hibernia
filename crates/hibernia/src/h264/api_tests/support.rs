@@ -123,29 +123,57 @@ pub fn split_avc_buffer(bytes: &[u8], length_size: usize) -> Result<Vec<Vec<u8>>
     Ok(nals)
 }
 
-/// Byte-compare the visible region of two `PlaneView`s sample by
-/// sample. Panics with a precise location on first mismatch.
-pub fn assert_visible_planes_equal(
-    a: &crate::api::PlaneView<'_>,
-    b: &crate::api::PlaneView<'_>,
-    context: &str,
-) {
-    assert_eq!(a.width, b.width, "{context}: width mismatch");
-    assert_eq!(a.height, b.height, "{context}: height mismatch");
-    for y in 0..a.height {
-        let a_row = &a.data[y * a.stride..y * a.stride + a.width];
-        let b_row = &b.data[y * b.stride..y * b.stride + b.width];
-        if a_row != b_row {
-            for x in 0..a.width {
-                if a_row[x] != b_row[x] {
-                    panic!(
-                        "{context}: pixel mismatch at ({x},{y}): {} vs {}",
-                        a_row[x], b_row[x],
-                    );
+/// Encode a sequence of `DecodedPicture`s as a y4m byte stream.
+/// Each picture's cropped display region (Y / U / V) is copied into
+/// a tight buffer and emitted as one y4m frame. Mirrors the encoder
+/// pattern in `h264::e2e_tests::decode_to_y4m` so the resulting
+/// bytes are directly comparable via `crate::y4m_cmp::compare_y4m_buffers`.
+pub fn pictures_to_y4m_bytes(
+    pictures: &[DecodedPicture],
+    framerate: y4m::Ratio,
+) -> Vec<u8> {
+    let Some(first) = pictures.first() else { return Vec::new() };
+    let display_width = first.format.display_width;
+    let display_height = first.format.display_height;
+
+    let mut out = Vec::<u8>::new();
+    {
+        let writer = io::BufWriter::new(&mut out);
+        let mut encoder = y4m::encode(display_width, display_height, framerate)
+            .with_colorspace(y4m::Colorspace::C420)
+            .write_header(writer)
+            .expect("write y4m header");
+
+        for pic in pictures {
+            let dw = pic.format.display_width;
+            let dh = pic.format.display_height;
+            let cx = pic.format.crop_left;
+            let cy = pic.format.crop_top;
+
+            let mut planes: [Vec<u8>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+            for (i, channel) in [VideoPlane::Y, VideoPlane::U, VideoPlane::V].iter().enumerate() {
+                let view = pic.frame.plane(*channel).expect("plane present");
+                let (cw, ch, cx_p, cy_p) = if i == 0 {
+                    (dw, dh, cx, cy)
+                } else {
+                    (dw / 2, dh / 2, cx / 2, cy / 2)
+                };
+                let buf = &mut planes[i];
+                buf.resize(cw * ch, 0);
+                for row in 0..ch {
+                    let src = (cy_p + row) * view.stride + cx_p;
+                    let dst = row * cw;
+                    buf[dst..dst + cw].copy_from_slice(&view.data[src..src + cw]);
                 }
             }
+            let yuv = y4m::Frame::new(
+                [planes[0].as_slice(), planes[1].as_slice(), planes[2].as_slice()],
+                None,
+            );
+            encoder.write_frame(&yuv).expect("write y4m frame");
         }
     }
+    out
 }
 
 /// Read every NAL out of an Annex-B fixture file. Each entry is the

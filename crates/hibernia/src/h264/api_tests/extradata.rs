@@ -384,19 +384,12 @@ const BEAR_SAMPLES: &[(usize, usize)] = &[
 ];
 
 #[test]
-fn bear_avc_path_matches_ffmpeg_golden_yuv() -> Result<(), String> {
+fn bear_avc_path_matches_ffmpeg_golden_y4m() -> Result<(), String> {
     use std::fs;
 
-    use super::support::{run_ffmpeg, workspace_root, TestDir};
-    use crate::api::{EncodedPacket, VideoPlane};
-
-    // bear.mp4 is 320x180, 30 frames.
-    const WIDTH: usize = 320;
-    const HEIGHT: usize = 180;
-    const FRAMES: usize = 30;
-    const Y_BYTES: usize = WIDTH * HEIGHT;
-    const C_BYTES: usize = (WIDTH / 2) * (HEIGHT / 2);
-    const FRAME_BYTES: usize = Y_BYTES + 2 * C_BYTES;
+    use super::support::{pictures_to_y4m_bytes, run_ffmpeg, workspace_root, TestDir};
+    use crate::api::EncodedPacket;
+    use crate::y4m_cmp::compare_y4m_buffers;
 
     let bear_mp4 = workspace_root().join("data/bear.mp4");
     if !bear_mp4.exists() {
@@ -405,25 +398,16 @@ fn bear_avc_path_matches_ffmpeg_golden_yuv() -> Result<(), String> {
     }
     let mp4_bytes = fs::read(&bear_mp4).map_err(|e| format!("read bear.mp4: {e}"))?;
 
-    // Generate the golden YUV via ffmpeg at test time.
+    // Generate the golden y4m via ffmpeg at test time.
     let test_dir =
         TestDir::new("target/tmp_extradata_bear_golden").map_err(|e| e.to_string())?;
-    let golden_path = test_dir.join("golden.yuv");
+    let golden_path = test_dir.join("golden.y4m");
     let mp4_str = bear_mp4.to_string_lossy().into_owned();
     let golden_str = golden_path.to_string_lossy().into_owned();
-    if !run_ffmpeg(&[
-        "-y", "-v", "error", "-i", &mp4_str,
-        "-f", "rawvideo", "-pix_fmt", "yuv420p", &golden_str,
-    ])? {
+    if !run_ffmpeg(&["-y", "-v", "error", "-i", &mp4_str, &golden_str])? {
         return Ok(());
     }
-    let golden = fs::read(&golden_path).map_err(|e| format!("read golden: {e}"))?;
-    assert_eq!(
-        golden.len(),
-        FRAMES * FRAME_BYTES,
-        "golden yuv has unexpected size: {} bytes",
-        golden.len(),
-    );
+    let expected_y4m = fs::read(&golden_path).map_err(|e| format!("read golden: {e}"))?;
 
     // Decode bear.mp4 via the AVC + extradata path, slicing samples
     // straight out of the mp4 by hard-coded offsets.
@@ -438,73 +422,14 @@ fn bear_avc_path_matches_ffmpeg_golden_yuv() -> Result<(), String> {
         .iter()
         .map(|(off, size)| EncodedPacket::from_vec(mp4_bytes[*off..*off + *size].to_vec()))
         .collect();
-    let pics = drive_through(&mut decoder, packets).map_err(|e| format!("drive: {e:?}"))?;
-    assert_eq!(pics.len(), FRAMES, "expected {FRAMES} frames, got {}", pics.len());
+    let pictures = drive_through(&mut decoder, packets).map_err(|e| format!("drive: {e:?}"))?;
+    assert_eq!(pictures.len(), 30, "expected 30 frames, got {}", pictures.len());
 
-    // Per-pixel comparison against the golden YUV. ffmpeg outputs
-    // the cropped display area (320x180); PlaneView gives us the
-    // coded area (320x192, MB-aligned). Use the format's crop
-    // offsets and display dimensions to extract the matching region.
-    for (i, pic) in pics.iter().enumerate() {
-        let golden_base = i * FRAME_BYTES;
-        let golden_y = &golden[golden_base..golden_base + Y_BYTES];
-        let golden_u = &golden[golden_base + Y_BYTES..golden_base + Y_BYTES + C_BYTES];
-        let golden_v =
-            &golden[golden_base + Y_BYTES + C_BYTES..golden_base + Y_BYTES + 2 * C_BYTES];
-
-        let fmt = &pic.format;
-        let dw = fmt.display_width;
-        let dh = fmt.display_height;
-        let cx = fmt.crop_left;
-        let cy = fmt.crop_top;
-        assert_eq!(dw, WIDTH, "frame {i}: display_width");
-        assert_eq!(dh, HEIGHT, "frame {i}: display_height");
-
-        let y = pic.frame.plane(VideoPlane::Y).expect("Y");
-        let u = pic.frame.plane(VideoPlane::U).expect("U");
-        let v = pic.frame.plane(VideoPlane::V).expect("V");
-        assert_cropped_plane_equals(&y, cx, cy, dw, dh, golden_y, &format!("frame {i} Y"));
-        assert_cropped_plane_equals(
-            &u, cx / 2, cy / 2, dw / 2, dh / 2, golden_u,
-            &format!("frame {i} U"),
-        );
-        assert_cropped_plane_equals(
-            &v, cx / 2, cy / 2, dw / 2, dh / 2, golden_v,
-            &format!("frame {i} V"),
-        );
-    }
-    Ok(())
-}
-
-/// Byte-compare the cropped display region of a `PlaneView` against a
-/// tightly-packed reference of size `disp_w * disp_h`.
-fn assert_cropped_plane_equals(
-    view: &crate::api::PlaneView<'_>,
-    crop_x: usize,
-    crop_y: usize,
-    disp_w: usize,
-    disp_h: usize,
-    golden: &[u8],
-    context: &str,
-) {
-    assert_eq!(golden.len(), disp_w * disp_h, "{context}: golden length mismatch");
-    assert!(crop_x + disp_w <= view.width, "{context}: crop_x+disp_w overflows view");
-    assert!(crop_y + disp_h <= view.height, "{context}: crop_y+disp_h overflows view");
-    for y in 0..disp_h {
-        let row_base = (crop_y + y) * view.stride + crop_x;
-        let view_row = &view.data[row_base..row_base + disp_w];
-        let golden_row = &golden[y * disp_w..(y + 1) * disp_w];
-        if view_row != golden_row {
-            for x in 0..disp_w {
-                if view_row[x] != golden_row[x] {
-                    panic!(
-                        "{context}: pixel mismatch at ({x},{y}): hibernia={} ffmpeg={}",
-                        view_row[x], golden_row[x],
-                    );
-                }
-            }
-        }
-    }
+    // bear.mp4's framerate is 30000/1001 (29.97 fps). The y4m header
+    // ratio is cosmetic for compare_y4m_buffers -- only frame bytes
+    // are compared -- so any value works here.
+    let actual_y4m = pictures_to_y4m_bytes(&pictures, y4m::Ratio { num: 30000, den: 1001 });
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)
 }
 
 // ---------------------------------------------------------------

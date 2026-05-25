@@ -464,6 +464,96 @@ fn bear_avc_extradata_via_control_matches_ffmpeg_golden() -> Result<(), String> 
     bear_avc_matches_ffmpeg_golden_with(ExtradataDelivery::ViaControl)
 }
 
+#[test]
+fn bear_avc_control_overwrites_construction_extradata() -> Result<(), String> {
+    // Install one set of parameter sets at construction time, then
+    // overwrite them via H264SetExtradata before decoding any
+    // samples. If the runtime path failed to overwrite, bear's
+    // samples would be parsed against SVA_BA2_D's SPS (176x144
+    // QCIF, baseline profile) -- they reference parameter-set id 0
+    // just like bear does, but the geometry/profile/feature flags
+    // diverge enough that decode would either error out or produce
+    // visibly wrong output. A clean y4m match against the
+    // ffmpeg-decoded golden confirms the control() call replaced
+    // the table entries.
+    use std::fs;
+
+    use super::support::{
+        bucket_fixture_nals, pictures_to_y4m_bytes, run_ffmpeg, workspace_root, TestDir,
+    };
+    use crate::api::EncodedPacket;
+    use crate::y4m_cmp::compare_y4m_buffers;
+
+    let bear_mp4 = workspace_root().join("data/bear.mp4");
+    if !bear_mp4.exists() {
+        println!("{} missing, skipping test", bear_mp4.display());
+        return Ok(());
+    }
+    let mp4_bytes = fs::read(&bear_mp4).map_err(|e| format!("read bear.mp4: {e}"))?;
+
+    let test_dir = TestDir::new("target/tmp_extradata_bear_overwrite")
+        .map_err(|e| e.to_string())?;
+    let golden_path = test_dir.join("golden.y4m");
+    let mp4_str = bear_mp4.to_string_lossy().into_owned();
+    let golden_str = golden_path.to_string_lossy().into_owned();
+    if !run_ffmpeg(&["-y", "-v", "error", "-i", &mp4_str, &golden_str])? {
+        return Ok(());
+    }
+    let expected_y4m = fs::read(&golden_path).map_err(|e| format!("read golden: {e}"))?;
+
+    // Build a "wrong" avcC from a totally different fixture.
+    // SVA_BA2_D is 176x144 baseline; bear is 320x180 high.
+    let (other_sps, other_pps, _) =
+        bucket_fixture_nals(&fixture(BASELINE_BFRAME_FIXTURE));
+    let wrong_avcc = build_avcc(&other_sps, &other_pps, 4);
+    assert_ne!(
+        wrong_avcc.as_slice(),
+        BEAR_AVCC,
+        "the 'wrong' avcC must actually differ from bear's avcC",
+    );
+
+    // Sanity: confirm wrong_avcc's SPS shares parameter-set id 0
+    // with BEAR_AVCC. seq_parameter_set_id sits in the SPS RBSP
+    // body, not the NAL header, so the structural test below is a
+    // weaker proxy: both SPSes must parse and load into the same
+    // table entry. We exercise that path by feeding them through
+    // parse_extradata and confirming non-empty NAL output. If
+    // either failed to parse, the decoder would error during
+    // construction.
+    let parsed_wrong = crate::h264::extradata::parse_extradata(&wrong_avcc)
+        .map_err(|e| format!("parse wrong_avcc: {e:?}"))?;
+    assert!(!parsed_wrong.nals.is_empty(), "wrong_avcc must yield NALs");
+    let parsed_bear = crate::h264::extradata::parse_extradata(BEAR_AVCC)
+        .map_err(|e| format!("parse BEAR_AVCC: {e:?}"))?;
+    assert!(!parsed_bear.nals.is_empty(), "BEAR_AVCC must yield NALs");
+
+    let config = DecoderConfig::new(Codec::H264).with_custom_params(H264Config {
+        bitstream_format: AvcBitstreamFormat::Avc,
+        extradata: Some(wrong_avcc),
+    });
+    let mut decoder: Box<dyn VideoDecoder> = Box::new(
+        Decoder::new(config, Arc::new(DefaultAllocator), CountingCallbacks::shared())
+            .map_err(|e| format!("construct with wrong avcC: {e:?}"))?,
+    );
+
+    // Now overwrite via control() with bear's real avcC.
+    let mut cmd = H264SetExtradata { data: BEAR_AVCC.to_vec() };
+    decoder.control(&mut cmd).map_err(|e| format!("overwrite via control: {e:?}"))?;
+
+    // Decode bear's samples. If the overwrite worked, output
+    // matches the golden byte-for-byte.
+    let packets: Vec<_> = BEAR_SAMPLES
+        .iter()
+        .map(|(off, size)| EncodedPacket::from_vec(mp4_bytes[*off..*off + *size].to_vec()))
+        .collect();
+    let pictures =
+        drive_through(decoder.as_mut(), packets).map_err(|e| format!("drive: {e:?}"))?;
+    assert_eq!(pictures.len(), 30, "expected 30 frames, got {}", pictures.len());
+
+    let actual_y4m = pictures_to_y4m_bytes(&pictures, y4m::Ratio { num: 30000, den: 1001 });
+    compare_y4m_buffers(&actual_y4m, &expected_y4m)
+}
+
 // ---------------------------------------------------------------
 // Smoke tests
 // ---------------------------------------------------------------

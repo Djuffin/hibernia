@@ -670,13 +670,21 @@ pub fn render_luma_16x16_intra_prediction(
     let mb_origin = mb_y * stride + mb_x;
     let data = target.data_origin_mut();
 
+    // Clause 8.3.3 directional luma modes read neighbouring samples
+    // (top row, left column, corner) that a malformed bitstream may
+    // mark unavailable; substitute 1 << (BitDepthY - 1) = 128 as the
+    // DC mode already does, instead of underflowing `mb_origin`.
+    const DEFAULT_LUMA_SAMPLE: u8 = 1 << 7;
+
     match mode {
         Intra_16x16_SamplePredMode::Intra_16x16_Vertical => {
             // Section 8.3.3.1 Specification of Intra_16x16_Vertical prediction mode
-            // Equation 8-116: predL[x, y] = p[x, -1]
-            let top_base = mb_origin - stride;
-            let mut src_row = [0u8; 16];
-            src_row.copy_from_slice(&data[top_base..top_base + 16]);
+            // Equation 8-116: predL[x, y] = p[x, -1] — requires mb B.
+            let mut src_row = [DEFAULT_LUMA_SAMPLE; 16];
+            if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                let top_base = mb_origin - stride;
+                src_row.copy_from_slice(&data[top_base..top_base + 16]);
+            }
             for y in 0..16 {
                 let row_base = mb_origin + y * stride;
                 data[row_base..row_base + 16].copy_from_slice(&src_row);
@@ -684,10 +692,15 @@ pub fn render_luma_16x16_intra_prediction(
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Horizontal => {
             // Section 8.3.3.2 Specification of Intra_16x16_Horizontal prediction mode
-            // Equation 8-117: predL[x, y] = p[-1, y]
+            // Equation 8-117: predL[x, y] = p[-1, y] — requires mb A.
+            let left_available = slice.has_mb_neighbor(mb_addr, MbNeighborName::A);
             for y in 0..16 {
                 let row_base = mb_origin + y * stride;
-                let src = data[row_base - 1];
+                let src = if left_available {
+                    data[row_base - 1]
+                } else {
+                    DEFAULT_LUMA_SAMPLE
+                };
                 data[row_base..row_base + 16].fill(src);
             }
         }
@@ -725,8 +738,19 @@ pub fn render_luma_16x16_intra_prediction(
         }
         Intra_16x16_SamplePredMode::Intra_16x16_Plane => {
             // Section 8.3.3.4 Specification of Intra_16x16_Plane prediction mode
-            // Read 17 top samples (corner + 16 above) and 17 left samples
-            // (corner + 16 to the left) directly from the hoisted `data`.
+            // Reads top row, left column and corner — requires A, B, D.
+            // On a malformed bitstream where any is unavailable, fill the
+            // clause-8.3.4.1 default and skip the (out-of-bounds) gradient;
+            // the shared residual loop below still runs.
+            if !(slice.has_mb_neighbor(mb_addr, MbNeighborName::A)
+                && slice.has_mb_neighbor(mb_addr, MbNeighborName::B)
+                && slice.has_mb_neighbor(mb_addr, MbNeighborName::D))
+            {
+                for py in 0..16 {
+                    let row_base = mb_origin + py * stride;
+                    data[row_base..row_base + 16].fill(DEFAULT_LUMA_SAMPLE);
+                }
+            } else {
             let mut top = [0u8; 17];
             let top_base = mb_origin - stride - 1;
             top.copy_from_slice(&data[top_base..top_base + 17]);
@@ -758,6 +782,7 @@ pub fn render_luma_16x16_intra_prediction(
                     let value = (a + b * (px_i - 7) + c * (py_i - 7) + 16) >> 5;
                     data[row_base + px] = value.clamp(0, 255) as u8;
                 }
+            }
             }
         }
     }
@@ -797,13 +822,25 @@ pub fn render_chroma_intra_prediction(
     let mb_origin = mb_y * stride + mb_x;
     let data = target.data_origin_mut();
 
+    // Clause 8.3.4.1 "no neighbour available" substitution value,
+    // 1 << (BitDepthC - 1) with BitDepthC = 8 (the u8 chroma plane).
+    const DEFAULT_CHROMA_SAMPLE: u8 = 1 << 7;
+
     match mode {
         Intra_Chroma_Pred_Mode::Vertical => {
             // Section 8.3.4.3 Specification of Intra_Chroma_Vertical prediction mode
             // Equation 8-143
-            let top_base = mb_origin - stride;
-            let mut src_row = [0u8; 16];
-            src_row[0..mb_width].copy_from_slice(&data[top_base..top_base + mb_width]);
+            //
+            // Vertical prediction requires the top neighbour (mb B). A
+            // compliant encoder never selects this mode when B is
+            // unavailable; a malformed bitstream can, so guard the read
+            // (mb_origin - stride underflows for a top-row MB) and
+            // substitute the clause-8.3.4.1 default 1 << (BitDepthC - 1).
+            let mut src_row = [DEFAULT_CHROMA_SAMPLE; 16];
+            if slice.has_mb_neighbor(mb_addr, MbNeighborName::B) {
+                let top_base = mb_origin - stride;
+                src_row[0..mb_width].copy_from_slice(&data[top_base..top_base + mb_width]);
+            }
             for y in 0..mb_height {
                 let row_base = mb_origin + y * stride;
                 data[row_base..row_base + mb_width].copy_from_slice(&src_row[0..mb_width]);
@@ -812,9 +849,18 @@ pub fn render_chroma_intra_prediction(
         Intra_Chroma_Pred_Mode::Horizontal => {
             // Section 8.3.4.2 Specification of Intra_Chroma_Horizontal prediction mode
             // Equation 8-142
+            //
+            // Horizontal prediction requires the left neighbour (mb A);
+            // guard as in the Vertical case (row_base - 1 underflows for
+            // a left-column MB on a malformed bitstream).
+            let left_available = slice.has_mb_neighbor(mb_addr, MbNeighborName::A);
             for y in 0..mb_height {
                 let row_base = mb_origin + y * stride;
-                let src = data[row_base - 1];
+                let src = if left_available {
+                    data[row_base - 1]
+                } else {
+                    DEFAULT_CHROMA_SAMPLE
+                };
                 data[row_base..row_base + mb_width].fill(src);
             }
         }
@@ -908,6 +954,21 @@ pub fn render_chroma_intra_prediction(
         Intra_Chroma_Pred_Mode::Plane => {
             // Section 8.3.4.4 Specification of Intra_Chroma_Plane prediction mode
             // yCF = 0 and xCF = 0
+            //
+            // Reads top row, left column and the top-left corner (all via
+            // mb_origin - stride - 1), so it requires neighbours A, B, D.
+            // On a malformed bitstream where any is unavailable, fill the
+            // clause-8.3.4.1 default and skip the (out-of-bounds) gradient;
+            // the shared residual loop below still runs.
+            if !(slice.has_mb_neighbor(mb_addr, MbNeighborName::A)
+                && slice.has_mb_neighbor(mb_addr, MbNeighborName::B)
+                && slice.has_mb_neighbor(mb_addr, MbNeighborName::D))
+            {
+                for py in 0..mb_height {
+                    let row_base = mb_origin + py * stride;
+                    data[row_base..row_base + mb_width].fill(DEFAULT_CHROMA_SAMPLE);
+                }
+            } else {
             // Read 9 top samples (corner + 8 above) and 9 left samples
             // (corner + 8 to the left).
             let top_base = mb_origin - stride - 1;
@@ -946,6 +1007,7 @@ pub fn render_chroma_intra_prediction(
                     let value = (a + b * (px_i - 3) + c * (py_i - 3) + 16) >> 5;
                     data[row_base + px] = value.clamp(0, 255) as u8;
                 }
+            }
             }
         }
     }

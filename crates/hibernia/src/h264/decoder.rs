@@ -1755,7 +1755,7 @@ pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -
     // Table 8-15: identity for qp_i in 0..30, then the spec mapping for 30..52.
     const TABLE: [u8; 52] = [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36, 36, 37, 37, 38, 38, 38, 39,
+        25, 26, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36, 36, 37, 37, 37, 38, 38, 38,
         39, 39, 39, 39,
     ];
     let qp_i = (luma_qp + chroma_qp_offset).clamp(-qp_bd_offset_c, 51);
@@ -1767,6 +1767,26 @@ pub fn get_chroma_qp(luma_qp: i32, chroma_qp_offset: i32, qp_bd_offset_c: i32) -
 mod tests {
     use super::*;
     use sps::FrameCrop;
+
+    /// Table 8-15 regression (issue #89): qPI 44 maps to 37 and 47 to
+    /// 38; the table previously had 38/39 there, rescaling all chroma
+    /// one QP step too coarse at exactly those operating points.
+    #[test]
+    fn chroma_qp_matches_table_8_15() {
+        // Identity below 30.
+        for qp in 0..30 {
+            assert_eq!(get_chroma_qp(qp, 0, 0), qp as u8);
+        }
+        let expected = [
+            (30, 29), (31, 30), (32, 31), (33, 32), (34, 32), (35, 33),
+            (36, 34), (37, 34), (38, 35), (39, 35), (40, 36), (41, 36),
+            (42, 37), (43, 37), (44, 37), (45, 38), (46, 38), (47, 38),
+            (48, 39), (49, 39), (50, 39), (51, 39),
+        ];
+        for (qp_i, qp_c) in expected {
+            assert_eq!(get_chroma_qp(qp_i, 0, 0), qp_c, "qPI {qp_i}");
+        }
+    }
 
     fn sps_dim(level_idc: u8, w_mbs_m1: u16, h_mbs_m1: u16) -> sps::SequenceParameterSet {
         sps::SequenceParameterSet {

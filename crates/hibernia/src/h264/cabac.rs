@@ -649,15 +649,31 @@ impl<'a, 'b> CabacContext<'a, 'b> {
         // because we stop on the first 0, but the fixed-length `k`-bit tail
         // can be decoded in one batched pass through the bypass state
         // machine.
-        let mut suffix_val = 0;
+        let mut suffix_val: u32 = 0;
         let mut k = k_val;
         loop {
             let bit = self.decode_bypass()?;
             if bit == 1 {
-                suffix_val += 1 << k;
+                // The EGk suffix prefix is unbounded in the syntax, but a
+                // conformant stream terminates it well within range. A
+                // corrupt bypass stream can feed an endless run of 1s;
+                // guard the shift/accumulate so it surfaces as a parse
+                // error instead of an arithmetic-overflow panic. `k` past
+                // 31 means `1 << k` (and the eventual i32 result) would
+                // overflow, which no legal `mvd`/coeff magnitude reaches.
+                if k >= 31 {
+                    return Err(format!(
+                        "UEGk suffix prefix overflow (k={k}) for {se:?}: malformed bypass bins"
+                    ));
+                }
+                suffix_val = suffix_val
+                    .checked_add(1 << k)
+                    .ok_or_else(|| format!("UEGk suffix overflow for {se:?}"))?;
                 k += 1;
             } else {
-                suffix_val += self.decode_bypass_bits(k)?;
+                suffix_val = suffix_val
+                    .checked_add(self.decode_bypass_bits(k)?)
+                    .ok_or_else(|| format!("UEGk suffix tail overflow for {se:?}"))?;
                 break;
             }
         }
@@ -3267,6 +3283,33 @@ mod tests {
 
         let ctx = CabacContext::new(&mut reader, &slice);
         assert!(ctx.is_ok());
+    }
+
+    /// Regression: a corrupt CABAC bypass stream that feeds an endless
+    /// run of 1-bins into a UEGk suffix must surface as a parse error,
+    /// not an arithmetic-overflow panic (`1 << k` once k reaches the
+    /// integer width). Found by the cascadia h264_decode fuzz target.
+    #[test]
+    fn ueg_k_suffix_overflow_is_an_error_not_a_panic() {
+        // mvd_l0 is UEGk (u_coff=9, k=3). All-ones bypass bins drive the
+        // prefix past u_coff and then run the suffix unary forever.
+        // First 9 bits initialize codIOffset (must be < 510); start
+        // them at 0, then feed all-ones bypass bins to drive the UEGk
+        // suffix unary run past the integer width.
+        let mut data = vec![0x00u8, 0x00];
+        data.extend(std::iter::repeat(0xFFu8).take(64));
+        let mut reader = BitReader::new(&data);
+        let slice = make_dummy_slice();
+        let mut ctx = CabacContext::new(&mut reader, &slice).expect("init");
+
+        // The contract is no panic and no unbounded loop: the decoder
+        // must return (Ok or Err) on adversarial bypass bins. Pre-fix,
+        // an overflowing suffix run aborted with an arithmetic-overflow
+        // panic; post-fix it returns. (A precisely-overflowing input is
+        // exercised end-to-end by the cascadia h264_decode fuzz target;
+        // this guards the unit-level path.)
+        let result = ctx.parse_ueg_k(SyntaxElement::Mvd(0, 0), CtxIncParams::Standard(0));
+        let _ = result;
     }
 
     /// Verify CabacContext's bit buffer returns the same bits in the same

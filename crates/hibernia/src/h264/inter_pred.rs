@@ -747,6 +747,7 @@ pub(crate) fn render_luma_inter_prediction(
     mb_loc: Point,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
+    rects_l0: &PredRects,
     ref_pics_l0: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
 ) -> Result<(), DecoderError> {
@@ -759,13 +760,7 @@ pub(crate) fn render_luma_inter_prediction(
     assert!(mb_origin + 15 * y_stride + 16 <= y_data.len());
 
     let mut pred_buf = [0u8; 256];
-    let mut rects = [PartitionRect::default(); 16];
-    let n_rects = collect_pred_rects(
-        &mb.motion.partitions,
-        |p| Some((p.ref_idx_l0, p.mv_l0)),
-        &mut rects,
-    );
-    for rect in &rects[..n_rects] {
+    for rect in rects_l0.as_slice() {
         let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
             DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
@@ -856,6 +851,19 @@ fn collect_pred_rects(
     classify: impl Fn(&PartitionInfo) -> Option<(u8, MotionVector)>,
     out: &mut [PartitionRect; 16],
 ) -> usize {
+    // Fast path: the whole grid has one key (16x16 partitions, P_Skip, and
+    // skipped or direct B macroblocks with uniform motion). The greedy walk
+    // below would produce the same single rectangle, or none if the direction
+    // is unused.
+    let first = classify(&partitions[0][0]);
+    if partitions.iter().flatten().skip(1).all(|p| classify(p) == first) {
+        let Some((ref_idx, mv)) = first else {
+            return 0;
+        };
+        out[0] = PartitionRect { grid_y: 0, grid_x: 0, grid_h: 4, grid_w: 4, ref_idx, mv };
+        return 1;
+    }
+
     let mut visited = [[false; 4]; 4];
     let mut count = 0;
     for gy in 0..4 {
@@ -920,6 +928,45 @@ fn classify_b_l1(p: &PartitionInfo) -> Option<(u8, MotionVector)> {
         .then_some((p.ref_idx_l1, p.mv_l1))
 }
 
+/// The prediction rectangles of one prediction direction of a macroblock, as
+/// merged by `collect_pred_rects`. Built once per macroblock and shared by the
+/// luma and both chroma renderers: chroma motion compensation walks the same
+/// 4x4 grid, only with sample offsets scaled by 2 instead of 4 (8.4.2.2.2).
+pub(crate) struct PredRects {
+    rects: [PartitionRect; 16],
+    len: usize,
+}
+
+impl PredRects {
+    /// L0 rectangles of a P macroblock; every cell predicts from L0.
+    pub(crate) fn p_l0(motion: &macroblock::MbMotion) -> Self {
+        Self::collect(motion, |p| Some((p.ref_idx_l0, p.mv_l0)))
+    }
+
+    /// L0 rectangles of a B macroblock: cells whose `pred_mode` uses L0.
+    pub(crate) fn b_l0(motion: &macroblock::MbMotion) -> Self {
+        Self::collect(motion, classify_b_l0)
+    }
+
+    /// L1 rectangles of a B macroblock: cells whose `pred_mode` uses L1.
+    pub(crate) fn b_l1(motion: &macroblock::MbMotion) -> Self {
+        Self::collect(motion, classify_b_l1)
+    }
+
+    fn collect(
+        motion: &macroblock::MbMotion,
+        classify: impl Fn(&PartitionInfo) -> Option<(u8, MotionVector)>,
+    ) -> Self {
+        let mut rects = [PartitionRect::default(); 16];
+        let len = collect_pred_rects(&motion.partitions, classify, &mut rects);
+        Self { rects, len }
+    }
+
+    fn as_slice(&self) -> &[PartitionRect] {
+        &self.rects[..self.len]
+    }
+}
+
 pub(crate) fn render_chroma_inter_prediction(
     slice: &Slice,
     mb: &PMb,
@@ -927,6 +974,7 @@ pub(crate) fn render_chroma_inter_prediction(
     plane: ColorPlane,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
+    rects_l0: &PredRects,
     ref_pics_l0: &[&DpbPicture],
 ) -> Result<(), DecoderError> {
     let mut chroma_plane = frame.plane_mut(plane);
@@ -935,18 +983,12 @@ pub(crate) fn render_chroma_inter_prediction(
     let wp_mode = get_weighted_pred_mode(slice);
     let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
 
-    // 1. Prediction. Coalesce the 4x4 motion partition grid into maximal
-    // rectangles sharing the same (ref_idx_l0, mv_l0) and call
-    // interpolate_chroma once per partition (16x reduction in the common case
+    // 1. Prediction. `rects_l0` coalesces the 4x4 motion partition grid into
+    // maximal rectangles sharing the same (ref_idx_l0, mv_l0); call
+    // interpolate_chroma once per rectangle (16x reduction in the common case
     // of a single 16x16 P partition).
     let mut pred_buf = [0u8; 64]; // 8x8 chroma block, row-major, stride 8
-    let mut rects = [PartitionRect::default(); 16];
-    let n_rects = collect_pred_rects(
-        &mb.motion.partitions,
-        |p| Some((p.ref_idx_l0, p.mv_l0)),
-        &mut rects,
-    );
-    for rect in &rects[..n_rects] {
+    for rect in rects_l0.as_slice() {
         let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
             DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
@@ -1029,6 +1071,8 @@ pub(crate) fn render_luma_inter_prediction_b(
     frame: &mut VideoFrame,
     implicit_weights: &ImplicitWeightTable,
     residuals: &[Block4x4],
+    rects_l0: &PredRects,
+    rects_l1: &PredRects,
     ref_pics_l0: &[&DpbPicture],
     ref_pics_l1: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
@@ -1043,10 +1087,8 @@ pub(crate) fn render_luma_inter_prediction_b(
 
     let mut pred_l0_buf = [0u8; 256];
     let mut pred_l1_buf = [0u8; 256];
-    let mut rects = [PartitionRect::default(); 16];
 
-    let n_l0 = collect_pred_rects(&mb.motion.partitions, classify_b_l0, &mut rects);
-    for rect in &rects[..n_l0] {
+    for rect in rects_l0.as_slice() {
         let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
             DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
@@ -1074,8 +1116,7 @@ pub(crate) fn render_luma_inter_prediction_b(
         );
     }
 
-    let n_l1 = collect_pred_rects(&mb.motion.partitions, classify_b_l1, &mut rects);
-    for rect in &rects[..n_l1] {
+    for rect in rects_l1.as_slice() {
         let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
             DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l1 {} out of bounds (list length {})",
@@ -1203,6 +1244,8 @@ pub(crate) fn render_chroma_inter_prediction_b(
     plane: ColorPlane,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
+    rects_l0: &PredRects,
+    rects_l1: &PredRects,
     ref_pics_l0: &[&DpbPicture],
     ref_pics_l1: &[&DpbPicture],
     implicit_weights: &ImplicitWeightTable,
@@ -1213,17 +1256,15 @@ pub(crate) fn render_chroma_inter_prediction_b(
     let wp_mode = get_weighted_pred_mode(slice);
     let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
 
-    // 1. Prediction. Coalesce the 4x4 motion partition grid into maximal
-    // rectangles per direction and call interpolate_chroma once per partition.
-    // Predictions are staged into 8x8 row-major buffers (stride 8) so the
-    // per-cell weighted-prediction loop below can read each 2x2 patch from a
-    // fixed offset.
+    // 1. Prediction. `rects_l0` and `rects_l1` coalesce the 4x4 motion
+    // partition grid into maximal rectangles per direction; call
+    // interpolate_chroma once per rectangle. Predictions are staged into 8x8
+    // row-major buffers (stride 8) so the per-cell weighted-prediction loop
+    // below can read each 2x2 patch from a fixed offset.
     let mut pred_l0_buf = [0u8; 64];
     let mut pred_l1_buf = [0u8; 64];
-    let mut rects = [PartitionRect::default(); 16];
 
-    let n_l0 = collect_pred_rects(&mb.motion.partitions, classify_b_l0, &mut rects);
-    for rect in &rects[..n_l0] {
+    for rect in rects_l0.as_slice() {
         let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
             DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l0 {} out of bounds (list length {})",
@@ -1250,8 +1291,7 @@ pub(crate) fn render_chroma_inter_prediction_b(
         );
     }
 
-    let n_l1 = collect_pred_rects(&mb.motion.partitions, classify_b_l1, &mut rects);
-    for rect in &rects[..n_l1] {
+    for rect in rects_l1.as_slice() {
         let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
             DecoderError::ReferenceNotFound(format!(
                 "ref_idx_l1 {} out of bounds (list length {})",
@@ -1618,5 +1658,118 @@ mod tests {
         let mut dst = [0u8; 1];
         interpolate_chroma(plane, 0, 0, 0, 0, 1, 1, MotionVector { x: 1, y: 0 }, &mut dst, 1);
         assert_eq!(dst[0], 108);
+    }
+
+    /// `(grid_y, grid_x, grid_h, grid_w, ref_idx, mv)` of each rectangle, in order.
+    fn rect_list(rects: &PredRects) -> Vec<(u8, u8, u8, u8, u8, MotionVector)> {
+        rects
+            .as_slice()
+            .iter()
+            .map(|r| (r.grid_y, r.grid_x, r.grid_h, r.grid_w, r.ref_idx, r.mv))
+            .collect()
+    }
+
+    fn uniform_motion(info: PartitionInfo) -> macroblock::MbMotion {
+        macroblock::MbMotion { partitions: [[info; 4]; 4], decoded_mask: 0xFFFF }
+    }
+
+    #[test]
+    fn test_pred_rects_p_16x16_is_one_rect() {
+        let mv = MotionVector { x: 3, y: -2 };
+        let motion =
+            uniform_motion(PartitionInfo { ref_idx_l0: 1, mv_l0: mv, ..Default::default() });
+        assert_eq!(rect_list(&PredRects::p_l0(&motion)), vec![(0, 0, 4, 4, 1, mv)]);
+    }
+
+    #[test]
+    fn test_pred_rects_p_16x8_and_8x8() {
+        // 16x8: the two halves have different MVs.
+        let top_mv = MotionVector { x: 1, y: 0 };
+        let bottom_mv = MotionVector { x: 2, y: 0 };
+        let mut motion = uniform_motion(PartitionInfo { mv_l0: top_mv, ..Default::default() });
+        for row in &mut motion.partitions[2..] {
+            for cell in row.iter_mut() {
+                cell.mv_l0 = bottom_mv;
+            }
+        }
+        assert_eq!(
+            rect_list(&PredRects::p_l0(&motion)),
+            vec![(0, 0, 2, 4, 0, top_mv), (2, 0, 2, 4, 0, bottom_mv)]
+        );
+
+        // 8x8: each quadrant has its own reference index.
+        let refs = [[0, 0, 1, 1], [0, 0, 1, 1], [2, 2, 3, 3], [2, 2, 3, 3]];
+        let mut motion = uniform_motion(PartitionInfo::default());
+        for (row, row_refs) in motion.partitions.iter_mut().zip(refs) {
+            for (cell, ref_idx) in row.iter_mut().zip(row_refs) {
+                cell.ref_idx_l0 = ref_idx;
+            }
+        }
+        let mv = MotionVector::default();
+        assert_eq!(
+            rect_list(&PredRects::p_l0(&motion)),
+            vec![
+                (0, 0, 2, 2, 0, mv),
+                (0, 2, 2, 2, 1, mv),
+                (2, 0, 2, 2, 2, mv),
+                (2, 2, 2, 2, 3, mv)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_pred_rects_b_split_by_direction() {
+        // Top half Pred_L0; bottom-left BiPred; bottom-right Pred_L1 with the
+        // same L1 motion as the BiPred cells.
+        let l0 = PartitionInfo {
+            pred_mode: MbPredictionMode::Pred_L0,
+            mv_l0: MotionVector { x: 4, y: 4 },
+            ..Default::default()
+        };
+        let bi = PartitionInfo {
+            pred_mode: MbPredictionMode::BiPred,
+            ref_idx_l0: 1,
+            mv_l0: MotionVector { x: -4, y: 0 },
+            mv_l1: MotionVector { x: 8, y: 0 },
+            ..Default::default()
+        };
+        let l1 = PartitionInfo {
+            pred_mode: MbPredictionMode::Pred_L1,
+            mv_l1: bi.mv_l1,
+            ..Default::default()
+        };
+        let mut motion = uniform_motion(l0);
+        for row in &mut motion.partitions[2..] {
+            row[..2].fill(bi);
+            row[2..].fill(l1);
+        }
+        assert_eq!(
+            rect_list(&PredRects::b_l0(&motion)),
+            vec![(0, 0, 2, 4, 0, l0.mv_l0), (2, 0, 2, 2, 1, bi.mv_l0)]
+        );
+        // L1-only cells merge with BiPred cells that share (ref_idx_l1, mv_l1).
+        assert_eq!(rect_list(&PredRects::b_l1(&motion)), vec![(2, 0, 2, 4, 0, bi.mv_l1)]);
+    }
+
+    #[test]
+    fn test_pred_rects_uniform_fast_path_edges() {
+        // A uniform Pred_L0 grid: one L0 rectangle and no L1 rectangles.
+        let l0_only = PartitionInfo {
+            pred_mode: MbPredictionMode::Pred_L0,
+            mv_l0: MotionVector { x: 1, y: 1 },
+            ..Default::default()
+        };
+        let motion = uniform_motion(l0_only);
+        assert_eq!(rect_list(&PredRects::b_l0(&motion)), vec![(0, 0, 4, 4, 0, l0_only.mv_l0)]);
+        assert!(PredRects::b_l1(&motion).as_slice().is_empty());
+
+        // Only the last cell differs, so the greedy walk must run.
+        let mut motion = uniform_motion(PartitionInfo::default());
+        motion.partitions[3][3].ref_idx_l0 = 1;
+        let mv = MotionVector::default();
+        assert_eq!(
+            rect_list(&PredRects::p_l0(&motion)),
+            vec![(0, 0, 3, 4, 0, mv), (3, 0, 1, 3, 0, mv), (3, 3, 1, 1, 1, mv)]
+        );
     }
 }

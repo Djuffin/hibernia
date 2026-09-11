@@ -39,7 +39,7 @@ use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposit
 use super::frame::BorderedFrame;
 use super::inter_pred::{
     build_implicit_weight_table, render_chroma_inter_prediction, render_chroma_inter_prediction_b,
-    render_luma_inter_prediction, render_luma_inter_prediction_b, InterpolationBuffer,
+    render_luma_inter_prediction, render_luma_inter_prediction_b, InterpolationBuffer, PredRects,
 };
 use super::intra_pred::{
     point_to_plane_offset, render_chroma_intra_prediction, render_luma_16x16_intra_prediction,
@@ -1119,6 +1119,9 @@ impl Decoder {
                             qp as u8,
                             &active_dequant,
                         );
+                        // Merge the 4x4 motion grid into prediction rectangles
+                        // once; luma and both chroma planes share them.
+                        let rects_l0 = PredRects::p_l0(&block.motion);
 
                         render_luma_inter_prediction(
                             slice,
@@ -1126,6 +1129,7 @@ impl Decoder {
                             mb_loc,
                             frame,
                             &residuals,
+                            &rects_l0,
                             &ref_pics_l0,
                             &mut self.interpolation_buffer,
                         )?;
@@ -1146,6 +1150,7 @@ impl Decoder {
                                 plane_name,
                                 frame,
                                 &residuals,
+                                &rects_l0,
                                 &ref_pics_l0,
                             )?;
                         }
@@ -1158,6 +1163,10 @@ impl Decoder {
                             qp as u8,
                             &active_dequant,
                         );
+                        // Merge the 4x4 motion grid into prediction rectangles
+                        // once per direction; luma and both chroma planes share them.
+                        let rects_l0 = PredRects::b_l0(&block.motion);
+                        let rects_l1 = PredRects::b_l1(&block.motion);
 
                         render_luma_inter_prediction_b(
                             slice,
@@ -1166,6 +1175,8 @@ impl Decoder {
                             frame,
                             &implicit_weights,
                             &residuals,
+                            &rects_l0,
+                            &rects_l1,
                             &ref_pics_l0,
                             &ref_pics_l1,
                             &mut self.interpolation_buffer,
@@ -1187,6 +1198,8 @@ impl Decoder {
                                 plane_name,
                                 frame,
                                 &residuals,
+                                &rects_l0,
+                                &rects_l1,
                                 &ref_pics_l0,
                                 &ref_pics_l1,
                                 &implicit_weights,

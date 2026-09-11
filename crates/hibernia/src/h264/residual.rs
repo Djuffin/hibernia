@@ -197,40 +197,6 @@ impl Residual {
         }
     }
 
-    /// Mask of the luma 4x4 blocks that may hold a non-zero residual: bit `i`
-    /// stands for `luma4x4BlkIdx` `i`, the order `restore` returns them in.
-    /// A clear bit guarantees an all-zero block. For the 4x4 transform the
-    /// mask comes from the per-block coefficient counts; for the 8x8 transform
-    /// from `CodedBlockPatternLuma` (7.4.5), because CABAC doesn't record
-    /// per-4x4 counts there.
-    #[must_use]
-    pub fn luma_nonzero_mask(&self) -> u16 {
-        match &self.luma {
-            LumaResidual::Empty => 0,
-            // Intra_16x16 codes a DC for every block regardless of the CBP.
-            LumaResidual::Intra16x16 { .. } => 0xFFFF,
-            LumaResidual::Block4x4 { nc, .. } => {
-                let mut mask = 0;
-                for (blk_idx, &n) in nc.iter().enumerate() {
-                    if n != 0 {
-                        mask |= 1 << blk_idx;
-                    }
-                }
-                mask
-            }
-            LumaResidual::Block8x8 { .. } => {
-                let cbp_luma = self.coded_block_pattern.luma();
-                let mut mask = 0;
-                for i8x8 in 0..4 {
-                    if cbp_luma & (1 << i8x8) != 0 {
-                        mask |= 0xF << (4 * i8x8);
-                    }
-                }
-                mask
-            }
-        }
-    }
-
     /// Section 8.5: the restored residual blocks of `plane`, in block-index
     /// order. Returns no blocks when the plane has no coded coefficients
     /// (7.4.5); callers treat a missing block as all zero.
@@ -1420,30 +1386,6 @@ mod tests {
 
     fn flat_dequant() -> DequantTables {
         DequantTables::from_scaling_matrix(&ResolvedScalingMatrix::default())
-    }
-
-    #[test]
-    pub fn test_luma_nonzero_mask() {
-        let mut r = Residual::default();
-        assert_eq!(r.luma_nonzero_mask(), 0);
-
-        // 4x4 transform: one bit per block with coded coefficients.
-        r.luma.init_4x4();
-        if let LumaResidual::Block4x4 { nc, .. } = &mut r.luma {
-            nc[0] = 1;
-            nc[5] = 3;
-            nc[15] = 16;
-        }
-        assert_eq!(r.luma_nonzero_mask(), 0x8021);
-
-        // 8x8 transform: four bits per coded 8x8 block, taken from the CBP.
-        r.luma.init_8x8();
-        r.coded_block_pattern = CodedBlockPattern::new(0, 0b1010);
-        assert_eq!(r.luma_nonzero_mask(), 0xF0F0);
-
-        // Intra_16x16: every block carries a DC.
-        r.luma.init_intra_16x16();
-        assert_eq!(r.luma_nonzero_mask(), 0xFFFF);
     }
 
     #[test]

@@ -2,11 +2,9 @@ use crate::api::DecoderError;
 
 use super::decoder::VideoFrame;
 use super::dpb::DpbPicture;
-use super::macroblock::{
-    self, get_4x4chroma_block_location, BMb, MbPredictionMode, MotionVector, PMb, PartitionInfo,
-};
+use super::macroblock::{self, BMb, MbPredictionMode, MotionVector, PMb, PartitionInfo};
 use super::plane::Plane;
-use super::residual::{add_residual_4x4, Block4x4, DequantTables, Residual};
+use super::residual::{DequantTables, Residual};
 use super::slice::{Slice, SliceType};
 use super::{ColorPlane, Point};
 
@@ -755,14 +753,12 @@ pub(crate) struct MbQp {
 pub(crate) struct InterSliceRefs<'a> {
     pub(crate) wp_mode: WeightedPredMode,
     pub(crate) ref_pics_l0: &'a [&'a DpbPicture],
+    pub(crate) ref_pics_l1: &'a [&'a DpbPicture],
+    pub(crate) implicit_weights: &'a ImplicitWeightTable,
     pub(crate) dequant: &'a DequantTables,
 }
 
 /// Sections 8.4 and 8.5: reconstructs a P macroblock straight into `frame`.
-/// The planes go one at a time (luma, Cb, Cr). Each prediction rectangle is
-/// interpolated into place (8.4.2.2) and, with explicit weighted prediction,
-/// weighted in place (8.4.2.3); then the residual of the coded blocks is
-/// added (8.5.12 to 8.5.14).
 pub(crate) fn reconstruct_p_macroblock(
     slice: &Slice,
     refs: &InterSliceRefs<'_>,
@@ -772,30 +768,242 @@ pub(crate) fn reconstruct_p_macroblock(
     frame: &mut VideoFrame,
     buffer: &mut InterpolationBuffer,
 ) -> Result<(), DecoderError> {
-    // Every cell of a P macroblock predicts from L0 (its `pred_mode` stays
-    // None), so the rectangles are keyed on (ref_idx_l0, mv_l0) alone.
-    let rects = PredRects::p_l0(&mb.motion);
+    let rects = PredRects::for_p(&mb.motion);
+    let residual = mb.residual.as_deref();
+    reconstruct_inter_macroblock(slice, refs, &rects, residual, mb_loc, qp, frame, buffer)
+}
+
+/// Sections 8.4 and 8.5: reconstructs a B macroblock straight into `frame`.
+pub(crate) fn reconstruct_b_macroblock(
+    slice: &Slice,
+    refs: &InterSliceRefs<'_>,
+    mb: &BMb,
+    mb_loc: Point,
+    qp: MbQp,
+    frame: &mut VideoFrame,
+    buffer: &mut InterpolationBuffer,
+) -> Result<(), DecoderError> {
+    let rects = PredRects::for_b(&mb.motion);
+    let residual = mb.residual.as_deref();
+    reconstruct_inter_macroblock(slice, refs, &rects, residual, mb_loc, qp, frame, buffer)
+}
+
+/// Reconstructs an inter macroblock one plane at a time (luma, Cb, Cr), so
+/// only one plane is borrowed mutably at once. Each prediction rectangle is
+/// predicted straight into the frame (8.4.2); then the residual of the coded
+/// blocks is added (8.5.12 to 8.5.14).
+fn reconstruct_inter_macroblock(
+    slice: &Slice,
+    refs: &InterSliceRefs<'_>,
+    rects: &PredRects,
+    residual: Option<&Residual>,
+    mb_loc: Point,
+    qp: MbQp,
+    frame: &mut VideoFrame,
+    buffer: &mut InterpolationBuffer,
+) -> Result<(), DecoderError> {
     for plane in [ColorPlane::Y, ColorPlane::Cb, ColorPlane::Cr] {
         let mut samples = frame.plane_mut(plane);
         let stride = samples.cfg.stride;
         let origin = mb_origin(plane, mb_loc, stride);
         let data = samples.data_origin_mut();
         for rect in rects.as_slice() {
-            let ref_pic = ref_picture(refs.ref_pics_l0, rect.ref_idx, "l0")?;
             let area = rect.area(plane);
             let dst = &mut data[origin + area.offset(stride)..];
-            let ref_plane = ref_pic.picture.frame.plane(plane);
-            interpolate_block(ref_plane, plane, mb_loc, area, rect.mv, dst, stride, buffer);
-            if refs.wp_mode == WeightedPredMode::Explicit {
-                let wp = explicit_weights(slice, plane, rect.ref_idx, 0);
-                weight_uni_in_place(dst, stride, area, wp.w0, wp.o0, wp.log_wd);
-            }
+            predict_rect(slice, refs, &rect.key, plane, mb_loc, area, dst, stride, buffer)?;
         }
-        if let Some(residual) = mb.residual.as_deref() {
+        if let Some(residual) = residual {
             add_plane_residual(residual, plane, qp, refs.dequant, data, origin, stride);
         }
     }
     Ok(())
+}
+
+/// Section 8.4.2: predicts one rectangle of `plane` into `dst`, which starts
+/// at the rectangle's top-left sample and has row stride `stride`.
+///
+/// Uni-prediction interpolates straight into `dst` and, for explicit weighted
+/// prediction, then weights it in place; implicit weighting doesn't apply to
+/// uni-prediction (8.4.2.3). Bi-prediction interpolates both lists into
+/// buffers on the stack and combines them row by row into `dst`.
+fn predict_rect(
+    slice: &Slice,
+    refs: &InterSliceRefs<'_>,
+    key: &PredKey,
+    plane: ColorPlane,
+    mb_loc: Point,
+    area: Area,
+    dst: &mut [u8],
+    stride: usize,
+    buffer: &mut InterpolationBuffer,
+) -> Result<(), DecoderError> {
+    let explicit = refs.wp_mode == WeightedPredMode::Explicit;
+    match key.pred_mode {
+        MbPredictionMode::Pred_L0 => {
+            let reference = ref_plane(refs.ref_pics_l0, key.ref_idx_l0, "l0", plane)?;
+            interpolate_block(reference, plane, mb_loc, area, key.mv_l0, dst, stride, buffer);
+            if explicit {
+                let wp = explicit_weights(slice, plane, key.ref_idx_l0, key.ref_idx_l1);
+                weight_uni_in_place(dst, stride, area, wp.w0, wp.o0, wp.log_wd);
+            }
+        }
+        MbPredictionMode::Pred_L1 => {
+            let reference = ref_plane(refs.ref_pics_l1, key.ref_idx_l1, "l1", plane)?;
+            interpolate_block(reference, plane, mb_loc, area, key.mv_l1, dst, stride, buffer);
+            if explicit {
+                let wp = explicit_weights(slice, plane, key.ref_idx_l0, key.ref_idx_l1);
+                weight_uni_in_place(dst, stride, area, wp.w1, wp.o1, wp.log_wd);
+            }
+        }
+        MbPredictionMode::BiPred => {
+            // Rectangles are at most 16 luma or 8 chroma samples wide.
+            let tmp_stride = if plane == ColorPlane::Y { 16 } else { 8 };
+            let (mut pred_l0, mut pred_l1) = ([0u8; 256], [0u8; 256]);
+            let reference = ref_plane(refs.ref_pics_l0, key.ref_idx_l0, "l0", plane)?;
+            interpolate_block(
+                reference,
+                plane,
+                mb_loc,
+                area,
+                key.mv_l0,
+                &mut pred_l0,
+                tmp_stride,
+                buffer,
+            );
+            let reference = ref_plane(refs.ref_pics_l1, key.ref_idx_l1, "l1", plane)?;
+            interpolate_block(
+                reference,
+                plane,
+                mb_loc,
+                area,
+                key.mv_l1,
+                &mut pred_l1,
+                tmp_stride,
+                buffer,
+            );
+            let (l0, l1) = (&pred_l0[..], &pred_l1[..]);
+            match refs.wp_mode {
+                WeightedPredMode::Default => average_into(dst, stride, l0, l1, tmp_stride, area),
+                WeightedPredMode::Implicit => {
+                    let (i, j) = (usize::from(key.ref_idx_l0), usize::from(key.ref_idx_l1));
+                    let wp = &refs.implicit_weights[i][j];
+                    weight_bi_into(dst, stride, l0, l1, tmp_stride, area, wp);
+                }
+                WeightedPredMode::Explicit => {
+                    let wp = explicit_weights(slice, plane, key.ref_idx_l0, key.ref_idx_l1);
+                    weight_bi_into(dst, stride, l0, l1, tmp_stride, area, &wp);
+                }
+            }
+        }
+        _ => {
+            // P cells are keyed as L0 and the parser gives every B cell L0,
+            // L1 or both, so no rectangle gets here. If one did, it would get
+            // the previous behaviour: a prediction of zeros.
+            debug_assert!(
+                matches!(key.pred_mode, MbPredictionMode::Pred_L0 | MbPredictionMode::Pred_L1),
+                "inter rectangle uses neither reference list ({:?})",
+                key.pred_mode
+            );
+            fill_rect(dst, stride, area, 0);
+        }
+    }
+    Ok(())
+}
+
+/// Section 8.4.2.1: the `plane` of the picture that `ref_idx` selects from a
+/// reference picture list.
+fn ref_plane<'a>(
+    list: &[&'a DpbPicture],
+    ref_idx: u8,
+    list_name: &str,
+    plane: ColorPlane,
+) -> Result<Plane<'a>, DecoderError> {
+    Ok(ref_picture(list, ref_idx, list_name)?.picture.frame.plane(plane))
+}
+
+/// Section 8.4.2.3.1: default weighted bi-prediction, the average of the two
+/// predictions rounded up, written to `dst`.
+fn average_into(
+    dst: &mut [u8],
+    dst_stride: usize,
+    l0: &[u8],
+    l1: &[u8],
+    src_stride: usize,
+    area: Area,
+) {
+    combine_into(dst, dst_stride, l0, l1, src_stride, area, |a, b| {
+        u8::try_from((u16::from(a) + u16::from(b) + 1) >> 1).unwrap_or(u8::MAX)
+    });
+}
+
+/// Section 8.4.2.3.2, Eq. 8-276: bi-prediction with the weights `wp`, written
+/// to `dst`.
+fn weight_bi_into(
+    dst: &mut [u8],
+    dst_stride: usize,
+    l0: &[u8],
+    l1: &[u8],
+    src_stride: usize,
+    area: Area,
+    wp: &WeightParams,
+) {
+    combine_into(dst, dst_stride, l0, l1, src_stride, area, |a, b| weighted_bi_pred(a, b, wp));
+}
+
+/// Combines two predictions (row stride `src_stride`) sample by sample into
+/// the rectangle at the start of `dst` (row stride `dst_stride`).
+fn combine_into(
+    dst: &mut [u8],
+    dst_stride: usize,
+    l0: &[u8],
+    l1: &[u8],
+    src_stride: usize,
+    area: Area,
+    combine: impl Fn(u8, u8) -> u8 + Copy,
+) {
+    let rows = usize::from(area.h);
+    // Dispatching on the width gives each inlined copy of the row loop a
+    // constant length, which lets LLVM vectorize it without a remainder.
+    let (d, ds, s) = (dst_stride, src_stride, rows);
+    match area.w {
+        16 => combine_rows(dst, d, l0, l1, ds, 16, s, combine),
+        12 => combine_rows(dst, d, l0, l1, ds, 12, s, combine),
+        8 => combine_rows(dst, d, l0, l1, ds, 8, s, combine),
+        6 => combine_rows(dst, d, l0, l1, ds, 6, s, combine),
+        4 => combine_rows(dst, d, l0, l1, ds, 4, s, combine),
+        2 => combine_rows(dst, d, l0, l1, ds, 2, s, combine),
+        w => combine_rows(dst, d, l0, l1, ds, usize::from(w), s, combine),
+    }
+}
+
+// Always inlined, so that each call in `combine_into` has a constant width.
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn combine_rows(
+    dst: &mut [u8],
+    dst_stride: usize,
+    l0: &[u8],
+    l1: &[u8],
+    src_stride: usize,
+    width: usize,
+    rows: usize,
+    combine: impl Fn(u8, u8) -> u8,
+) {
+    for y in 0..rows {
+        let out = &mut dst[y * dst_stride..][..width];
+        let a = &l0[y * src_stride..][..width];
+        let b = &l1[y * src_stride..][..width];
+        for (sample, (&a, &b)) in out.iter_mut().zip(a.iter().zip(b)) {
+            *sample = combine(a, b);
+        }
+    }
+}
+
+/// Sets every sample of the rectangle at the start of `dst` to `value`.
+fn fill_rect(dst: &mut [u8], stride: usize, area: Area, value: u8) {
+    for row in dst.chunks_mut(stride).take(usize::from(area.h)) {
+        row[..usize::from(area.w)].fill(value);
+    }
 }
 
 /// Position and size of a prediction rectangle within its macroblock, in
@@ -910,17 +1118,55 @@ fn add_plane_residual(
     }
 }
 
-/// One rectangular region of a 16x16 macroblock's 4x4 motion partition grid
-/// that shares a single (ref_idx, mv) for one prediction direction. Sizes and
-/// positions are in 4x4-grid units (so a full MB is grid_h=grid_w=4).
+/// The fields of a `PartitionInfo` that inter prediction depends on (8.4.2):
+/// the lists a cell predicts from, and each list's reference index and motion
+/// vector. Cells with equal keys predict identically, so they can share one
+/// interpolation call.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PredKey {
+    pred_mode: MbPredictionMode,
+    ref_idx_l0: u8,
+    mv_l0: MotionVector,
+    ref_idx_l1: u8,
+    mv_l1: MotionVector,
+}
+
+impl PredKey {
+    /// A P macroblock cell. The parser leaves its `pred_mode` at None, but
+    /// every P cell predicts from L0 alone, so the key is L0 with the L1
+    /// fields zeroed: cells merge on `(ref_idx_l0, mv_l0)` only.
+    fn p(p: &PartitionInfo) -> Self {
+        Self {
+            pred_mode: MbPredictionMode::Pred_L0,
+            ref_idx_l0: p.ref_idx_l0,
+            mv_l0: p.mv_l0,
+            ..Self::default()
+        }
+    }
+
+    /// A B macroblock cell, on the full key. The `mvd` fields don't affect
+    /// prediction, so they are left out.
+    fn b(p: &PartitionInfo) -> Self {
+        Self {
+            pred_mode: p.pred_mode,
+            ref_idx_l0: p.ref_idx_l0,
+            mv_l0: p.mv_l0,
+            ref_idx_l1: p.ref_idx_l1,
+            mv_l1: p.mv_l1,
+        }
+    }
+}
+
+/// One rectangular region of a macroblock's 4x4 motion grid whose cells share
+/// a `PredKey`. Positions and sizes are in grid cells (a whole macroblock is
+/// 4x4 cells).
 #[derive(Clone, Copy, Default)]
 struct PartitionRect {
     grid_y: u8,
     grid_x: u8,
     grid_h: u8,
     grid_w: u8,
-    ref_idx: u8,
-    mv: MotionVector,
+    key: PredKey,
 }
 
 impl PartitionRect {
@@ -937,31 +1183,29 @@ impl PartitionRect {
     }
 }
 
-/// Greedy-rectangle scan of the 4x4 motion partition grid. `classify` returns
-/// `Some((ref_idx, mv))` for cells where the requested direction is active and
-/// `None` for cells to skip. Adjacent cells with identical keys are merged
-/// into one maximal rectangle.
+/// Greedy-rectangle scan of the 4x4 motion grid: adjacent cells with equal
+/// `merge_key`s are merged into maximal rectangles, each keyed by the
+/// `pred_key` of its cells. Equal merge keys must imply equal prediction keys:
+/// P cells merge on their L0 motion alone, B cells on the whole `PredKey`.
 ///
 /// The parser fills the grid by replicating the same `PartitionInfo` across
 /// every cell covered by an H.264 partition, so a left-to-right / top-to-bottom
 /// greedy walk recovers the original partition shapes (16x16, 16x8, 8x16, 8x8,
 /// 8x4, 4x8, 4x4) exactly. It also coalesces across partition boundaries when
-/// they happen to share the requested direction's (ref_idx, mv).
-fn collect_pred_rects(
+/// neighbouring partitions happen to share a key.
+fn collect_pred_rects<K: PartialEq>(
     partitions: &[[PartitionInfo; 4]; 4],
-    classify: impl Fn(&PartitionInfo) -> Option<(u8, MotionVector)>,
+    merge_key: impl Fn(&PartitionInfo) -> K,
+    pred_key: impl Fn(&PartitionInfo) -> PredKey,
     out: &mut [PartitionRect; 16],
 ) -> usize {
     // Fast path: the whole grid has one key (16x16 partitions, P_Skip, and
     // skipped or direct B macroblocks with uniform motion). The greedy walk
-    // below would produce the same single rectangle, or none if the direction
-    // is unused.
-    let first = classify(&partitions[0][0]);
-    if partitions.iter().flatten().skip(1).all(|p| classify(p) == first) {
-        let Some((ref_idx, mv)) = first else {
-            return 0;
-        };
-        out[0] = PartitionRect { grid_y: 0, grid_x: 0, grid_h: 4, grid_w: 4, ref_idx, mv };
+    // below would produce the same single rectangle.
+    let first = merge_key(&partitions[0][0]);
+    if partitions.iter().flatten().skip(1).all(|p| merge_key(p) == first) {
+        let key = pred_key(&partitions[0][0]);
+        out[0] = PartitionRect { grid_y: 0, grid_x: 0, grid_h: 4, grid_w: 4, key };
         return 1;
     }
 
@@ -972,17 +1216,11 @@ fn collect_pred_rects(
             if visited[gy][gx] {
                 continue;
             }
-            let key = match classify(&partitions[gy][gx]) {
-                Some(k) => k,
-                None => {
-                    visited[gy][gx] = true;
-                    continue;
-                }
-            };
+            let key = merge_key(&partitions[gy][gx]);
 
             // Extend right while the next column at row gy matches.
             let mut w = 1;
-            while gx + w < 4 && classify(&partitions[gy][gx + w]) == Some(key) {
+            while gx + w < 4 && merge_key(&partitions[gy][gx + w]) == key {
                 w += 1;
             }
 
@@ -990,7 +1228,7 @@ fn collect_pred_rects(
             let mut h = 1;
             'extend_down: while gy + h < 4 {
                 for dx in 0..w {
-                    if classify(&partitions[gy + h][gx + dx]) != Some(key) {
+                    if merge_key(&partitions[gy + h][gx + dx]) != key {
                         break 'extend_down;
                     }
                 }
@@ -1008,8 +1246,7 @@ fn collect_pred_rects(
                 grid_x: gx as u8,
                 grid_h: h as u8,
                 grid_w: w as u8,
-                ref_idx: key.0,
-                mv: key.1,
+                key: pred_key(&partitions[gy][gx]),
             };
             count += 1;
         }
@@ -1017,421 +1254,36 @@ fn collect_pred_rects(
     count
 }
 
-/// Classifier for B-frame L0 prediction: active iff `pred_mode` includes L0.
-fn classify_b_l0(p: &PartitionInfo) -> Option<(u8, MotionVector)> {
-    matches!(p.pred_mode, MbPredictionMode::Pred_L0 | MbPredictionMode::BiPred)
-        .then_some((p.ref_idx_l0, p.mv_l0))
-}
-
-/// Classifier for B-frame L1 prediction: active iff `pred_mode` includes L1.
-fn classify_b_l1(p: &PartitionInfo) -> Option<(u8, MotionVector)> {
-    matches!(p.pred_mode, MbPredictionMode::Pred_L1 | MbPredictionMode::BiPred)
-        .then_some((p.ref_idx_l1, p.mv_l1))
-}
-
-/// The prediction rectangles of one prediction direction of a macroblock, as
-/// merged by `collect_pred_rects`. Built once per macroblock and shared by the
-/// luma and both chroma renderers: chroma motion compensation walks the same
-/// 4x4 grid, only with sample offsets scaled by 2 instead of 4 (8.4.2.2.2).
-pub(crate) struct PredRects {
+/// The prediction rectangles of a macroblock, as merged by
+/// `collect_pred_rects`. Built once per macroblock and shared by luma and both
+/// chroma planes: chroma motion compensation walks the same 4x4 grid, with
+/// sample offsets scaled by 2 instead of 4 (8.4.2.2.2).
+struct PredRects {
     rects: [PartitionRect; 16],
     len: usize,
 }
 
 impl PredRects {
-    /// L0 rectangles of a P macroblock; every cell predicts from L0.
-    pub(crate) fn p_l0(motion: &macroblock::MbMotion) -> Self {
-        Self::collect(motion, |p| Some((p.ref_idx_l0, p.mv_l0)))
-    }
-
-    /// L0 rectangles of a B macroblock: cells whose `pred_mode` uses L0.
-    pub(crate) fn b_l0(motion: &macroblock::MbMotion) -> Self {
-        Self::collect(motion, classify_b_l0)
-    }
-
-    /// L1 rectangles of a B macroblock: cells whose `pred_mode` uses L1.
-    pub(crate) fn b_l1(motion: &macroblock::MbMotion) -> Self {
-        Self::collect(motion, classify_b_l1)
-    }
-
-    fn collect(
-        motion: &macroblock::MbMotion,
-        classify: impl Fn(&PartitionInfo) -> Option<(u8, MotionVector)>,
-    ) -> Self {
+    /// The rectangles of a P macroblock, all predicted from L0.
+    fn for_p(motion: &macroblock::MbMotion) -> Self {
+        // Merging on the small (ref_idx_l0, mv_l0) key keeps the scan cheap.
         let mut rects = [PartitionRect::default(); 16];
-        let len = collect_pred_rects(&motion.partitions, classify, &mut rects);
+        let merge_key = |p: &PartitionInfo| (p.ref_idx_l0, p.mv_l0);
+        let len = collect_pred_rects(&motion.partitions, merge_key, PredKey::p, &mut rects);
+        Self { rects, len }
+    }
+
+    /// The rectangles of a B macroblock, each L0-only, L1-only or
+    /// bi-predicted with fixed references and motion vectors.
+    fn for_b(motion: &macroblock::MbMotion) -> Self {
+        let mut rects = [PartitionRect::default(); 16];
+        let len = collect_pred_rects(&motion.partitions, PredKey::b, PredKey::b, &mut rects);
         Self { rects, len }
     }
 
     fn as_slice(&self) -> &[PartitionRect] {
         &self.rects[..self.len]
     }
-}
-
-pub(crate) fn render_luma_inter_prediction_b(
-    slice: &Slice,
-    mb: &BMb,
-    mb_loc: Point,
-    frame: &mut VideoFrame,
-    implicit_weights: &ImplicitWeightTable,
-    residuals: &[Block4x4],
-    residual_nonzero: u16,
-    rects_l0: &PredRects,
-    rects_l1: &PredRects,
-    ref_pics_l0: &[&DpbPicture],
-    ref_pics_l1: &[&DpbPicture],
-    buffer: &mut InterpolationBuffer,
-) -> Result<(), DecoderError> {
-    let mut y_plane = frame.plane_mut(ColorPlane::Y);
-    let wp_mode = get_weighted_pred_mode(slice);
-
-    let y_stride = y_plane.cfg.stride;
-    let mb_origin = (mb_loc.y as usize) * y_stride + (mb_loc.x as usize);
-    let y_data = y_plane.data_origin_mut();
-    assert!(mb_origin + 15 * y_stride + 16 <= y_data.len());
-
-    let mut pred_l0_buf = [0u8; 256];
-    let mut pred_l1_buf = [0u8; 256];
-
-    for rect in rects_l0.as_slice() {
-        let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecoderError::ReferenceNotFound(format!(
-                "ref_idx_l0 {} out of bounds (list length {})",
-                rect.ref_idx,
-                ref_pics_l0.len()
-            ))
-        })?;
-        let ref_plane = ref_pic.picture.frame.plane(ColorPlane::Y);
-        let lx = rect.grid_x as usize * 4;
-        let ly = rect.grid_y as usize * 4;
-        let lw = rect.grid_w as usize * 4;
-        let lh = rect.grid_h as usize * 4;
-        interpolate_luma(
-            ref_plane,
-            mb_loc.x,
-            mb_loc.y,
-            lx as u8,
-            ly as u8,
-            lw as u8,
-            lh as u8,
-            rect.mv,
-            &mut pred_l0_buf[ly * 16 + lx..],
-            16,
-            buffer,
-        );
-    }
-
-    for rect in rects_l1.as_slice() {
-        let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecoderError::ReferenceNotFound(format!(
-                "ref_idx_l1 {} out of bounds (list length {})",
-                rect.ref_idx,
-                ref_pics_l1.len()
-            ))
-        })?;
-        let ref_plane = ref_pic.picture.frame.plane(ColorPlane::Y);
-        let lx = rect.grid_x as usize * 4;
-        let ly = rect.grid_y as usize * 4;
-        let lw = rect.grid_w as usize * 4;
-        let lh = rect.grid_h as usize * 4;
-        interpolate_luma(
-            ref_plane,
-            mb_loc.x,
-            mb_loc.y,
-            lx as u8,
-            ly as u8,
-            lw as u8,
-            lh as u8,
-            rect.mv,
-            &mut pred_l1_buf[ly * 16 + lx..],
-            16,
-            buffer,
-        );
-    }
-
-    for raster_idx in 0..16 {
-        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
-        let pred_mode = partition.pred_mode;
-
-        let blk_x = grid_x * 4;
-        let blk_y = grid_y * 4;
-
-        let mut dst = [0u8; 16];
-
-        let has_l0 =
-            pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
-        let has_l1 =
-            pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
-
-        let mut pred_l0 = [0u8; 16];
-        let mut pred_l1 = [0u8; 16];
-
-        if has_l0 {
-            for y in 0..4usize {
-                let off = (blk_y as usize + y) * 16 + blk_x as usize;
-                pred_l0[y * 4..y * 4 + 4].copy_from_slice(&pred_l0_buf[off..off + 4]);
-            }
-        }
-
-        if has_l1 {
-            for y in 0..4usize {
-                let off = (blk_y as usize + y) * 16 + blk_x as usize;
-                pred_l1[y * 4..y * 4 + 4].copy_from_slice(&pred_l1_buf[off..off + 4]);
-            }
-        }
-
-        match wp_mode {
-            WeightedPredMode::Explicit => {
-                let wp = get_explicit_luma_weights(
-                    slice,
-                    partition.ref_idx_l0 as usize,
-                    partition.ref_idx_l1 as usize,
-                );
-                if has_l0 && has_l1 {
-                    for i in 0..16 {
-                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
-                    }
-                } else if has_l0 {
-                    for i in 0..16 {
-                        dst[i] = weighted_uni_pred(pred_l0[i], wp.w0, wp.o0, wp.log_wd);
-                    }
-                } else if has_l1 {
-                    for i in 0..16 {
-                        dst[i] = weighted_uni_pred(pred_l1[i], wp.w1, wp.o1, wp.log_wd);
-                    }
-                }
-            }
-            WeightedPredMode::Implicit => {
-                if has_l0 && has_l1 {
-                    let wp = &implicit_weights[partition.ref_idx_l0 as usize][partition.ref_idx_l1 as usize];
-                    for i in 0..16 {
-                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], wp);
-                    }
-                } else if has_l0 {
-                    dst = pred_l0;
-                } else if has_l1 {
-                    dst = pred_l1;
-                }
-            }
-            WeightedPredMode::Default => {
-                if has_l0 && has_l1 {
-                    for i in 0..16 {
-                        dst[i] = ((pred_l0[i] as u16 + pred_l1[i] as u16 + 1) >> 1) as u8;
-                    }
-                } else if has_l0 {
-                    dst = pred_l0;
-                } else if has_l1 {
-                    dst = pred_l1;
-                }
-            }
-        }
-
-        let blk_idx =
-            macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
-        // Blocks with no non-zero coefficients have an all-zero residual.
-        if residual_nonzero & (1 << blk_idx) != 0 {
-            if let Some(residual_blk) = residuals.get(blk_idx as usize) {
-                add_residual_4x4(&mut dst, 0, 4, residual_blk);
-            }
-        }
-
-        let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);
-        for y in 0..4 {
-            let row_base = cell_base + y * y_stride;
-            y_data[row_base..row_base + 4].copy_from_slice(&dst[y * 4..y * 4 + 4]);
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn render_chroma_inter_prediction_b(
-    slice: &Slice,
-    mb: &BMb,
-    mb_loc: Point,
-    plane: ColorPlane,
-    frame: &mut VideoFrame,
-    residuals: &[Block4x4],
-    rects_l0: &PredRects,
-    rects_l1: &PredRects,
-    ref_pics_l0: &[&DpbPicture],
-    ref_pics_l1: &[&DpbPicture],
-    implicit_weights: &ImplicitWeightTable,
-) -> Result<(), DecoderError> {
-    let mut chroma_plane = frame.plane_mut(plane);
-    let mb_x_chroma = mb_loc.x >> 1;
-    let mb_y_chroma = mb_loc.y >> 1;
-    let wp_mode = get_weighted_pred_mode(slice);
-    let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
-
-    // 1. Prediction. `rects_l0` and `rects_l1` coalesce the 4x4 motion
-    // partition grid into maximal rectangles per direction; call
-    // interpolate_chroma once per rectangle. Predictions are staged into 8x8
-    // row-major buffers (stride 8) so the per-cell weighted-prediction loop
-    // below can read each 2x2 patch from a fixed offset.
-    let mut pred_l0_buf = [0u8; 64];
-    let mut pred_l1_buf = [0u8; 64];
-
-    for rect in rects_l0.as_slice() {
-        let ref_pic = ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecoderError::ReferenceNotFound(format!(
-                "ref_idx_l0 {} out of bounds (list length {})",
-                rect.ref_idx,
-                ref_pics_l0.len()
-            ))
-        })?;
-        let ref_plane = ref_pic.picture.frame.plane(plane);
-        let cx = rect.grid_x as usize * 2;
-        let cy = rect.grid_y as usize * 2;
-        let cw = rect.grid_w as usize * 2;
-        let ch = rect.grid_h as usize * 2;
-        interpolate_chroma(
-            ref_plane,
-            mb_x_chroma,
-            mb_y_chroma,
-            cx as u8,
-            cy as u8,
-            cw as u8,
-            ch as u8,
-            rect.mv,
-            &mut pred_l0_buf[cy * 8 + cx..],
-            8,
-        );
-    }
-
-    for rect in rects_l1.as_slice() {
-        let ref_pic = ref_pics_l1.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecoderError::ReferenceNotFound(format!(
-                "ref_idx_l1 {} out of bounds (list length {})",
-                rect.ref_idx,
-                ref_pics_l1.len()
-            ))
-        })?;
-        let ref_plane = ref_pic.picture.frame.plane(plane);
-        let cx = rect.grid_x as usize * 2;
-        let cy = rect.grid_y as usize * 2;
-        let cw = rect.grid_w as usize * 2;
-        let ch = rect.grid_h as usize * 2;
-        interpolate_chroma(
-            ref_plane,
-            mb_x_chroma,
-            mb_y_chroma,
-            cx as u8,
-            cy as u8,
-            cw as u8,
-            ch as u8,
-            rect.mv,
-            &mut pred_l1_buf[cy * 8 + cx..],
-            8,
-        );
-    }
-
-    let chroma_stride = chroma_plane.cfg.stride;
-    let mb_origin = (mb_y_chroma as usize) * chroma_stride + (mb_x_chroma as usize);
-    let chroma_data = chroma_plane.data_origin_mut();
-    // Both passes write within the 8x8 chroma MB at mb_origin, so a single
-    // worst-case assert dominates every per-pixel store below.
-    assert!(mb_origin + 7 * chroma_stride + 8 <= chroma_data.len());
-
-    for blk_idx in 0..16 {
-        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
-        let pred_mode = partition.pred_mode;
-
-        let has_l0 =
-            pred_mode == MbPredictionMode::Pred_L0 || pred_mode == MbPredictionMode::BiPred;
-        let has_l1 =
-            pred_mode == MbPredictionMode::Pred_L1 || pred_mode == MbPredictionMode::BiPred;
-
-        let blk_x = (grid_x * 4) >> 1;
-        let blk_y = (grid_y * 4) >> 1;
-        let buf_off = blk_y * 8 + blk_x;
-
-        let mut pred_l0 = [0u8; 4];
-        let mut pred_l1 = [0u8; 4];
-        if has_l0 {
-            pred_l0 = [
-                pred_l0_buf[buf_off],
-                pred_l0_buf[buf_off + 1],
-                pred_l0_buf[buf_off + 8],
-                pred_l0_buf[buf_off + 9],
-            ];
-        }
-        if has_l1 {
-            pred_l1 = [
-                pred_l1_buf[buf_off],
-                pred_l1_buf[buf_off + 1],
-                pred_l1_buf[buf_off + 8],
-                pred_l1_buf[buf_off + 9],
-            ];
-        }
-
-        // Section 8.4.2.3: Combine predictions according to weighted prediction mode
-        let mut dst = [0u8; 4];
-        match wp_mode {
-            WeightedPredMode::Explicit => {
-                let wp = get_explicit_chroma_weights(
-                    slice,
-                    partition.ref_idx_l0 as usize,
-                    partition.ref_idx_l1 as usize,
-                    chroma_idx,
-                );
-                if has_l0 && has_l1 {
-                    for i in 0..4 {
-                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], &wp);
-                    }
-                } else if has_l0 {
-                    for i in 0..4 {
-                        dst[i] = weighted_uni_pred(pred_l0[i], wp.w0, wp.o0, wp.log_wd);
-                    }
-                } else if has_l1 {
-                    for i in 0..4 {
-                        dst[i] = weighted_uni_pred(pred_l1[i], wp.w1, wp.o1, wp.log_wd);
-                    }
-                }
-            }
-            WeightedPredMode::Implicit => {
-                if has_l0 && has_l1 {
-                    let wp = &implicit_weights[partition.ref_idx_l0 as usize][partition.ref_idx_l1 as usize];
-                    for i in 0..4 {
-                        dst[i] = weighted_bi_pred(pred_l0[i], pred_l1[i], wp);
-                    }
-                } else if has_l0 {
-                    dst = pred_l0;
-                } else if has_l1 {
-                    dst = pred_l1;
-                }
-            }
-            WeightedPredMode::Default => {
-                if has_l0 && has_l1 {
-                    for i in 0..4 {
-                        dst[i] = ((pred_l0[i] as u16 + pred_l1[i] as u16 + 1) >> 1) as u8;
-                    }
-                } else if has_l0 {
-                    dst = pred_l0;
-                } else if has_l1 {
-                    dst = pred_l1;
-                }
-            }
-        }
-
-        // Write to frame: 2x2 block at chroma sample (mb_x_chroma + blk_x,
-        // mb_y_chroma + blk_y) addressed directly via the hoisted base.
-        let cell_base = mb_origin + blk_y * chroma_stride + blk_x;
-        chroma_data[cell_base] = dst[0];
-        chroma_data[cell_base + 1] = dst[1];
-        chroma_data[cell_base + chroma_stride] = dst[2];
-        chroma_data[cell_base + chroma_stride + 1] = dst[3];
-    }
-
-    // 2. Residuals
-    for (blk_idx, residual_blk) in residuals.iter().enumerate() {
-        let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
-        let blk_base =
-            mb_origin + (blk_loc.y as usize) * chroma_stride + (blk_loc.x as usize);
-        add_residual_4x4(chroma_data, blk_base, chroma_stride, residual_blk);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1668,17 +1520,23 @@ mod tests {
         assert_eq!(dst[0], 108);
     }
 
-    /// `(grid_y, grid_x, grid_h, grid_w, ref_idx, mv)` of each rectangle, in order.
-    fn rect_list(rects: &PredRects) -> Vec<(u8, u8, u8, u8, u8, MotionVector)> {
-        rects
-            .as_slice()
-            .iter()
-            .map(|r| (r.grid_y, r.grid_x, r.grid_h, r.grid_w, r.ref_idx, r.mv))
-            .collect()
+    /// `(grid_y, grid_x, grid_h, grid_w, key)` of each rectangle, in order.
+    fn rect_list(rects: &PredRects) -> Vec<(u8, u8, u8, u8, PredKey)> {
+        rects.as_slice().iter().map(|r| (r.grid_y, r.grid_x, r.grid_h, r.grid_w, r.key)).collect()
     }
 
     fn uniform_motion(info: PartitionInfo) -> macroblock::MbMotion {
         macroblock::MbMotion { partitions: [[info; 4]; 4], decoded_mask: 0xFFFF }
+    }
+
+    /// The key of P cells with the given L0 motion.
+    fn l0_key(ref_idx: u8, mv: MotionVector) -> PredKey {
+        PredKey {
+            pred_mode: MbPredictionMode::Pred_L0,
+            ref_idx_l0: ref_idx,
+            mv_l0: mv,
+            ..PredKey::default()
+        }
     }
 
     #[test]
@@ -1686,7 +1544,7 @@ mod tests {
         let mv = MotionVector { x: 3, y: -2 };
         let motion =
             uniform_motion(PartitionInfo { ref_idx_l0: 1, mv_l0: mv, ..Default::default() });
-        assert_eq!(rect_list(&PredRects::p_l0(&motion)), vec![(0, 0, 4, 4, 1, mv)]);
+        assert_eq!(rect_list(&PredRects::for_p(&motion)), vec![(0, 0, 4, 4, l0_key(1, mv))]);
     }
 
     #[test]
@@ -1701,8 +1559,8 @@ mod tests {
             }
         }
         assert_eq!(
-            rect_list(&PredRects::p_l0(&motion)),
-            vec![(0, 0, 2, 4, 0, top_mv), (2, 0, 2, 4, 0, bottom_mv)]
+            rect_list(&PredRects::for_p(&motion)),
+            vec![(0, 0, 2, 4, l0_key(0, top_mv)), (2, 0, 2, 4, l0_key(0, bottom_mv))]
         );
 
         // 8x8: each quadrant has its own reference index.
@@ -1715,23 +1573,36 @@ mod tests {
         }
         let mv = MotionVector::default();
         assert_eq!(
-            rect_list(&PredRects::p_l0(&motion)),
+            rect_list(&PredRects::for_p(&motion)),
             vec![
-                (0, 0, 2, 2, 0, mv),
-                (0, 2, 2, 2, 1, mv),
-                (2, 0, 2, 2, 2, mv),
-                (2, 2, 2, 2, 3, mv)
+                (0, 0, 2, 2, l0_key(0, mv)),
+                (0, 2, 2, 2, l0_key(1, mv)),
+                (2, 0, 2, 2, l0_key(2, mv)),
+                (2, 2, 2, 2, l0_key(3, mv))
             ]
         );
     }
 
     #[test]
-    fn test_pred_rects_b_split_by_direction() {
+    fn test_pred_rects_p_ignores_l1_and_mvd() {
+        // A P key covers only (ref_idx_l0, mv_l0): stale L1 fields and mvds
+        // must not split a partition.
+        let mut motion = uniform_motion(PartitionInfo { ref_idx_l0: 2, ..Default::default() });
+        motion.partitions[1][2].ref_idx_l1 = 7;
+        motion.partitions[3][0].mvd_l0 = MotionVector { x: 5, y: 5 };
+        let mv = MotionVector::default();
+        assert_eq!(rect_list(&PredRects::for_p(&motion)), vec![(0, 0, 4, 4, l0_key(2, mv))]);
+    }
+
+    #[test]
+    fn test_pred_rects_b_split_on_full_key() {
         // Top half Pred_L0; bottom-left BiPred; bottom-right Pred_L1 with the
-        // same L1 motion as the BiPred cells.
+        // same L1 motion as the BiPred cells. Each region is one rectangle
+        // with fixed lists, references and motion vectors.
         let l0 = PartitionInfo {
             pred_mode: MbPredictionMode::Pred_L0,
             mv_l0: MotionVector { x: 4, y: 4 },
+            ref_idx_l1: u8::MAX,
             ..Default::default()
         };
         let bi = PartitionInfo {
@@ -1743,6 +1614,7 @@ mod tests {
         };
         let l1 = PartitionInfo {
             pred_mode: MbPredictionMode::Pred_L1,
+            ref_idx_l0: u8::MAX,
             mv_l1: bi.mv_l1,
             ..Default::default()
         };
@@ -1752,33 +1624,76 @@ mod tests {
             row[2..].fill(l1);
         }
         assert_eq!(
-            rect_list(&PredRects::b_l0(&motion)),
-            vec![(0, 0, 2, 4, 0, l0.mv_l0), (2, 0, 2, 2, 1, bi.mv_l0)]
+            rect_list(&PredRects::for_b(&motion)),
+            vec![
+                (0, 0, 2, 4, PredKey::b(&l0)),
+                (2, 0, 2, 2, PredKey::b(&bi)),
+                (2, 2, 2, 2, PredKey::b(&l1))
+            ]
         );
-        // L1-only cells merge with BiPred cells that share (ref_idx_l1, mv_l1).
-        assert_eq!(rect_list(&PredRects::b_l1(&motion)), vec![(2, 0, 2, 4, 0, bi.mv_l1)]);
+
+        // The mvds don't affect prediction, so they don't split rectangles.
+        let mut motion = uniform_motion(bi);
+        motion.partitions[1][1].mvd_l1 = MotionVector { x: 3, y: 3 };
+        assert_eq!(rect_list(&PredRects::for_b(&motion)), vec![(0, 0, 4, 4, PredKey::b(&bi))]);
     }
 
     #[test]
-    fn test_pred_rects_uniform_fast_path_edges() {
-        // A uniform Pred_L0 grid: one L0 rectangle and no L1 rectangles.
-        let l0_only = PartitionInfo {
-            pred_mode: MbPredictionMode::Pred_L0,
-            mv_l0: MotionVector { x: 1, y: 1 },
-            ..Default::default()
-        };
-        let motion = uniform_motion(l0_only);
-        assert_eq!(rect_list(&PredRects::b_l0(&motion)), vec![(0, 0, 4, 4, 0, l0_only.mv_l0)]);
-        assert!(PredRects::b_l1(&motion).as_slice().is_empty());
-
+    fn test_pred_rects_fast_path_falls_back() {
         // Only the last cell differs, so the greedy walk must run.
         let mut motion = uniform_motion(PartitionInfo::default());
         motion.partitions[3][3].ref_idx_l0 = 1;
         let mv = MotionVector::default();
         assert_eq!(
-            rect_list(&PredRects::p_l0(&motion)),
-            vec![(0, 0, 3, 4, 0, mv), (3, 0, 1, 3, 0, mv), (3, 3, 1, 1, 1, mv)]
+            rect_list(&PredRects::for_p(&motion)),
+            vec![
+                (0, 0, 3, 4, l0_key(0, mv)),
+                (3, 0, 1, 3, l0_key(0, mv)),
+                (3, 3, 1, 1, l0_key(1, mv))
+            ]
         );
+    }
+
+    #[test]
+    fn test_bi_combine_matches_per_sample() {
+        let wp = WeightParams { log_wd: 5, w0: 40, o0: -3, w1: 24, o1: 7 };
+        let l0: Vec<u8> = (0..256).map(|i| u8::try_from(i * 7 % 256).expect("fits")).collect();
+        let l1: Vec<u8> =
+            (0..256).map(|i| u8::try_from((i * 13 + 5) % 256).expect("fits")).collect();
+        let stride = 24;
+        // Every rectangle width, placed at row 1, column 1 of the destination.
+        for (w, h) in [(2, 2), (4, 8), (6, 4), (8, 8), (12, 4), (16, 16), (16, 8)] {
+            let area = Area { x: 0, y: 0, w, h };
+            let mut avg = vec![9u8; stride * 18];
+            average_into(&mut avg[stride + 1..], stride, &l0, &l1, 16, area);
+            let mut weighted = vec![9u8; stride * 18];
+            weight_bi_into(&mut weighted[stride + 1..], stride, &l0, &l1, 16, area, &wp);
+            for i in 0..stride * 18 {
+                let (row, col) = (i / stride, i % stride);
+                if (1..=usize::from(h)).contains(&row) && (1..=usize::from(w)).contains(&col) {
+                    let src = (row - 1) * 16 + col - 1;
+                    let (a, b) = (l0[src], l1[src]);
+                    let mean = (u16::from(a) + u16::from(b)).div_ceil(2);
+                    assert_eq!(u16::from(avg[i]), mean, "average at ({row}, {col}), {w}x{h}");
+                    let want = weighted_bi_pred(a, b, &wp);
+                    assert_eq!(weighted[i], want, "weighted at ({row}, {col}), {w}x{h}");
+                } else {
+                    assert_eq!((avg[i], weighted[i]), (9, 9), "outside at ({row}, {col}), {w}x{h}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_fill_rect_stays_inside() {
+        let stride = 10;
+        let mut buf = vec![1u8; stride * 6];
+        fill_rect(&mut buf[stride + 2..], stride, Area { x: 0, y: 0, w: 4, h: 3 }, 0);
+        for (i, &value) in buf.iter().enumerate() {
+            let (row, col) = (i / stride, i % stride);
+            let inside = (1..4).contains(&row) && (2..6).contains(&col);
+            assert_eq!(value, u8::from(!inside), "({row}, {col})");
+        }
     }
 
     #[test]

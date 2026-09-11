@@ -38,9 +38,8 @@ impl VideoDecoderCallbacks for NoopCallbacks {
 use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
 use super::frame::BorderedFrame;
 use super::inter_pred::{
-    build_implicit_weight_table, get_weighted_pred_mode, reconstruct_p_macroblock,
-    render_chroma_inter_prediction_b, render_luma_inter_prediction_b, InterSliceRefs,
-    InterpolationBuffer, MbQp, PredRects,
+    build_implicit_weight_table, get_weighted_pred_mode, reconstruct_b_macroblock,
+    reconstruct_p_macroblock, InterSliceRefs, InterpolationBuffer, MbQp,
 };
 use super::intra_pred::{
     point_to_plane_offset, render_chroma_intra_prediction, render_luma_16x16_intra_prediction,
@@ -995,6 +994,8 @@ impl Decoder {
         let inter_refs = InterSliceRefs {
             wp_mode: get_weighted_pred_mode(slice),
             ref_pics_l0: &ref_pics_l0,
+            ref_pics_l1: &ref_pics_l1,
+            implicit_weights: &implicit_weights,
             dequant: &active_dequant,
         };
         let first_mb_addr = slice.header.first_mb_in_slice;
@@ -1132,57 +1133,15 @@ impl Decoder {
                     }
                     Macroblock::B(block) => {
                         qp = next_qp(qp, block.mb_qp_delta, qp_bd_offset_y);
-                        let residuals = restore_residuals(
-                            block.residual.as_deref(),
-                            ColorPlane::Y,
-                            qp as u8,
-                            &active_dequant,
-                        );
-                        // Merge the 4x4 motion grid into prediction rectangles
-                        // once per direction; luma and both chroma planes share them.
-                        let rects_l0 = PredRects::b_l0(&block.motion);
-                        let rects_l1 = PredRects::b_l1(&block.motion);
-                        let luma_nonzero =
-                            block.residual.as_deref().map_or(0, Residual::luma_nonzero_mask);
-
-                        render_luma_inter_prediction_b(
+                        reconstruct_b_macroblock(
                             slice,
+                            &inter_refs,
                             block,
                             mb_loc,
+                            mb_qp(slice, qp, qp_bd_offset_c),
                             frame,
-                            &implicit_weights,
-                            &residuals,
-                            luma_nonzero,
-                            &rects_l0,
-                            &rects_l1,
-                            &ref_pics_l0,
-                            &ref_pics_l1,
                             &mut self.interpolation_buffer,
                         )?;
-
-                        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
-                            let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c);
-                            let residuals = restore_residuals(
-                                block.residual.as_deref(),
-                                plane_name,
-                                chroma_qp,
-                                &active_dequant,
-                            );
-                            render_chroma_inter_prediction_b(
-                                slice,
-                                block,
-                                mb_loc,
-                                plane_name,
-                                frame,
-                                &residuals,
-                                &rects_l0,
-                                &rects_l1,
-                                &ref_pics_l0,
-                                &ref_pics_l1,
-                                &implicit_weights,
-                            )?;
-                        }
                     }
                 }
             }

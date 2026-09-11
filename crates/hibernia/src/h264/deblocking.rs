@@ -1,6 +1,7 @@
 use super::decoder::{get_chroma_qp, SliceDeblockParams, VideoFrame};
-use super::macroblock::{get_neighbor_mbs, Macroblock, MbAddr, MbNeighborName};
+use super::macroblock::Macroblock;
 use super::pps::PicParameterSet;
+use super::residual::scan_4x4;
 use super::slice::DeblockingFilterIdc;
 use super::sps::SequenceParameterSet;
 use super::tables::{MB_HEIGHT, MB_WIDTH};
@@ -96,34 +97,231 @@ pub struct PictureDeblockInput<'a> {
     pub pic_height_in_mbs: usize,
 }
 
-impl PictureDeblockInput<'_> {
-    fn get_mb(&self, mb_addr: MbAddr) -> Option<&Macroblock> {
-        self.macroblocks.get(mb_addr as usize).and_then(|m| m.as_ref())
+// `MbDeblockInfo::flags` bits.
+/// The macroblock is coded in an Intra prediction mode (I, including `I_PCM`).
+const INTRA: u8 = 1 << 0;
+/// `transform_size_8x8_flag` is set for the macroblock.
+const TRANSFORM_8X8: u8 = 1 << 1;
+/// Every internal edge of the macroblock has bS = 0 (`has_no_internal_edges`).
+const NO_INTERNAL_EDGES: u8 = 1 << 2;
+/// The macroblock's slice has an empty `RefPicList1`, as P slices do.
+const L1_EMPTY: u8 = 1 << 3;
+/// No slice decoded the macroblock.
+const NOT_DECODED: u8 = 1 << 4;
+
+/// What the deblocking filter reads about one macroblock (Section 8.7).
+///
+/// Built once per picture from the decoded macroblocks, so that deriving the
+/// boundary strengths of an edge (Section 8.7.2.1) reads two compact records
+/// rather than the `Macroblock` enum and its boxed residual.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MbDeblockInfo {
+    /// `QP_Y` of the macroblock (`get_qp`), the qPp / qPq of Section 8.7.2.2.
+    qp: u8,
+    /// `QP_C` of the Cb and Cr planes that corresponds to `qp` (Section 8.5.8).
+    qp_c: [u8; 2],
+    /// `INTRA`, `TRANSFORM_8X8`, `NO_INTERNAL_EDGES`, `L1_EMPTY`, `NOT_DECODED`.
+    flags: u8,
+    /// Index of the slice that decoded the macroblock.
+    slice_id: u16,
+    /// What the boundary strengths depend on, per 4x4 block. Intra
+    /// macroblocks leave it zero: their edges get bS 3 or 4 regardless.
+    blocks: BlockInfo,
+}
+
+/// The per-4x4-block inputs of Section 8.7.2.1 for an inter macroblock, in
+/// raster order: 4x4 block (row, col) is index `4 * row + col`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BlockInfo {
+    /// Bit `4 * row + col` is set when the luma transform block containing
+    /// 4x4 block (row, col) has non-zero coefficients (`nonzero_blocks`).
+    nz: u16,
+    /// Picture id (`RefPictureIds`) of each block's list 0 and list 1
+    /// reference; 0 when the reference index does not select a picture.
+    ref_l0: [u8; 16],
+    ref_l1: [u8; 16],
+    /// Each block's list 0 and list 1 motion vector as `[x, y]`, as stored in
+    /// the macroblock's partitions, also for an unused list.
+    mv_l0: [[i16; 2]; 16],
+    mv_l1: [[i16; 2]; 16],
+}
+
+impl MbDeblockInfo {
+    /// Gathers the record of a decoded macroblock of slice `slice_id`, whose
+    /// reference picture lists resolve through `ref_ids`. `chroma_qp_offsets`
+    /// are the PPS chroma QP index offsets of Cb and Cr.
+    fn new(
+        mb: &Macroblock,
+        slice_id: u16,
+        ref_ids: &SliceRefIds,
+        chroma_qp_offsets: [i32; 2],
+    ) -> Self {
+        let qp = get_qp(mb);
+        let mut info = MbDeblockInfo {
+            qp,
+            // Section 8.7.2.2: for chroma edges qPp / qPq are the QP_C values
+            // of the luma QPs, from Table 8-15.
+            qp_c: chroma_qp_offsets.map(|offset| get_chroma_qp(i32::from(qp), offset, 0)),
+            slice_id,
+            ..MbDeblockInfo::default()
+        };
+        if ref_ids.l1_empty {
+            info.flags |= L1_EMPTY;
+        }
+        let (motion, transform_8x8) = match mb {
+            Macroblock::I(m) => {
+                info.flags |= INTRA;
+                if m.transform_size_8x8_flag {
+                    info.flags |= TRANSFORM_8X8;
+                }
+                return info;
+            }
+            Macroblock::PCM(_) => {
+                info.flags |= INTRA;
+                return info;
+            }
+            Macroblock::P(m) => (&m.motion, m.transform_size_8x8_flag),
+            Macroblock::B(m) => (&m.motion, m.transform_size_8x8_flag),
+        };
+        if transform_8x8 {
+            info.flags |= TRANSFORM_8X8;
+        }
+        if has_no_internal_edges(mb) {
+            info.flags |= NO_INTERNAL_EDGES;
+        }
+        let blocks = &mut info.blocks;
+        blocks.nz = nonzero_blocks(mb);
+        for (blk, part) in motion.partitions.as_flattened().iter().enumerate() {
+            blocks.ref_l0[blk] = ref_ids.l0[usize::from(part.ref_idx_l0)];
+            blocks.ref_l1[blk] = ref_ids.l1[usize::from(part.ref_idx_l1)];
+            blocks.mv_l0[blk] = [part.mv_l0.x, part.mv_l0.y];
+            blocks.mv_l1[blk] = [part.mv_l1.x, part.mv_l1.y];
+        }
+        info
     }
 
-    fn slice_id(&self, mb_addr: MbAddr) -> u16 {
-        self.mb_slice_id[mb_addr as usize]
+    fn is(&self, flag: u8) -> bool {
+        self.flags & flag != 0
+    }
+}
+
+/// Section 8.7.2.1 compares the reference *pictures* two blocks use, and the
+/// blocks may belong to slices with different reference picture lists. Each
+/// slice's lists were resolved to POCs at slice-decode time; this numbers the
+/// distinct POCs of all lists of the picture from 1 and gives every list entry
+/// its picture's number, so the comparison is a byte compare that doesn't
+/// depend on either slice's lists. 0 stands for "no picture". Two ids are equal
+/// exactly when the POCs they stand for (or their absence) are.
+#[derive(Default)]
+struct RefPictureIds {
+    /// Distinct POCs; the picture id of `pocs[i]` is `i + 1`.
+    pocs: Vec<i32>,
+    /// The picture ids of every slice's list 0 and then list 1 entries.
+    ids: Vec<u8>,
+    /// Per slice: where its list 0 and list 1 ids start in `ids`, and where
+    /// its list 1 ids end.
+    slices: Vec<[usize; 3]>,
+}
+
+impl RefPictureIds {
+    fn new(slice_ref_pocs: &[(Vec<i32>, Vec<i32>)]) -> Self {
+        let mut table = RefPictureIds::default();
+        for (l0, l1) in slice_ref_pocs {
+            let l0_start = table.ids.len();
+            for &poc in l0 {
+                let id = table.id_of(poc);
+                table.ids.push(id);
+            }
+            let l1_start = table.ids.len();
+            for &poc in l1 {
+                let id = table.id_of(poc);
+                table.ids.push(id);
+            }
+            table.slices.push([l0_start, l1_start, table.ids.len()]);
+        }
+        table
     }
 
-    fn deblock_params(&self, mb_addr: MbAddr) -> &SliceDeblockParams {
-        &self.slice_deblock[self.slice_id(mb_addr) as usize]
+    fn id_of(&mut self, poc: i32) -> u8 {
+        let index = self.pocs.iter().position(|&p| p == poc).unwrap_or_else(|| {
+            self.pocs.push(poc);
+            self.pocs.len() - 1
+        });
+        // The lists name pictures of the DPB, which holds fewer than 256
+        // (max_num_ref_frames and max_dec_frame_buffering are 8-bit), so the
+        // ids fit.
+        debug_assert!(index < usize::from(u8::MAX), "more than 255 reference pictures");
+        u8::try_from(index + 1).unwrap_or(u8::MAX)
     }
 
-    fn ref_pocs(&self, slice_id: u16) -> (&[i32], &[i32]) {
-        let (l0, l1) = &self.slice_ref_pocs[slice_id as usize];
-        (l0.as_slice(), l1.as_slice())
+    /// The picture ids of slice `slice_id`'s list 0 and list 1.
+    fn lists(&self, slice_id: u16) -> (&[u8], &[u8]) {
+        let [l0_start, l1_start, end] = self.slices[usize::from(slice_id)];
+        (&self.ids[l0_start..l1_start], &self.ids[l1_start..end])
+    }
+}
+
+/// One slice's picture ids, indexed by reference index. Every `u8` index is
+/// in range, so the lookup needs no branch: entries past the end of a list
+/// are 0, which also covers `u8::MAX`, the marker of an unused list.
+struct SliceRefIds {
+    slice_id: Option<u16>,
+    l0: [u8; 256],
+    l1: [u8; 256],
+    /// Entries of `l0` / `l1` that may be non-zero.
+    l0_len: usize,
+    l1_len: usize,
+    /// The slice's list 1 is empty.
+    l1_empty: bool,
+}
+
+impl SliceRefIds {
+    fn new() -> Self {
+        SliceRefIds {
+            slice_id: None,
+            l0: [0; 256],
+            l1: [0; 256],
+            l0_len: 0,
+            l1_len: 0,
+            l1_empty: true,
+        }
     }
 
-    fn neighbor_addr(&self, mb_addr: MbAddr, neighbor: MbNeighborName) -> Option<MbAddr> {
-        get_neighbor_mbs(self.pic_width_in_mbs as u32, 0, mb_addr, neighbor)
+    /// Switches the tables to slice `slice_id`.
+    fn load(&mut self, ref_ids: &RefPictureIds, slice_id: u16) {
+        fn fill(table: &mut [u8; 256], len: &mut usize, ids: &[u8]) {
+            table[..*len].fill(0);
+            *len = ids.len().min(table.len());
+            table[..*len].copy_from_slice(&ids[..*len]);
+        }
+        let (l0_ids, l1_ids) = ref_ids.lists(slice_id);
+        fill(&mut self.l0, &mut self.l0_len, l0_ids);
+        fill(&mut self.l1, &mut self.l1_len, l1_ids);
+        self.l1_empty = l1_ids.is_empty();
+        self.slice_id = Some(slice_id);
     }
+}
 
-    fn mb_xy(&self, mb_addr: MbAddr) -> Point {
-        let width_in_mbs = self.pic_width_in_mbs as u32;
-        let x = mb_addr % width_in_mbs * (MB_WIDTH as u32);
-        let y = mb_addr / width_in_mbs * (MB_HEIGHT as u32);
-        Point { x, y }
-    }
+/// Builds the `MbDeblockInfo` of every macroblock of the picture, in raster
+/// order.
+fn build_records(input: &PictureDeblockInput) -> Vec<MbDeblockInfo> {
+    let ref_ids = RefPictureIds::new(input.slice_ref_pocs);
+    let mut slice_ref_ids = SliceRefIds::new();
+    let chroma_qp_offsets =
+        [ColorPlane::Cb, ColorPlane::Cr].map(|plane| input.pps.get_chroma_qp_index_offset(plane));
+    let total_mbs = input.pic_width_in_mbs * input.pic_height_in_mbs;
+    (0..total_mbs)
+        .map(|mb_addr| match input.macroblocks.get(mb_addr).and_then(Option::as_ref) {
+            Some(mb) => {
+                let slice_id = input.mb_slice_id[mb_addr];
+                if slice_ref_ids.slice_id != Some(slice_id) {
+                    slice_ref_ids.load(&ref_ids, slice_id);
+                }
+                MbDeblockInfo::new(mb, slice_id, &slice_ref_ids, chroma_qp_offsets)
+            }
+            None => MbDeblockInfo { flags: NOT_DECODED, ..MbDeblockInfo::default() },
+        })
+        .collect()
 }
 
 /// Section 8.7 -- picture-level deblocking pass. Replaces the per-slice
@@ -131,76 +329,76 @@ impl PictureDeblockInput<'_> {
 /// per-MB slice ownership is honoured for `disable_deblocking_filter_idc=2`
 /// and for boundary-strength reference comparisons across slice boundaries.
 pub fn filter_picture(input: &PictureDeblockInput, frame: &mut VideoFrame) {
-    let total_mbs = input.pic_width_in_mbs * input.pic_height_in_mbs;
-    for mb_addr in 0..total_mbs {
-        filter_macroblock(input, frame, mb_addr as MbAddr);
+    let records = build_records(input);
+    let width = input.pic_width_in_mbs;
+    for mb_y in 0..input.pic_height_in_mbs {
+        for mb_x in 0..width {
+            let Some(q) = records.get(mb_y * width + mb_x) else { continue };
+            let (left, top) = mb_neighbors(&records, width, mb_x, mb_y);
+            let mb_xy = Point {
+                x: u32::try_from(mb_x * MB_WIDTH).unwrap_or(u32::MAX),
+                y: u32::try_from(mb_y * MB_HEIGHT).unwrap_or(u32::MAX),
+            };
+            filter_macroblock(input, frame, mb_xy, q, left, top);
+        }
     }
+}
+
+/// Section 6.4.9, with every macroblock of the picture available: the
+/// macroblocks left of (A) and above (B) the macroblock at (`mb_x`, `mb_y`),
+/// or `None` on the picture boundary.
+fn mb_neighbors(
+    records: &[MbDeblockInfo],
+    width: usize,
+    mb_x: usize,
+    mb_y: usize,
+) -> (Option<&MbDeblockInfo>, Option<&MbDeblockInfo>) {
+    let mb_addr = mb_y * width + mb_x;
+    let left = if mb_x > 0 { records.get(mb_addr - 1) } else { None };
+    let top = if mb_y > 0 { records.get(mb_addr - width) } else { None };
+    (left, top)
 }
 
 /// Section 8.7, steps 1-3 -- Filter all edges of a single macroblock.
 /// BS values are precomputed once per MB and reused across luma and chroma
-/// to avoid redundant derivation (Section 8.7.2.1).
-fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_addr: MbAddr) {
-    let mb = match input.get_mb(mb_addr) {
-        Some(mb) => mb,
-        None => return,
-    };
+/// to avoid redundant derivation (Section 8.7.2.1). `left` and `top` are the
+/// neighbours across the macroblock's left and top edges, `None` on the
+/// picture boundary.
+fn filter_macroblock(
+    input: &PictureDeblockInput,
+    frame: &mut VideoFrame,
+    mb_xy: Point,
+    q: &MbDeblockInfo,
+    left: Option<&MbDeblockInfo>,
+    top: Option<&MbDeblockInfo>,
+) {
+    if q.is(NOT_DECODED) {
+        return;
+    }
 
     // Per Section 8.7, edge filtering parameters come from the slice that
     // contains the q-block (the macroblock on the lower/right side of the
     // edge), which is the current MB for both its left and top edges.
-    let q_params = input.deblock_params(mb_addr);
+    let q_params = &input.slice_deblock[usize::from(q.slice_id)];
     if q_params.idc == DeblockingFilterIdc::Off {
         return;
     }
     let alpha_offset = q_params.alpha_c0_offset_div2 * 2;
     let beta_offset = q_params.beta_offset_div2 * 2;
 
-    let q_slice_id = input.slice_id(mb_addr);
-    let mb_xy = input.mb_xy(mb_addr);
-    let q_qp = get_qp(mb);
-
     // Section 8.7, step 2.c / 2.d -- determine filterLeftMbEdgeFlag / filterTopMbEdgeFlag
-    let filter_left = should_filter_edge(input, mb_addr, MbNeighborName::A);
-    let filter_top = should_filter_edge(input, mb_addr, MbNeighborName::B);
+    let left = left.filter(|p| should_filter_edge(q_params.idc, q, p));
+    let top = top.filter(|p| should_filter_edge(q_params.idc, q, p));
 
-    let transform_8x8 = match mb {
-        Macroblock::I(m) => m.transform_size_8x8_flag,
-        Macroblock::P(m) => m.transform_size_8x8_flag,
-        Macroblock::B(m) => m.transform_size_8x8_flag,
-        Macroblock::PCM(_) => false,
-    };
+    let transform_8x8 = q.is(TRANSFORM_8X8);
+    let q_qp = q.qp;
 
-    // Section 8.7, step 1 -- locate neighbor macroblocks A (left) and B (top)
-    let left_info: Option<(&Macroblock, u8, u16)> = if filter_left {
-        input.neighbor_addr(mb_addr, MbNeighborName::A).and_then(|addr| {
-            input.get_mb(addr).map(|p_mb| (p_mb, get_qp(p_mb), input.slice_id(addr)))
-        })
-    } else {
-        None
-    };
-
-    let top_info: Option<(&Macroblock, u8, u16)> = if filter_top {
-        input.neighbor_addr(mb_addr, MbNeighborName::B).and_then(|addr| {
-            input.get_mb(addr).map(|p_mb| (p_mb, get_qp(p_mb), input.slice_id(addr)))
-        })
-    } else {
-        None
-    };
-
-    let (bs_vert, bs_horz) = compute_bs_arrays(
-        input,
-        mb,
-        q_slice_id,
-        left_info.map(|(m, _, sid)| (m, sid)),
-        top_info.map(|(m, _, sid)| (m, sid)),
-        transform_8x8,
-    );
+    let (bs_vert, bs_horz) = compute_bs_arrays(q, left, top);
 
     let has_nonzero_bs = |bs: &[u8; 4]| bs[0] | bs[1] | bs[2] | bs[3] != 0;
 
     // Section 8.7, step 3.a/3.b -- luma vertical edges
-    if let Some((_, p_qp, _)) = left_info {
+    if let Some(p) = left {
         if has_nonzero_bs(&bs_vert[0]) {
             filter_luma_edge(
                 frame,
@@ -208,7 +406,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
                 0,
                 true,
                 &bs_vert[0],
-                p_qp,
+                p.qp,
                 q_qp,
                 alpha_offset,
                 beta_offset,
@@ -246,7 +444,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
     }
 
     // Section 8.7, step 3.c/3.d -- luma horizontal edges
-    if let Some((_, p_qp, _)) = top_info {
+    if let Some(p) = top {
         if has_nonzero_bs(&bs_horz[0]) {
             filter_luma_edge(
                 frame,
@@ -254,7 +452,7 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
                 0,
                 false,
                 &bs_horz[0],
-                p_qp,
+                p.qp,
                 q_qp,
                 alpha_offset,
                 beta_offset,
@@ -293,17 +491,16 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
 
     // Section 8.7, step 3 for chroma (4:2:0)
     // Chroma edge 0 reuses luma edge 0 BS, chroma edge 1 reuses luma edge 2 BS
-    if let Some((_, p_qp, _)) = left_info {
+    if let Some(p) = left {
         if has_nonzero_bs(&bs_vert[0]) {
             filter_chroma_edge(
-                input.pps,
                 frame,
                 mb_xy,
                 0,
                 true,
                 &bs_vert[0],
-                p_qp,
-                q_qp,
+                p.qp_c,
+                q.qp_c,
                 alpha_offset,
                 beta_offset,
             );
@@ -311,29 +508,27 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
     }
     if has_nonzero_bs(&bs_vert[2]) {
         filter_chroma_edge(
-            input.pps,
             frame,
             mb_xy,
             1,
             true,
             &bs_vert[2],
-            q_qp,
-            q_qp,
+            q.qp_c,
+            q.qp_c,
             alpha_offset,
             beta_offset,
         );
     }
-    if let Some((_, p_qp, _)) = top_info {
+    if let Some(p) = top {
         if has_nonzero_bs(&bs_horz[0]) {
             filter_chroma_edge(
-                input.pps,
                 frame,
                 mb_xy,
                 0,
                 false,
                 &bs_horz[0],
-                p_qp,
-                q_qp,
+                p.qp_c,
+                q.qp_c,
                 alpha_offset,
                 beta_offset,
             );
@@ -341,51 +536,33 @@ fn filter_macroblock(input: &PictureDeblockInput, frame: &mut VideoFrame, mb_add
     }
     if has_nonzero_bs(&bs_horz[2]) {
         filter_chroma_edge(
-            input.pps,
             frame,
             mb_xy,
             1,
             false,
             &bs_horz[2],
-            q_qp,
-            q_qp,
+            q.qp_c,
+            q.qp_c,
             alpha_offset,
             beta_offset,
         );
     }
 }
 
-/// Section 8.7, steps 2.c/2.d -- determine whether to filter an MB boundary edge.
-/// `neighbor` is `MbNeighborName::A` for the left edge, `MbNeighborName::B` for the top edge.
-fn should_filter_edge(
-    input: &PictureDeblockInput,
-    mb_addr: MbAddr,
-    neighbor: MbNeighborName,
-) -> bool {
-    let mb_width = input.pic_width_in_mbs;
-    let is_at_boundary = match neighbor {
-        MbNeighborName::A => (mb_addr as usize) % mb_width == 0,
-        MbNeighborName::B => (mb_addr as usize) / mb_width == 0,
-        _ => return false,
-    };
-    if is_at_boundary {
+/// Section 8.7, steps 2.c/2.d -- whether the macroblock edge between `q` and
+/// its left or top neighbour `p` is filtered (`filterLeftMbEdgeFlag` /
+/// `filterTopMbEdgeFlag`). `idc` is `disable_deblocking_filter_idc` of q's
+/// slice.
+/// Edges on the picture boundary have no `p` and are never filtered.
+fn should_filter_edge(idc: DeblockingFilterIdc, q: &MbDeblockInfo, p: &MbDeblockInfo) -> bool {
+    if p.is(NOT_DECODED) {
         return false;
     }
-
-    let disable_idc = input.deblock_params(mb_addr).idc;
-    if disable_idc == DeblockingFilterIdc::Off {
-        return false;
+    match idc {
+        DeblockingFilterIdc::On => true,
+        DeblockingFilterIdc::Off => false,
+        DeblockingFilterIdc::OnExceptSliceBounds => p.slice_id == q.slice_id,
     }
-    if disable_idc == DeblockingFilterIdc::OnExceptSliceBounds {
-        let neighbor_addr = match input.neighbor_addr(mb_addr, neighbor) {
-            Some(addr) if input.get_mb(addr).is_some() => addr,
-            _ => return false,
-        };
-        if input.slice_id(mb_addr) != input.slice_id(neighbor_addr) {
-            return false;
-        }
-    }
-    true
 }
 
 /// Sections 8.7.1/8.7.2 -- Filtering process for a single luma block edge.
@@ -535,16 +712,16 @@ fn filter_luma_edge(
 }
 
 /// Sections 8.7.1/8.7.2 -- Filtering process for a single chroma block edge (4:2:0).
+/// `p_qp_c` and `q_qp_c` are the Cb and Cr QPs of the two macroblocks.
 #[allow(clippy::too_many_arguments)]
 fn filter_chroma_edge(
-    pps: &PicParameterSet,
     frame: &mut VideoFrame,
     mb_xy: Point,
     edge_idx: usize,
     is_vertical: bool,
     bs_array: &[u8; 4],
-    p_qp: u8,
-    q_qp: u8,
+    p_qp_c: [u8; 2],
+    q_qp_c: [u8; 2],
     alpha_offset: i32,
     beta_offset: i32,
 ) {
@@ -552,12 +729,8 @@ fn filter_chroma_edge(
     let chroma_shift_y = 1u32;
 
     // Section 8.7.2.2 -- chroma threshold derivation using QPc from Table 8-15
-    let chroma_thresh = [ColorPlane::Cb, ColorPlane::Cr].map(|plane_idx| {
-        let qp_index_offset = pps.get_chroma_qp_index_offset(plane_idx);
-        let qp_p_c = get_chroma_qp(p_qp as i32, qp_index_offset, 0);
-        let qp_q_c = get_chroma_qp(q_qp as i32, qp_index_offset, 0);
-        FilterThresholds::from_qp(qp_p_c, qp_q_c, alpha_offset, beta_offset)
-    });
+    let chroma_thresh =
+        [0, 1].map(|i| FilterThresholds::from_qp(p_qp_c[i], q_qp_c[i], alpha_offset, beta_offset));
 
     for (pidx, &plane_idx) in [ColorPlane::Cb, ColorPlane::Cr].iter().enumerate() {
         let alpha = chroma_thresh[pidx].alpha;
@@ -649,85 +822,203 @@ fn filter_chroma_edge(
     }
 }
 
-/// Section 8.7.2.1 -- Precompute boundary strength arrays for all edges of a macroblock.
+/// Section 8.7.2.1 -- Precompute boundary strength arrays for all edges of macroblock `q`.
 /// Returns `(bs_vert, bs_horz)` where each is `[[u8; 4]; 4]` indexed by `[edge_idx][block_idx]`.
+/// Edge 0 is shared with `left` / `top`, which is `None` when that edge isn't filtered.
 fn compute_bs_arrays(
-    input: &PictureDeblockInput,
-    mb: &Macroblock,
-    q_slice_id: u16,
-    left: Option<(&Macroblock, u16)>,
-    top: Option<(&Macroblock, u16)>,
-    transform_8x8: bool,
+    q: &MbDeblockInfo,
+    left: Option<&MbDeblockInfo>,
+    top: Option<&MbDeblockInfo>,
 ) -> ([[u8; 4]; 4], [[u8; 4]; 4]) {
-    let mut bs_vert = [[BS_NONE; 4]; 4];
-    let mut bs_horz = [[BS_NONE; 4]; 4];
-    let q_intra = mb.is_intra();
-
-    let (q_l0, q_l1) = input.ref_pocs(q_slice_id);
-
-    // External edges (MB boundary) -- use neighbor MB as p.
-    // Fast path: when either side is intra, every block's bS is BS_STRONG, so
-    // we can fill the row directly without 4 enum-dispatch calls into get_bs.
-    if let Some((p_mb, p_slice_id)) = left {
-        if q_intra || p_mb.is_intra() {
+    if q.is(INTRA) {
+        let mut bs_vert = [[BS_NONE; 4]; 4];
+        let mut bs_horz = [[BS_NONE; 4]; 4];
+        // External edges (MB boundary): an intra macroblock on either side
+        // gives every block bS=BS_STRONG.
+        if left.is_some() {
             bs_vert[0] = [BS_STRONG; 4];
-        } else {
-            let (p_l0, p_l1) = input.ref_pocs(p_slice_id);
-            for b in 0..4 {
-                bs_vert[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, true);
-            }
         }
-    }
-    if let Some((p_mb, p_slice_id)) = top {
-        if q_intra || p_mb.is_intra() {
+        if top.is_some() {
             bs_horz[0] = [BS_STRONG; 4];
-        } else {
-            let (p_l0, p_l1) = input.ref_pocs(p_slice_id);
-            for b in 0..4 {
-                bs_horz[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, false);
-            }
         }
-    }
-
-    // Internal edges -- p and q are both within this MB (same slice -> same POCs).
-    // Fast paths:
-    //   - intra MB: every internal 4x4 edge has bS=BS_INTRA (skips 24 calls)
-    //   - 16x16 inter with cbp_luma==0: every internal edge has bS=0; leave
-    //     bs_vert/bs_horz at their BS_NONE init
-    if q_intra {
-        if !transform_8x8 {
+        // Internal edges: every internal 4x4 edge has bS=BS_INTRA.
+        if q.is(TRANSFORM_8X8) {
+            // 8x8 transform: only edge 2 (at the 8-sample boundary)
+            bs_vert[2] = [BS_INTRA; 4];
+            bs_horz[2] = [BS_INTRA; 4];
+        } else {
             for edge in 1..4 {
                 bs_vert[edge] = [BS_INTRA; 4];
                 bs_horz[edge] = [BS_INTRA; 4];
             }
-        } else {
-            // 8x8 transform: only edge 2 (at the 8-sample boundary)
-            bs_vert[2] = [BS_INTRA; 4];
-            bs_horz[2] = [BS_INTRA; 4];
         }
-    } else if !has_no_internal_edges(mb) {
-        if !transform_8x8 {
-            for edge in 1..4 {
-                for b in 0..4 {
-                    bs_vert[edge][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, true);
-                    bs_horz[edge][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, false);
-                }
-            }
-        } else {
-            for b in 0..4 {
-                bs_vert[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, true);
-                bs_horz[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, false);
-            }
-        }
+        return (bs_vert, bs_horz);
     }
 
-    (bs_vert, bs_horz)
+    // The internal edges to derive, as a mask of edge indices: with the 8x8
+    // transform only edge 2 is filtered, and NO_INTERNAL_EDGES means they all
+    // have bS=0 (their BS_NONE init).
+    let internal_edges = if q.is(NO_INTERNAL_EDGES) {
+        0
+    } else if q.is(TRANSFORM_8X8) {
+        1 << 2
+    } else {
+        0b1110
+    };
+    (
+        inter_edge_strengths::<true>(q, left, internal_edges),
+        inter_edge_strengths::<false>(q, top, internal_edges),
+    )
+}
+
+/// Section 8.7.2.1 -- the boundary strengths of the vertical (`VERTICAL`) or
+/// horizontal edges of inter macroblock `q`, indexed by `[edge_idx][block_idx]`.
+/// `neighbour` is the macroblock across edge 0, `None` when that edge isn't
+/// filtered; `internal_edges` has bit `e` set for each internal edge `e` to
+/// derive. Edges left out have bS=0.
+fn inter_edge_strengths<const VERTICAL: bool>(
+    q: &MbDeblockInfo,
+    neighbour: Option<&MbDeblockInfo>,
+    internal_edges: u8,
+) -> [[u8; 4]; 4] {
+    let mut bs = [[BS_NONE; 4]; 4];
+    let mut edges = internal_edges;
+    // The blocks across the macroblock edge; without an inter neighbour the
+    // segments of edge 0 are left out, and any blocks will do.
+    let mut p_side = q;
+    if let Some(p) = neighbour {
+        if p.is(INTRA) {
+            // Fast path: an intra neighbour gives every segment of the
+            // macroblock edge bS=BS_STRONG.
+            bs[0] = [BS_STRONG; 4];
+        } else {
+            edges |= 1;
+            p_side = p;
+        }
+    }
+    let p_rules = q.is(L1_EMPTY);
+    if edges <= 1 {
+        // At most the macroblock edge: its four segments on their own.
+        if edges == 1 {
+            bs[0] = std::array::from_fn(|b| {
+                let (p_blk, q_blk) = if VERTICAL { (4 * b + 3, 4 * b) } else { (12 + b, b) };
+                segment_bs(&p_side.blocks, p_blk, &q.blocks, q_blk, p_rules)
+            });
+        }
+        return bs;
+    }
+
+    let p_blocks = blocks_across::<VERTICAL>(&q.blocks, &p_side.blocks);
+    let segments = segment_strengths(&p_blocks, &q.blocks, p_rules);
+    for (edge, edge_bs) in bs.iter_mut().enumerate() {
+        if edges & (1 << edge) != 0 {
+            // Segment `b` of vertical edge `edge` is block (b, edge); of a
+            // horizontal edge, block (edge, b).
+            *edge_bs = std::array::from_fn(|b| {
+                segments[if VERTICAL { 4 * b + edge } else { 4 * edge + b }]
+            });
+        }
+    }
+    bs
+}
+
+/// The p sides of the edge segments whose q sides are the blocks of `q`:
+/// entry `i` is the 4x4 block left of (`VERTICAL`) or above block `i` of the
+/// macroblock -- a block of `q` across an internal edge, and across the
+/// macroblock edge, a block of `neighbour` from its last column or row.
+fn blocks_across<const VERTICAL: bool>(q: &BlockInfo, neighbour: &BlockInfo) -> BlockInfo {
+    fn shift<const VERTICAL: bool, T: Copy>(q: &[T; 16], neighbour: &[T; 16]) -> [T; 16] {
+        std::array::from_fn(|i| {
+            if VERTICAL {
+                if i % 4 == 0 {
+                    neighbour[i + 3]
+                } else {
+                    q[i - 1]
+                }
+            } else if i < 4 {
+                neighbour[i + 12]
+            } else {
+                q[i - 4]
+            }
+        })
+    }
+    let nz = if VERTICAL {
+        (q.nz << 1) & 0xEEEE | (neighbour.nz >> 3) & 0x1111
+    } else {
+        q.nz << 4 | neighbour.nz >> 12
+    };
+    BlockInfo {
+        nz,
+        ref_l0: shift::<VERTICAL, _>(&q.ref_l0, &neighbour.ref_l0),
+        ref_l1: shift::<VERTICAL, _>(&q.ref_l1, &neighbour.ref_l1),
+        mv_l0: shift::<VERTICAL, _>(&q.mv_l0, &neighbour.mv_l0),
+        mv_l1: shift::<VERTICAL, _>(&q.mv_l1, &neighbour.mv_l1),
+    }
+}
+
+/// Section 8.7.2.1 -- bS (2, 1 or 0) of the 16 edge segments between block
+/// `i` of `p` and block `i` of `q` (see `blocks_across`), for inter
+/// macroblocks. Derived together: `segment_bs` is branch-free.
+fn segment_strengths(p: &BlockInfo, q: &BlockInfo, p_rules: bool) -> [u8; 16] {
+    if p_rules {
+        std::array::from_fn(|i| segment_bs(p, i, q, i, true))
+    } else {
+        std::array::from_fn(|i| segment_bs(p, i, q, i, false))
+    }
+}
+
+/// Section 8.7.2.1 -- bS (2, 1 or 0) of the edge segment between 4x4 block
+/// `p_blk` of `p` and 4x4 block `q_blk` of `q` (raster indices), blocks of
+/// inter macroblocks. `p_rules` is set when q's slice has no list 1.
+// Inlined into the edge-0 path too, where the call would outweigh the body.
+// `&` rather than `&&` keeps it branch-free, so that `segment_strengths`
+// derives its 16 segments together. The p / q names follow the spec's.
+#[allow(clippy::inline_always, clippy::needless_bitwise_bool, clippy::similar_names)]
+#[inline(always)]
+fn segment_bs(p: &BlockInfo, p_blk: usize, q: &BlockInfo, q_blk: usize, p_rules: bool) -> u8 {
+    // Motion vectors closer than 4 quarter luma samples in both components.
+    let close = |a: &[[i16; 2]; 16], a_blk: usize, b: &[[i16; 2]; 16], b_blk: usize| {
+        (a[a_blk][0].abs_diff(b[b_blk][0]) < 4) & (a[a_blk][1].abs_diff(b[b_blk][1]) < 4)
+    };
+    let (ref_p_l0, ref_q_l0) = (p.ref_l0[p_blk], q.ref_l0[q_blk]);
+    let (ref_p_l1, ref_q_l1) = (p.ref_l1[p_blk], q.ref_l1[q_blk]);
+
+    let same_motion = if p_rules {
+        // P-slice context for q (refPicList1 is empty in P-slices). If
+        // p comes from a B-slice partition that uses BiPred or Pred_L1,
+        // only its L0 entry is consulted here -- the q-side P-slice rules
+        // don't describe how to interpret p's L1 reference. Acceptable
+        // in practice because mixing P and B slices within one picture
+        // is uncommon, and uniform-type pictures are unaffected.
+        (ref_p_l0 == ref_q_l0) & close(&p.mv_l0, p_blk, &q.mv_l0, q_blk)
+    } else {
+        // The same pictures with close motion vectors, pairing the lists
+        // either directly or crosswise.
+        let direct = (ref_p_l0 == ref_q_l0)
+            & (ref_p_l1 == ref_q_l1)
+            & close(&p.mv_l0, p_blk, &q.mv_l0, q_blk)
+            & close(&p.mv_l1, p_blk, &q.mv_l1, q_blk);
+        let swap = (ref_p_l0 == ref_q_l1)
+            & (ref_p_l1 == ref_q_l0)
+            & close(&p.mv_l0, p_blk, &q.mv_l1, q_blk)
+            & close(&p.mv_l1, p_blk, &q.mv_l0, q_blk);
+        direct | swap
+    };
+
+    let coded = (p.nz >> p_blk | q.nz >> q_blk) & 1 != 0;
+    if coded {
+        BS_CODED
+    } else if same_motion {
+        BS_NONE
+    } else {
+        BS_MOTION
+    }
 }
 
 // True when the MB's internal 4x4 edges are all guaranteed bS=0:
 // inter MB with a single 16x16 partition (NumMbPart == 1, which excludes
 // B_Direct_16x16 and B_Skip whose motion is derived per 8x8 sub-block) and
-// no coded luma coefficients. Saves up to 24 get_bs calls per such MB.
+// no coded luma coefficients. Saves deriving 24 bS values per such MB.
 #[inline]
 fn has_no_internal_edges(mb: &Macroblock) -> bool {
     if mb.get_coded_block_pattern().luma() != 0 {
@@ -740,140 +1031,39 @@ fn has_no_internal_edges(mb: &Macroblock) -> bool {
     }
 }
 
-#[inline(always)]
-fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
+/// The raster mask (bit `4 * row + col`) of the 4x4 blocks whose luma
+/// transform block has non-zero coefficients.
+fn nonzero_blocks(mb: &Macroblock) -> u16 {
     // Section 8.7.2.1: bS=2 is derived from the transform block containing the
     // sample, whose size depends on transform_size_8x8_flag. For 8x8 transforms
     // the "block" is the enclosing 8x8 group -- its four 4x4 sub-sections share a
     // single coded status for deblocking purposes.
     use super::residual::LumaResidual;
-    let Some(res) = mb.get_residual() else { return false };
+    let Some(res) = mb.get_residual() else { return 0 };
     match &res.luma {
-        LumaResidual::Intra16x16 { dc, ac_nc, .. } => ac_nc[blk_idx] != 0 || dc[blk_idx] != 0,
+        LumaResidual::Intra16x16 { dc, ac_nc, .. } => {
+            raster_mask(|blk_idx| ac_nc[blk_idx] != 0 || dc[blk_idx] != 0)
+        }
         LumaResidual::Block8x8 { .. } => {
-            let i8x8 = blk_idx / 4;
-            res.coded_block_pattern.luma() & (1 << i8x8) != 0
+            let cbp_luma = res.coded_block_pattern.luma();
+            raster_mask(|blk_idx| cbp_luma & (1 << (blk_idx / 4)) != 0)
         }
-        LumaResidual::Block4x4 { nc, .. } => nc[blk_idx] != 0,
-        LumaResidual::Empty => false,
+        LumaResidual::Block4x4 { nc, .. } => raster_mask(|blk_idx| nc[blk_idx] != 0),
+        LumaResidual::Empty => 0,
     }
 }
 
-#[inline(always)]
-fn get_partition(mb: &Macroblock, y: usize, x: usize) -> Option<super::macroblock::PartitionInfo> {
-    match mb {
-        Macroblock::P(m) => Some(m.motion.partitions[y][x]),
-        Macroblock::B(m) => Some(m.motion.partitions[y][x]),
-        _ => None,
-    }
-}
-
-// (q_y, q_x, p_y, p_x) for a given edge: outer index is `edge_idx + 4 * is_vertical`,
-// inner index is `block_idx`. The neighbor across an internal edge is `edge_idx - 1`;
-// for `edge_idx == 0` (external edge) it wraps to row/col 3 of the neighboring MB.
-const EDGE_BLOCK_COORDS: [[(usize, usize, usize, usize); 4]; 8] = {
-    let mut t = [[(0usize, 0, 0, 0); 4]; 8];
-    let mut e = 0;
-    while e < 4 {
-        let p = if e == 0 { 3 } else { e - 1 };
-        let mut b = 0;
-        while b < 4 {
-            t[e][b] = (e, b, p, b);
-            t[4 + e][b] = (b, e, b, p);
-            b += 1;
+/// The mask with bit `4 * row + col` set when `coded` holds for 4x4 block
+/// (row, col), which it takes by its index in the Z-scan of Section 6.4.3.
+#[inline]
+fn raster_mask(coded: impl Fn(usize) -> bool) -> u16 {
+    let mut mask = 0;
+    for row in 0..4 {
+        for col in 0..4 {
+            mask |= u16::from(coded(scan_4x4(row, col))) << (4 * row + col);
         }
-        e += 1;
     }
-    t
-};
-
-#[allow(clippy::too_many_arguments)]
-fn get_bs(
-    mb_q: &Macroblock,
-    mb_p: &Macroblock,
-    // Reference POCs for the q-block's slice. Used for ref-list comparison
-    // in BS_MOTION derivation; passing POCs (rather than DPB indices) makes
-    // cross-slice comparison well-defined when p and q come from different
-    // slices that may have different ref lists.
-    q_l0_pocs: &[i32],
-    q_l1_pocs: &[i32],
-    p_l0_pocs: &[i32],
-    p_l1_pocs: &[i32],
-    // 0 corresponds to the external edge. 1..3 correspond to internal edges.
-    edge_idx: usize,
-    block_idx: usize,
-    is_vertical: bool,
-) -> u8 {
-    let (q_y, q_x, p_y, p_x) =
-        EDGE_BLOCK_COORDS[edge_idx + 4 * (is_vertical as usize)][block_idx];
-
-    if mb_p.is_intra() || mb_q.is_intra() {
-        if edge_idx == 0 {
-            return BS_STRONG;
-        }
-        return BS_INTRA;
-    }
-
-    let blk_q_idx = super::residual::scan_4x4(q_y, q_x);
-    let blk_p_idx = super::residual::scan_4x4(p_y, p_x);
-
-    if has_nonzero_coeffs(mb_p, blk_p_idx) || has_nonzero_coeffs(mb_q, blk_q_idx) {
-        return BS_CODED;
-    }
-
-    let p_part = get_partition(mb_p, p_y, p_x);
-    let q_part = get_partition(mb_q, q_y, q_x);
-
-    match (p_part, q_part) {
-        (Some(pp), Some(qq)) => {
-            // P-slice context for q (refPicList1 is empty in P-slices). If
-            // p comes from a B-slice partition that uses BiPred or Pred_L1,
-            // only its L0 entry is consulted here -- the q-side P-slice rules
-            // don't describe how to interpret p's L1 reference. Acceptable
-            // in practice because mixing P and B slices within one picture
-            // is uncommon, and uniform-type pictures are unaffected.
-            if q_l1_pocs.is_empty() {
-                let ref_p_l0 = p_l0_pocs.get(pp.ref_idx_l0 as usize).copied();
-                let ref_q_l0 = q_l0_pocs.get(qq.ref_idx_l0 as usize).copied();
-                if ref_p_l0 != ref_q_l0 {
-                    return BS_MOTION;
-                }
-                let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
-                let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
-                if mv_diff_x >= 4 || mv_diff_y >= 4 {
-                    return BS_MOTION;
-                }
-                return BS_NONE;
-            }
-
-            let ref_p_l0 = p_l0_pocs.get(pp.ref_idx_l0 as usize).copied();
-            let ref_q_l0 = q_l0_pocs.get(qq.ref_idx_l0 as usize).copied();
-            let ref_p_l1 = p_l1_pocs.get(pp.ref_idx_l1 as usize).copied();
-            let ref_q_l1 = q_l1_pocs.get(qq.ref_idx_l1 as usize).copied();
-
-            let direct_match = ref_p_l0 == ref_q_l0
-                && ref_p_l1 == ref_q_l1
-                && (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs() < 4
-                && (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs() < 4
-                && (pp.mv_l1.x as i32 - qq.mv_l1.x as i32).abs() < 4
-                && (pp.mv_l1.y as i32 - qq.mv_l1.y as i32).abs() < 4;
-
-            let swap_match = ref_p_l0 == ref_q_l1
-                && ref_p_l1 == ref_q_l0
-                && (pp.mv_l0.x as i32 - qq.mv_l1.x as i32).abs() < 4
-                && (pp.mv_l0.y as i32 - qq.mv_l1.y as i32).abs() < 4
-                && (pp.mv_l1.x as i32 - qq.mv_l0.x as i32).abs() < 4
-                && (pp.mv_l1.y as i32 - qq.mv_l0.y as i32).abs() < 4;
-
-            if direct_match || swap_match {
-                BS_NONE
-            } else {
-                BS_MOTION
-            }
-        }
-        (Some(_), None) | (None, Some(_)) => BS_MOTION,
-        (None, None) => BS_NONE,
-    }
+    mask
 }
 
 fn get_qp(mb: &Macroblock) -> u8 {
@@ -888,7 +1078,11 @@ fn get_qp(mb: &Macroblock) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::h264::macroblock::IMb;
+    use crate::h264::macroblock::{
+        BMb, BMbType, CodedBlockPattern, IMb, IMbType, MbMotion, MbNeighborName, MotionVector, PMb,
+        PMbType, PartitionInfo, PcmMb,
+    };
+    use crate::h264::residual::{LumaLevel8x8, LumaResidual, Residual};
 
     /// A 4x2 picture (8 MBs in raster order):
     ///
@@ -930,6 +1124,27 @@ mod tests {
         }
     }
 
+    /// Whether `filter_picture` filters the left (A) or top (B) edge of
+    /// macroblock `mb_addr`: the neighbour lookup and `should_filter_edge`,
+    /// as `filter_picture` and `filter_macroblock` apply them.
+    fn edge_filtered(
+        input: &PictureDeblockInput,
+        mb_addr: usize,
+        neighbor: MbNeighborName,
+    ) -> bool {
+        let records = build_records(input);
+        let width = input.pic_width_in_mbs;
+        let (left, top) = mb_neighbors(&records, width, mb_addr % width, mb_addr / width);
+        let p = match neighbor {
+            MbNeighborName::A => left,
+            MbNeighborName::B => top,
+            _ => unreachable!("only the left and top edges are filtered"),
+        };
+        let q = &records[mb_addr];
+        let idc = input.slice_deblock[usize::from(q.slice_id)].idc;
+        p.is_some_and(|p| should_filter_edge(idc, q, p))
+    }
+
     #[test]
     fn picture_boundary_edges_never_filtered() {
         let sps = SequenceParameterSet::default();
@@ -942,12 +1157,12 @@ mod tests {
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // MB 0 is at the top-left corner -- both A (left) and B (top) are out of picture.
-        assert!(!should_filter_edge(&input, 0, MbNeighborName::A));
-        assert!(!should_filter_edge(&input, 0, MbNeighborName::B));
+        assert!(!edge_filtered(&input, 0, MbNeighborName::A));
+        assert!(!edge_filtered(&input, 0, MbNeighborName::B));
         // MB 4 is at the left edge -- A is out of picture.
-        assert!(!should_filter_edge(&input, 4, MbNeighborName::A));
+        assert!(!edge_filtered(&input, 4, MbNeighborName::A));
         // MB 3 is at the top edge -- B is out of picture.
-        assert!(!should_filter_edge(&input, 3, MbNeighborName::B));
+        assert!(!edge_filtered(&input, 3, MbNeighborName::B));
     }
 
     #[test]
@@ -962,8 +1177,8 @@ mod tests {
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // MB 5 has both an A (MB 4) and B (MB 1) neighbor inside the picture.
-        assert!(should_filter_edge(&input, 5, MbNeighborName::A));
-        assert!(should_filter_edge(&input, 5, MbNeighborName::B));
+        assert!(edge_filtered(&input, 5, MbNeighborName::A));
+        assert!(edge_filtered(&input, 5, MbNeighborName::B));
     }
 
     #[test]
@@ -977,8 +1192,8 @@ mod tests {
         let input =
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
-        assert!(!should_filter_edge(&input, 5, MbNeighborName::A));
-        assert!(!should_filter_edge(&input, 5, MbNeighborName::B));
+        assert!(!edge_filtered(&input, 5, MbNeighborName::A));
+        assert!(!edge_filtered(&input, 5, MbNeighborName::B));
     }
 
     #[test]
@@ -994,8 +1209,8 @@ mod tests {
         let input =
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
-        assert!(should_filter_edge(&input, 5, MbNeighborName::A));
-        assert!(should_filter_edge(&input, 5, MbNeighborName::B));
+        assert!(edge_filtered(&input, 5, MbNeighborName::A));
+        assert!(edge_filtered(&input, 5, MbNeighborName::B));
     }
 
     #[test]
@@ -1016,9 +1231,9 @@ mod tests {
 
         // MB 5 is in slice 1; its B neighbor is MB 1 (slice 0) -- cross-slice.
         // Still filtered because idc=On disregards slice boundaries.
-        assert!(should_filter_edge(&input, 5, MbNeighborName::B));
+        assert!(edge_filtered(&input, 5, MbNeighborName::B));
         // MB 5's A neighbor is MB 4 (slice 1) -- same slice, also filtered.
-        assert!(should_filter_edge(&input, 5, MbNeighborName::A));
+        assert!(edge_filtered(&input, 5, MbNeighborName::A));
     }
 
     #[test]
@@ -1038,13 +1253,13 @@ mod tests {
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // MB 4: B neighbor is MB 0 (slice 0) -- cross-slice -> suppressed.
-        assert!(!should_filter_edge(&input, 4, MbNeighborName::B));
+        assert!(!edge_filtered(&input, 4, MbNeighborName::B));
         // MB 5: B neighbor is MB 1 (slice 0) -- cross-slice -> suppressed.
-        assert!(!should_filter_edge(&input, 5, MbNeighborName::B));
+        assert!(!edge_filtered(&input, 5, MbNeighborName::B));
         // MB 5: A neighbor is MB 4 (slice 1) -- same slice -> filtered.
-        assert!(should_filter_edge(&input, 5, MbNeighborName::A));
+        assert!(edge_filtered(&input, 5, MbNeighborName::A));
         // MB 1: A neighbor is MB 0 (slice 0) -- same slice -> filtered.
-        assert!(should_filter_edge(&input, 1, MbNeighborName::A));
+        assert!(edge_filtered(&input, 1, MbNeighborName::A));
     }
 
     #[test]
@@ -1066,9 +1281,756 @@ mod tests {
             make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // q = MB 5 (slice 1, idc=On) -> edges filter regardless of p's slice.
-        assert!(should_filter_edge(&input, 5, MbNeighborName::A));
-        assert!(should_filter_edge(&input, 5, MbNeighborName::B));
+        assert!(edge_filtered(&input, 5, MbNeighborName::A));
+        assert!(edge_filtered(&input, 5, MbNeighborName::B));
         // q = MB 1 (slice 0, idc=Off) -> no filtering.
-        assert!(!should_filter_edge(&input, 1, MbNeighborName::A));
+        assert!(!edge_filtered(&input, 1, MbNeighborName::A));
+    }
+
+    #[test]
+    fn edges_next_to_undecoded_macroblocks_are_not_filtered() {
+        let sps = SequenceParameterSet::default();
+        let pps = PicParameterSet::default();
+        let mut mbs = dummy_mbs();
+        mbs[4] = None;
+        let mb_slice_id = vec![0, 0, 0, 0, u16::MAX, 0, 0, 0];
+        let slice_deblock = [deblock(DeblockingFilterIdc::On)];
+        let slice_ref_pocs = [(vec![], vec![])];
+        let input = make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+
+        assert!(build_records(&input)[4].is(NOT_DECODED));
+        // MB 5's left neighbour was never decoded.
+        assert!(!edge_filtered(&input, 5, MbNeighborName::A));
+        assert!(edge_filtered(&input, 5, MbNeighborName::B));
+    }
+
+    /// The boundary-strength derivation that `MbDeblockInfo` replaced,
+    /// verbatim apart from paths: it read the `Macroblock` enum, the boxed
+    /// residual and per-slice POC lists for every edge segment. Kept as the
+    /// reference that the record-based derivation must match exactly.
+    mod reference {
+        use crate::h264::deblocking::{
+            PictureDeblockInput, BS_CODED, BS_INTRA, BS_MOTION, BS_NONE, BS_STRONG,
+        };
+        use crate::h264::macroblock::Macroblock;
+
+        pub(super) fn compute_bs_arrays(
+            input: &PictureDeblockInput,
+            mb: &Macroblock,
+            q_slice_id: u16,
+            left: Option<(&Macroblock, u16)>,
+            top: Option<(&Macroblock, u16)>,
+            transform_8x8: bool,
+        ) -> ([[u8; 4]; 4], [[u8; 4]; 4]) {
+            let ref_pocs = |slice_id: u16| {
+                let (l0, l1) = &input.slice_ref_pocs[slice_id as usize];
+                (l0.as_slice(), l1.as_slice())
+            };
+            let mut bs_vert = [[BS_NONE; 4]; 4];
+            let mut bs_horz = [[BS_NONE; 4]; 4];
+            let q_intra = mb.is_intra();
+
+            let (q_l0, q_l1) = ref_pocs(q_slice_id);
+
+            // External edges (MB boundary) -- use neighbor MB as p.
+            // Fast path: when either side is intra, every block's bS is BS_STRONG, so
+            // we can fill the row directly without 4 enum-dispatch calls into get_bs.
+            if let Some((p_mb, p_slice_id)) = left {
+                if q_intra || p_mb.is_intra() {
+                    bs_vert[0] = [BS_STRONG; 4];
+                } else {
+                    let (p_l0, p_l1) = ref_pocs(p_slice_id);
+                    for b in 0..4 {
+                        bs_vert[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, true);
+                    }
+                }
+            }
+            if let Some((p_mb, p_slice_id)) = top {
+                if q_intra || p_mb.is_intra() {
+                    bs_horz[0] = [BS_STRONG; 4];
+                } else {
+                    let (p_l0, p_l1) = ref_pocs(p_slice_id);
+                    for b in 0..4 {
+                        bs_horz[0][b] = get_bs(mb, p_mb, q_l0, q_l1, p_l0, p_l1, 0, b, false);
+                    }
+                }
+            }
+
+            // Internal edges -- p and q are both within this MB (same slice -> same POCs).
+            // Fast paths:
+            //   - intra MB: every internal 4x4 edge has bS=BS_INTRA (skips 24 calls)
+            //   - 16x16 inter with cbp_luma==0: every internal edge has bS=0; leave
+            //     bs_vert/bs_horz at their BS_NONE init
+            if q_intra {
+                if !transform_8x8 {
+                    for edge in 1..4 {
+                        bs_vert[edge] = [BS_INTRA; 4];
+                        bs_horz[edge] = [BS_INTRA; 4];
+                    }
+                } else {
+                    // 8x8 transform: only edge 2 (at the 8-sample boundary)
+                    bs_vert[2] = [BS_INTRA; 4];
+                    bs_horz[2] = [BS_INTRA; 4];
+                }
+            } else if !has_no_internal_edges(mb) {
+                if !transform_8x8 {
+                    for edge in 1..4 {
+                        for b in 0..4 {
+                            bs_vert[edge][b] =
+                                get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, true);
+                            bs_horz[edge][b] =
+                                get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, edge, b, false);
+                        }
+                    }
+                } else {
+                    for b in 0..4 {
+                        bs_vert[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, true);
+                        bs_horz[2][b] = get_bs(mb, mb, q_l0, q_l1, q_l0, q_l1, 2, b, false);
+                    }
+                }
+            }
+
+            (bs_vert, bs_horz)
+        }
+
+        // True when the MB's internal 4x4 edges are all guaranteed bS=0:
+        // inter MB with a single 16x16 partition (NumMbPart == 1, which excludes
+        // B_Direct_16x16 and B_Skip whose motion is derived per 8x8 sub-block) and
+        // no coded luma coefficients. Saves up to 24 get_bs calls per such MB.
+        #[inline]
+        fn has_no_internal_edges(mb: &Macroblock) -> bool {
+            if mb.get_coded_block_pattern().luma() != 0 {
+                return false;
+            }
+            match mb {
+                Macroblock::P(m) => m.NumMbPart() == 1,
+                Macroblock::B(m) => m.NumMbPart() == 1,
+                _ => false,
+            }
+        }
+
+        #[inline(always)]
+        fn has_nonzero_coeffs(mb: &Macroblock, blk_idx: usize) -> bool {
+            // Section 8.7.2.1: bS=2 is derived from the transform block containing the
+            // sample, whose size depends on transform_size_8x8_flag. For 8x8 transforms
+            // the "block" is the enclosing 8x8 group -- its four 4x4 sub-sections share a
+            // single coded status for deblocking purposes.
+            use crate::h264::residual::LumaResidual;
+            let Some(res) = mb.get_residual() else { return false };
+            match &res.luma {
+                LumaResidual::Intra16x16 { dc, ac_nc, .. } => {
+                    ac_nc[blk_idx] != 0 || dc[blk_idx] != 0
+                }
+                LumaResidual::Block8x8 { .. } => {
+                    let i8x8 = blk_idx / 4;
+                    res.coded_block_pattern.luma() & (1 << i8x8) != 0
+                }
+                LumaResidual::Block4x4 { nc, .. } => nc[blk_idx] != 0,
+                LumaResidual::Empty => false,
+            }
+        }
+
+        #[inline(always)]
+        fn get_partition(
+            mb: &Macroblock,
+            y: usize,
+            x: usize,
+        ) -> Option<crate::h264::macroblock::PartitionInfo> {
+            match mb {
+                Macroblock::P(m) => Some(m.motion.partitions[y][x]),
+                Macroblock::B(m) => Some(m.motion.partitions[y][x]),
+                _ => None,
+            }
+        }
+
+        // (q_y, q_x, p_y, p_x) for a given edge: outer index is `edge_idx + 4 * is_vertical`,
+        // inner index is `block_idx`. The neighbor across an internal edge is `edge_idx - 1`;
+        // for `edge_idx == 0` (external edge) it wraps to row/col 3 of the neighboring MB.
+        const EDGE_BLOCK_COORDS: [[(usize, usize, usize, usize); 4]; 8] = {
+            let mut t = [[(0usize, 0, 0, 0); 4]; 8];
+            let mut e = 0;
+            while e < 4 {
+                let p = if e == 0 { 3 } else { e - 1 };
+                let mut b = 0;
+                while b < 4 {
+                    t[e][b] = (e, b, p, b);
+                    t[4 + e][b] = (b, e, b, p);
+                    b += 1;
+                }
+                e += 1;
+            }
+            t
+        };
+
+        #[allow(clippy::too_many_arguments)]
+        pub(super) fn get_bs(
+            mb_q: &Macroblock,
+            mb_p: &Macroblock,
+            // Reference POCs for the q-block's slice. Used for ref-list comparison
+            // in BS_MOTION derivation; passing POCs (rather than DPB indices) makes
+            // cross-slice comparison well-defined when p and q come from different
+            // slices that may have different ref lists.
+            q_l0_pocs: &[i32],
+            q_l1_pocs: &[i32],
+            p_l0_pocs: &[i32],
+            p_l1_pocs: &[i32],
+            // 0 corresponds to the external edge. 1..3 correspond to internal edges.
+            edge_idx: usize,
+            block_idx: usize,
+            is_vertical: bool,
+        ) -> u8 {
+            let (q_y, q_x, p_y, p_x) =
+                EDGE_BLOCK_COORDS[edge_idx + 4 * (is_vertical as usize)][block_idx];
+
+            if mb_p.is_intra() || mb_q.is_intra() {
+                if edge_idx == 0 {
+                    return BS_STRONG;
+                }
+                return BS_INTRA;
+            }
+
+            let blk_q_idx = crate::h264::residual::scan_4x4(q_y, q_x);
+            let blk_p_idx = crate::h264::residual::scan_4x4(p_y, p_x);
+
+            if has_nonzero_coeffs(mb_p, blk_p_idx) || has_nonzero_coeffs(mb_q, blk_q_idx) {
+                return BS_CODED;
+            }
+
+            let p_part = get_partition(mb_p, p_y, p_x);
+            let q_part = get_partition(mb_q, q_y, q_x);
+
+            match (p_part, q_part) {
+                (Some(pp), Some(qq)) => {
+                    // P-slice context for q (refPicList1 is empty in P-slices). If
+                    // p comes from a B-slice partition that uses BiPred or Pred_L1,
+                    // only its L0 entry is consulted here -- the q-side P-slice rules
+                    // don't describe how to interpret p's L1 reference. Acceptable
+                    // in practice because mixing P and B slices within one picture
+                    // is uncommon, and uniform-type pictures are unaffected.
+                    if q_l1_pocs.is_empty() {
+                        let ref_p_l0 = p_l0_pocs.get(pp.ref_idx_l0 as usize).copied();
+                        let ref_q_l0 = q_l0_pocs.get(qq.ref_idx_l0 as usize).copied();
+                        if ref_p_l0 != ref_q_l0 {
+                            return BS_MOTION;
+                        }
+                        let mv_diff_x = (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs();
+                        let mv_diff_y = (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs();
+                        if mv_diff_x >= 4 || mv_diff_y >= 4 {
+                            return BS_MOTION;
+                        }
+                        return BS_NONE;
+                    }
+
+                    let ref_p_l0 = p_l0_pocs.get(pp.ref_idx_l0 as usize).copied();
+                    let ref_q_l0 = q_l0_pocs.get(qq.ref_idx_l0 as usize).copied();
+                    let ref_p_l1 = p_l1_pocs.get(pp.ref_idx_l1 as usize).copied();
+                    let ref_q_l1 = q_l1_pocs.get(qq.ref_idx_l1 as usize).copied();
+
+                    let direct_match = ref_p_l0 == ref_q_l0
+                        && ref_p_l1 == ref_q_l1
+                        && (pp.mv_l0.x as i32 - qq.mv_l0.x as i32).abs() < 4
+                        && (pp.mv_l0.y as i32 - qq.mv_l0.y as i32).abs() < 4
+                        && (pp.mv_l1.x as i32 - qq.mv_l1.x as i32).abs() < 4
+                        && (pp.mv_l1.y as i32 - qq.mv_l1.y as i32).abs() < 4;
+
+                    let swap_match = ref_p_l0 == ref_q_l1
+                        && ref_p_l1 == ref_q_l0
+                        && (pp.mv_l0.x as i32 - qq.mv_l1.x as i32).abs() < 4
+                        && (pp.mv_l0.y as i32 - qq.mv_l1.y as i32).abs() < 4
+                        && (pp.mv_l1.x as i32 - qq.mv_l0.x as i32).abs() < 4
+                        && (pp.mv_l1.y as i32 - qq.mv_l0.y as i32).abs() < 4;
+
+                    if direct_match || swap_match {
+                        BS_NONE
+                    } else {
+                        BS_MOTION
+                    }
+                }
+                (Some(_), None) | (None, Some(_)) => BS_MOTION,
+                (None, None) => BS_NONE,
+            }
+        }
+    }
+
+    /// Deterministic generator for the randomized tests (`SplitMix64`).
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        /// A number in `0..n`, as a `T`.
+        fn below<T: TryFrom<u64>>(&mut self, n: u64) -> T
+        where
+            T::Error: std::fmt::Debug,
+        {
+            T::try_from(self.next() % n).expect("fits")
+        }
+
+        fn pick<T: Copy>(&mut self, items: &[T]) -> T {
+            items[self.below::<usize>(items.len() as u64)]
+        }
+    }
+
+    fn random_partition(rng: &mut Rng) -> PartitionInfo {
+        // In-range indices, indices past the end of the test lists, and the
+        // unused-list marker.
+        const REF_IDX: [u8; 6] = [0, 1, 2, 3, 5, u8::MAX];
+        let mut mv = || MotionVector { x: rng.below::<i16>(17) - 8, y: rng.below::<i16>(17) - 8 };
+        let (mv_l0, mv_l1) = (mv(), mv());
+        PartitionInfo {
+            ref_idx_l0: rng.pick(&REF_IDX),
+            ref_idx_l1: rng.pick(&REF_IDX),
+            mv_l0,
+            mv_l1,
+            ..PartitionInfo::default()
+        }
+    }
+
+    /// A motion field that is uniform, uniform per 8x8, a small perturbation
+    /// of one partition, or random per 4x4, so that equal and nearly equal
+    /// neighbours are common.
+    fn random_motion(rng: &mut Rng) -> MbMotion {
+        let mut motion = MbMotion::default();
+        match rng.below::<u8>(4) {
+            0 => {
+                let part = random_partition(rng);
+                motion.partitions = [[part; 4]; 4];
+            }
+            1 => {
+                for quadrant in 0..4 {
+                    let part = random_partition(rng);
+                    for blk in 0..4 {
+                        let (row, col) = (quadrant / 2 * 2 + blk / 2, quadrant % 2 * 2 + blk % 2);
+                        motion.partitions[row][col] = part;
+                    }
+                }
+            }
+            2 => {
+                let part = random_partition(rng);
+                for row in &mut motion.partitions {
+                    for blk in row {
+                        *blk = part;
+                        blk.mv_l0.x += rng.below::<i16>(9) - 4;
+                        blk.mv_l1.y += rng.below::<i16>(9) - 4;
+                        if rng.below::<u8>(8) == 0 {
+                            blk.ref_idx_l1 = random_partition(rng).ref_idx_l1;
+                        }
+                    }
+                }
+            }
+            _ => {
+                for row in &mut motion.partitions {
+                    for blk in row {
+                        *blk = random_partition(rng);
+                    }
+                }
+            }
+        }
+        motion
+    }
+
+    fn random_residual(rng: &mut Rng) -> Option<Box<Residual>> {
+        let mut residual = Box::new(Residual {
+            coded_block_pattern: CodedBlockPattern(rng.below(64)),
+            ..Residual::default()
+        });
+        match rng.below::<u8>(5) {
+            0 => return None,
+            1 => {}
+            2 | 3 => {
+                let mut nc = [0u8; 16];
+                for n in &mut nc {
+                    if rng.below::<u8>(3) == 0 {
+                        *n = rng.below::<u8>(16) + 1;
+                    }
+                }
+                residual.luma = LumaResidual::Block4x4 { levels: [[0; 16]; 16], nc };
+            }
+            _ => {
+                residual.luma =
+                    LumaResidual::Block8x8 { levels: [LumaLevel8x8::default(); 4], nc: [0; 16] };
+            }
+        }
+        Some(residual)
+    }
+
+    fn random_mb(rng: &mut Rng) -> Macroblock {
+        const P_TYPES: [PMbType; 6] = [
+            PMbType::P_L0_16x16,
+            PMbType::P_L0_L0_16x8,
+            PMbType::P_L0_L0_8x16,
+            PMbType::P_8x8,
+            PMbType::P_8x8ref0,
+            PMbType::P_Skip,
+        ];
+        let qp = rng.below(52);
+        // Coded luma is left out half of the time, which enables the
+        // single-partition no-internal-edges fast path.
+        let cbp = if rng.below::<u8>(2) == 0 { rng.below::<u8>(4) << 4 } else { rng.below(64) };
+        let coded_block_pattern = CodedBlockPattern(cbp);
+        let transform_size_8x8_flag = rng.below::<u8>(3) == 0;
+        match rng.below::<u8>(10) {
+            0 => Macroblock::I(IMb {
+                mb_type: IMbType::try_from(rng.below::<u32>(25)).expect("I mb_type"),
+                transform_size_8x8_flag,
+                coded_block_pattern,
+                qp,
+                residual: random_residual(rng),
+                ..IMb::default()
+            }),
+            1 => Macroblock::PCM(PcmMb { qp, ..PcmMb::default() }),
+            2..=4 => Macroblock::P(PMb {
+                mb_type: rng.pick(&P_TYPES),
+                motion: random_motion(rng),
+                coded_block_pattern,
+                qp,
+                transform_size_8x8_flag,
+                residual: random_residual(rng),
+                ..PMb::default()
+            }),
+            _ => Macroblock::B(BMb {
+                mb_type: BMbType::try_from(rng.below::<u32>(24)).expect("B mb_type"),
+                motion: random_motion(rng),
+                coded_block_pattern,
+                qp,
+                transform_size_8x8_flag,
+                residual: random_residual(rng),
+                ..BMb::default()
+            }),
+        }
+    }
+
+    fn transform_8x8(mb: &Macroblock) -> bool {
+        match mb {
+            Macroblock::I(m) => m.transform_size_8x8_flag,
+            Macroblock::P(m) => m.transform_size_8x8_flag,
+            Macroblock::B(m) => m.transform_size_8x8_flag,
+            Macroblock::PCM(_) => false,
+        }
+    }
+
+    /// The bS of the 16 segments of `q`'s vertical or horizontal edges as
+    /// `inter_edge_strengths` derives them, with `neighbour` across edge 0.
+    fn segments(q: &MbDeblockInfo, neighbour: &MbDeblockInfo, vertical: bool) -> [u8; 16] {
+        let p_blocks = if vertical {
+            blocks_across::<true>(&q.blocks, &neighbour.blocks)
+        } else {
+            blocks_across::<false>(&q.blocks, &neighbour.blocks)
+        };
+        segment_strengths(&p_blocks, &q.blocks, q.is(L1_EMPTY))
+    }
+
+    /// Raster indices (p, q) of the two 4x4 blocks of segment `b` of edge
+    /// `edge`; for edge 0, p is a block of the neighbouring macroblock.
+    fn edge_blocks(edge: usize, b: usize, vertical: bool) -> (usize, usize) {
+        let p_edge = (edge + 3) % 4;
+        if vertical {
+            (4 * b + p_edge, 4 * b + edge)
+        } else {
+            (4 * p_edge + b, 4 * edge + b)
+        }
+    }
+
+    /// The index of segment `b` of edge `edge` in the result of `segments`.
+    fn segment(edge: usize, b: usize, vertical: bool) -> usize {
+        if vertical {
+            4 * b + edge
+        } else {
+            4 * edge + b
+        }
+    }
+
+    /// Two macroblocks, side by side or one above the other, with random
+    /// types, residuals, motion and slices: the record-based derivation must
+    /// give the bS of the reference `get_bs` on every edge segment between
+    /// inter blocks, and the bS arrays of the reference `compute_bs_arrays`.
+    #[test]
+    fn record_bs_matches_reference_get_bs() {
+        let sps = SequenceParameterSet::default();
+        let pps = PicParameterSet::default();
+        // POC 4 appears twice in slice 0's list 0 and in both slices; slice
+        // 1 has no list 1, as a P slice.
+        let slice_ref_pocs = [(vec![8, 4, 16, 4], vec![16, 12, 8]), (vec![4, 12, 8], vec![])];
+        let slice_deblock = [deblock(DeblockingFilterIdc::On), deblock(DeblockingFilterIdc::On)];
+        let mut rng = Rng(0x5EED_DEB1_0C4B_0001);
+        let (mut checked, mut by_bs) = (0usize, [0usize; 5]);
+        for _ in 0..6000 {
+            let mbs = [Some(random_mb(&mut rng)), Some(random_mb(&mut rng))];
+            let mb_slice_id = [rng.below::<u16>(2), rng.below::<u16>(2)];
+            let [Some(p_mb), Some(q_mb)] = &mbs else { unreachable!() };
+            for vertical_edge in [true, false] {
+                // MB 1 is right of MB 0 when their shared edge is vertical,
+                // below it otherwise.
+                let (width, height) = if vertical_edge { (2, 1) } else { (1, 2) };
+                let input = PictureDeblockInput {
+                    sps: &sps,
+                    pps: &pps,
+                    macroblocks: &mbs,
+                    mb_slice_id: &mb_slice_id,
+                    slice_deblock: &slice_deblock,
+                    slice_ref_pocs: &slice_ref_pocs,
+                    pic_width_in_mbs: width,
+                    pic_height_in_mbs: height,
+                };
+                let records = build_records(&input);
+                let pocs = |mb_addr: usize| {
+                    let (l0, l1) = &slice_ref_pocs[usize::from(mb_slice_id[mb_addr])];
+                    (l0.as_slice(), l1.as_slice())
+                };
+                let ((p_l0, p_l1), (q_l0, q_l1)) = (pocs(0), pocs(1));
+                let mut check = |actual: u8, expected: u8, what: &dyn Fn() -> String| {
+                    assert_eq!(actual, expected, "{}", what());
+                    by_bs[usize::from(actual)] += 1;
+                    checked += 1;
+                };
+
+                // The 4 segments of the macroblock edge, as 16 lanes and one
+                // at a time.
+                if !p_mb.is_intra() && !q_mb.is_intra() {
+                    let (p, q) = (&records[0], &records[1]);
+                    let lanes = segments(q, p, vertical_edge);
+                    for b in 0..4 {
+                        let expected = reference::get_bs(
+                            q_mb,
+                            p_mb,
+                            q_l0,
+                            q_l1,
+                            p_l0,
+                            p_l1,
+                            0,
+                            b,
+                            vertical_edge,
+                        );
+                        let actual = lanes[segment(0, b, vertical_edge)];
+                        check(actual, expected, &|| format!("MB edge {b}: {p_mb:?} | {q_mb:?}"));
+                        let (p_blk, q_blk) = edge_blocks(0, b, vertical_edge);
+                        let actual = segment_bs(&p.blocks, p_blk, &q.blocks, q_blk, q.is(L1_EMPTY));
+                        check(actual, expected, &|| format!("MB edge {b}: {p_mb:?} | {q_mb:?}"));
+                    }
+                }
+
+                // The 24 segments of each macroblock's internal edges.
+                for (mb_addr, mb) in [(0, p_mb), (1, q_mb)] {
+                    if mb.is_intra() {
+                        continue;
+                    }
+                    let (l0, l1) = pocs(mb_addr);
+                    let record = &records[mb_addr];
+                    for vertical in [true, false] {
+                        let lanes = segments(record, record, vertical);
+                        for edge in 1..4 {
+                            for b in 0..4 {
+                                let expected =
+                                    reference::get_bs(mb, mb, l0, l1, l0, l1, edge, b, vertical);
+                                let actual = lanes[segment(edge, b, vertical)];
+                                check(actual, expected, &|| format!("edge {edge}, {b}: {mb:?}"));
+                                let (p_blk, q_blk) = edge_blocks(edge, b, vertical);
+                                let blocks = &record.blocks;
+                                let p_rules = record.is(L1_EMPTY);
+                                let actual = segment_bs(blocks, p_blk, blocks, q_blk, p_rules);
+                                check(actual, expected, &|| format!("edge {edge}, {b}: {mb:?}"));
+                            }
+                        }
+                    }
+                }
+
+                // Whole-macroblock arrays, including the intra and other fast
+                // paths.
+                let neighbour = Some((p_mb, mb_slice_id[0]));
+                let (left, top) = if vertical_edge { (neighbour, None) } else { (None, neighbour) };
+                let expected = reference::compute_bs_arrays(
+                    &input,
+                    q_mb,
+                    mb_slice_id[1],
+                    left,
+                    top,
+                    transform_8x8(q_mb),
+                );
+                let (left, top) = mb_neighbors(&records, width, width - 1, height - 1);
+                let actual = compute_bs_arrays(&records[1], left, top);
+                assert_eq!(actual, expected, "{p_mb:?} | {q_mb:?}");
+                for bs in actual.0.as_flattened().iter().chain(actual.1.as_flattened()) {
+                    by_bs[usize::from(*bs)] += 1;
+                }
+                let expected = reference::compute_bs_arrays(
+                    &input,
+                    p_mb,
+                    mb_slice_id[0],
+                    None,
+                    None,
+                    transform_8x8(p_mb),
+                );
+                assert_eq!(compute_bs_arrays(&records[0], None, None), expected, "{p_mb:?}");
+            }
+        }
+        // Every outcome is exercised, each many times.
+        assert!(by_bs.iter().all(|&n| n > checked / 100), "bS histogram {by_bs:?}");
+    }
+
+    fn inter_mb(residual: Option<Box<Residual>>) -> Macroblock {
+        Macroblock::P(PMb { residual, ..PMb::default() })
+    }
+
+    /// The record of `mb` as a macroblock of slice `slice_id` of a picture
+    /// whose slices have the reference lists `slice_ref_pocs`.
+    fn record(
+        mb: &Macroblock,
+        slice_ref_pocs: &[(Vec<i32>, Vec<i32>)],
+        slice_id: u16,
+    ) -> MbDeblockInfo {
+        let mut ref_ids = SliceRefIds::new();
+        ref_ids.load(&RefPictureIds::new(slice_ref_pocs), slice_id);
+        MbDeblockInfo::new(mb, slice_id, &ref_ids, [0, 0])
+    }
+
+    #[test]
+    fn record_nz_is_raster_ordered_per_residual_layout() {
+        let no_refs = [(vec![], vec![])];
+        // 4x4 transform: one bit per 4x4 block with coefficients. Z-scan
+        // block 6 is row 1, column 2; block 9 is row 2, column 1.
+        let mut nc = [0u8; 16];
+        nc[6] = 3;
+        nc[9] = 1;
+        let residual = Residual {
+            luma: LumaResidual::Block4x4 { levels: [[0; 16]; 16], nc },
+            ..Residual::default()
+        };
+        let mb = inter_mb(Some(Box::new(residual)));
+        assert_eq!(record(&mb, &no_refs, 0).blocks.nz, 1 << (4 + 2) | 1 << (8 + 1));
+
+        // 8x8 transform: coded_block_pattern bits cover whole quadrants.
+        let residual = Residual {
+            coded_block_pattern: CodedBlockPattern::new(0, 0b0110),
+            luma: LumaResidual::Block8x8 { levels: [LumaLevel8x8::default(); 4], nc: [0; 16] },
+            ..Residual::default()
+        };
+        let mb = inter_mb(Some(Box::new(residual)));
+        assert_eq!(
+            record(&mb, &no_refs, 0).blocks.nz,
+            0b0000_0000_1100_1100 | 0b0011_0011_0000_0000
+        );
+
+        // No luma coefficients, or no residual at all.
+        assert_eq!(record(&inter_mb(Some(Box::default())), &no_refs, 0).blocks.nz, 0);
+        assert_eq!(record(&inter_mb(None), &no_refs, 0).blocks.nz, 0);
+
+        // Intra macroblocks don't need `nz`: their bS doesn't depend on it.
+        let residual = Residual {
+            luma: LumaResidual::Intra16x16 { dc: [1; 16], ac: [[0; 15]; 16], ac_nc: [1; 16] },
+            ..Residual::default()
+        };
+        let mb = Macroblock::I(IMb { residual: Some(Box::new(residual)), ..IMb::default() });
+        let info = record(&mb, &no_refs, 0);
+        assert_eq!(info.blocks, BlockInfo::default());
+        assert!(info.is(INTRA));
+    }
+
+    #[test]
+    fn record_resolves_reference_indices_to_picture_ids() {
+        let slice_ref_pocs = [(vec![7, 3], vec![3, 9]), (vec![9, 7, 7], vec![])];
+        let ids = RefPictureIds::new(&slice_ref_pocs);
+        let (l0_a, l1_a) = ids.lists(0);
+        let (l0_b, l1_b) = ids.lists(1);
+        // One id per POC, whichever slice and list it appears in.
+        assert_eq!((l0_a, l1_a), (&[1, 2][..], &[2, 3][..]));
+        assert_eq!((l0_b, l1_b), (&[3, 1, 1][..], &[][..]));
+
+        let mut motion = MbMotion::default();
+        let parts = motion.partitions.as_flattened_mut();
+        parts[0].ref_idx_l0 = 1;
+        parts[0].ref_idx_l1 = 0;
+        parts[5].ref_idx_l0 = u8::MAX;
+        parts[5].ref_idx_l1 = 1;
+        parts[5].mv_l1 = MotionVector { x: -3, y: 7 };
+        parts[15].ref_idx_l0 = 2;
+        parts[15].ref_idx_l1 = u8::MAX;
+        let mb = Macroblock::B(BMb { motion, ..BMb::default() });
+
+        let info = record(&mb, &slice_ref_pocs, 0);
+        let blocks = &info.blocks;
+        assert!(!info.is(L1_EMPTY));
+        assert_eq!((blocks.ref_l0[0], blocks.ref_l1[0]), (2, 2));
+        // u8::MAX marks an unused list; index 2 is past the end of list 0.
+        assert_eq!((blocks.ref_l0[5], blocks.ref_l1[5]), (0, 3));
+        assert_eq!((blocks.ref_l0[15], blocks.ref_l1[15]), (0, 0));
+        assert_eq!(blocks.mv_l1[5], [-3, 7]);
+
+        // Against slice 1's lists: list 1 is empty, so no index resolves.
+        let info = record(&mb, &slice_ref_pocs, 1);
+        let blocks = &info.blocks;
+        assert!(info.is(L1_EMPTY));
+        assert_eq!((blocks.ref_l0[0], blocks.ref_l1[0]), (1, 0));
+        assert_eq!((blocks.ref_l0[15], blocks.ref_l1[15]), (1, 0));
+    }
+
+    #[test]
+    fn slice_ref_ids_clear_the_previous_slice() {
+        let ids = RefPictureIds::new(&[(vec![7, 3, 9], vec![5]), (vec![9], vec![])]);
+        let mut tables = SliceRefIds::new();
+        tables.load(&ids, 0);
+        assert_eq!((&tables.l0[..4], &tables.l1[..2]), (&[1, 2, 3, 0][..], &[4, 0][..]));
+        assert!(!tables.l1_empty);
+        tables.load(&ids, 1);
+        assert_eq!((&tables.l0[..4], &tables.l1[..2]), (&[3, 0, 0, 0][..], &[0, 0][..]));
+        assert!(tables.l1_empty);
+        assert!(tables.l0.iter().chain(&tables.l1).skip(1).all(|&id| id == 0));
+        assert_eq!(tables.l0[usize::from(u8::MAX)], 0);
+    }
+
+    #[test]
+    fn record_qp_and_flags() {
+        let pps = PicParameterSet {
+            chroma_qp_index_offset: -4,
+            second_chroma_qp_index_offset: 7,
+            ..PicParameterSet::default()
+        };
+        let sps = SequenceParameterSet::default();
+        let mbs = [
+            Some(Macroblock::P(PMb {
+                mb_type: PMbType::P_L0_16x16,
+                qp: 40,
+                transform_size_8x8_flag: true,
+                ..PMb::default()
+            })),
+            Some(Macroblock::B(BMb { mb_type: BMbType::B_Skip, qp: 3, ..BMb::default() })),
+            Some(Macroblock::PCM(PcmMb::default())),
+            Some(Macroblock::I(IMb { qp: 51, ..IMb::default() })),
+        ];
+        let input = PictureDeblockInput {
+            sps: &sps,
+            pps: &pps,
+            macroblocks: &mbs,
+            mb_slice_id: &[0, 0, 1, 1],
+            slice_deblock: &[deblock(DeblockingFilterIdc::On), deblock(DeblockingFilterIdc::On)],
+            slice_ref_pocs: &[(vec![0], vec![]), (vec![], vec![])],
+            pic_width_in_mbs: 2,
+            pic_height_in_mbs: 2,
+        };
+        let records = build_records(&input);
+        for (info, mb) in records.iter().zip(&mbs) {
+            let qp = get_qp(mb.as_ref().expect("decoded"));
+            assert_eq!(info.qp, qp);
+            assert_eq!(
+                info.qp_c,
+                [get_chroma_qp(i32::from(qp), -4, 0), get_chroma_qp(i32::from(qp), 7, 0)]
+            );
+        }
+        assert_eq!(records[0].qp_c, [34, 38]);
+        assert_eq!(
+            records.iter().map(|info| (info.flags, info.slice_id)).collect::<Vec<_>>(),
+            [
+                (TRANSFORM_8X8 | NO_INTERNAL_EDGES | L1_EMPTY, 0),
+                // B_Skip has no macroblock partition, so it takes the full path.
+                (L1_EMPTY, 0),
+                (INTRA | L1_EMPTY, 1),
+                (INTRA | L1_EMPTY, 1),
+            ]
+        );
     }
 }

@@ -997,6 +997,19 @@ impl Macroblock {
         }
     }
 
+    /// Borrows the motion field of a P or B macroblock. `None` for I and PCM
+    /// macroblocks, which carry no motion. Prefer this to `get_motion_info`
+    /// when reading a few entries: that copies the whole 4x4 grid.
+    #[inline]
+    #[must_use]
+    pub fn motion(&self) -> Option<&MbMotion> {
+        match self {
+            Macroblock::P(mb) => Some(&mb.motion),
+            Macroblock::B(mb) => Some(&mb.motion),
+            Macroblock::I(_) | Macroblock::PCM(_) => None,
+        }
+    }
+
     pub fn set_qp(&mut self, qp: u8) {
         match self {
             Macroblock::I(m) => m.qp = qp,
@@ -1134,5 +1147,26 @@ mod tests {
         assert!(get_neighbor_mbs(10, 1, 1, MbNeighborName::B).is_none());
         assert!(get_neighbor_mbs(10, 1, 1, MbNeighborName::C).is_none());
         assert!(get_neighbor_mbs(10, 1, 1, MbNeighborName::D).is_none());
+    }
+
+    #[test]
+    pub fn test_motion_borrows_inter_motion_only() {
+        let mut p = PMb::default();
+        p.motion.partitions[1][2].ref_idx_l0 = 3;
+        p.motion.partitions[1][2].mv_l0 = MotionVector { x: -5, y: 7 };
+        let p = Macroblock::P(p);
+        let motion = p.motion().expect("P macroblock has motion");
+        assert_eq!(motion.partitions[1][2].ref_idx_l0, 3);
+        assert_eq!(motion.partitions[1][2].mv_l0, MotionVector { x: -5, y: 7 });
+        // Same data as the owned copy.
+        assert_eq!(motion.partitions, p.get_motion_info().partitions);
+
+        let mut b = BMb::default();
+        b.motion.partitions[3][0].ref_idx_l1 = 1;
+        let b = Macroblock::B(b);
+        assert_eq!(b.motion().map(|m| m.partitions[3][0].ref_idx_l1), Some(1));
+
+        assert!(Macroblock::I(IMb::default()).motion().is_none());
+        assert!(Macroblock::PCM(PcmMb::default()).motion().is_none());
     }
 }

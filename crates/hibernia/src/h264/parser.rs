@@ -1134,7 +1134,9 @@ pub fn get_motion_at_coord(
     }
 
     let neighbor_mb = slice.get_mb(mb_addr)?;
-    if neighbor_mb.is_intra() {
+    // Only P and B macroblocks carry motion. Intra (I and PCM) neighbours are
+    // available but have refIdx = -1 and a zero MV (8.4.1.3.2).
+    let Some(motion) = neighbor_mb.motion() else {
         return Some(PartitionInfo {
             ref_idx_l0: u8::MAX,
             ref_idx_l1: u8::MAX,
@@ -1142,13 +1144,13 @@ pub fn get_motion_at_coord(
             mvd_l0: MotionVector::default(),
             ..Default::default()
         });
-    }
-    let motion_info = neighbor_mb.get_motion_info();
+    };
 
     let block_grid_x = ((x % 16) / 4) as usize;
     let block_grid_y = ((y % 16) / 4) as usize;
 
-    Some(motion_info.partitions[block_grid_y][block_grid_x])
+    // Copy out the one entry we need; `get_motion_info` would clone all 16.
+    Some(motion.partitions[block_grid_y][block_grid_x])
 }
 
 // Section 8.4.1.3 Derivation process for luma motion vector prediction

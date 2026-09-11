@@ -38,8 +38,9 @@ impl VideoDecoderCallbacks for NoopCallbacks {
 use super::dpb::{DecodedPictureBuffer, DpbMarking, DpbPicture, ReferenceDisposition};
 use super::frame::BorderedFrame;
 use super::inter_pred::{
-    build_implicit_weight_table, render_chroma_inter_prediction, render_chroma_inter_prediction_b,
-    render_luma_inter_prediction, render_luma_inter_prediction_b, InterpolationBuffer, PredRects,
+    build_implicit_weight_table, get_weighted_pred_mode, reconstruct_p_macroblock,
+    render_chroma_inter_prediction_b, render_luma_inter_prediction_b, InterSliceRefs,
+    InterpolationBuffer, MbQp, PredRects,
 };
 use super::intra_pred::{
     point_to_plane_offset, render_chroma_intra_prediction, render_luma_16x16_intra_prediction,
@@ -990,6 +991,12 @@ impl Decoder {
                 DequantTables::from_scaling_matrix(&active_scaling_matrix)
             }
         };
+        // Section 8.4: the inter-prediction inputs that are fixed for the slice.
+        let inter_refs = InterSliceRefs {
+            wp_mode: get_weighted_pred_mode(slice),
+            ref_pics_l0: &ref_pics_l0,
+            dequant: &active_dequant,
+        };
         let first_mb_addr = slice.header.first_mb_in_slice;
         for i in 0..slice.get_macroblock_count() {
             let mb_addr = first_mb_addr + i as u32;
@@ -1113,50 +1120,15 @@ impl Decoder {
                     }
                     Macroblock::P(block) => {
                         qp = next_qp(qp, block.mb_qp_delta, qp_bd_offset_y);
-                        let residuals = restore_residuals(
-                            block.residual.as_deref(),
-                            ColorPlane::Y,
-                            qp as u8,
-                            &active_dequant,
-                        );
-                        // Merge the 4x4 motion grid into prediction rectangles
-                        // once; luma and both chroma planes share them.
-                        let rects_l0 = PredRects::p_l0(&block.motion);
-                        let luma_nonzero =
-                            block.residual.as_deref().map_or(0, Residual::luma_nonzero_mask);
-
-                        render_luma_inter_prediction(
+                        reconstruct_p_macroblock(
                             slice,
+                            &inter_refs,
                             block,
                             mb_loc,
+                            mb_qp(slice, qp, qp_bd_offset_c),
                             frame,
-                            &residuals,
-                            luma_nonzero,
-                            &rects_l0,
-                            &ref_pics_l0,
                             &mut self.interpolation_buffer,
                         )?;
-
-                        for plane_name in [ColorPlane::Cb, ColorPlane::Cr] {
-                            let qp_offset = slice.pps.get_chroma_qp_index_offset(plane_name);
-                            let chroma_qp = get_chroma_qp(qp, qp_offset, qp_bd_offset_c);
-                            let residuals = restore_residuals(
-                                block.residual.as_deref(),
-                                plane_name,
-                                chroma_qp,
-                                &active_dequant,
-                            );
-                            render_chroma_inter_prediction(
-                                slice,
-                                block,
-                                mb_loc,
-                                plane_name,
-                                frame,
-                                &residuals,
-                                &rects_l0,
-                                &ref_pics_l0,
-                            )?;
-                        }
                     }
                     Macroblock::B(block) => {
                         qp = next_qp(qp, block.mb_qp_delta, qp_bd_offset_y);
@@ -1667,6 +1639,17 @@ fn resolve_ref_pic_list<'a>(
             })
         })
         .collect()
+}
+
+// Section 8.5.8, Table 8-15: the QP of each plane for residual reconstruction
+// of a macroblock whose QP_Y is `qp`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn mb_qp(slice: &Slice, qp: i32, qp_bd_offset_c: i32) -> MbQp {
+    let chroma_qp =
+        |plane| get_chroma_qp(qp, slice.pps.get_chroma_qp_index_offset(plane), qp_bd_offset_c);
+    // QP_Y is in 0..=51 for 8-bit video; this is the conversion the intra
+    // path uses too.
+    MbQp { luma: qp as u8, cb: chroma_qp(ColorPlane::Cb), cr: chroma_qp(ColorPlane::Cr) }
 }
 
 // Section 8.5: produce restored residual blocks for one plane, or empty if

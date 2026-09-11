@@ -5,9 +5,9 @@ use super::dpb::DpbPicture;
 use super::macroblock::{
     self, get_4x4chroma_block_location, BMb, MbPredictionMode, MotionVector, PMb, PartitionInfo,
 };
-use super::slice::{Slice, SliceType};
-use super::residual::{add_residual_4x4, Block4x4};
 use super::plane::Plane;
+use super::residual::{add_residual_4x4, Block4x4, DequantTables, Residual};
+use super::slice::{Slice, SliceType};
 use super::{ColorPlane, Point};
 
 /// Section 8.4.2.2.1 Luma sample interpolation process.
@@ -597,7 +597,7 @@ impl InterpolationBuffer {
 
 // Section 8.4.2.3: Weighted prediction mode for the current slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WeightedPredMode {
+pub(crate) enum WeightedPredMode {
     Default,
     Explicit,
     Implicit,
@@ -614,7 +614,7 @@ pub(crate) struct WeightParams {
 }
 
 /// Determine the weighted prediction mode for the current slice (Section 8.4.2.3).
-fn get_weighted_pred_mode(slice: &Slice) -> WeightedPredMode {
+pub(crate) fn get_weighted_pred_mode(slice: &Slice) -> WeightedPredMode {
     match slice.header.slice_type {
         SliceType::P | SliceType::SP => {
             if slice.pps.weighted_pred_flag {
@@ -741,90 +741,173 @@ pub(crate) fn build_implicit_weight_table(
     table
 }
 
-pub(crate) fn render_luma_inter_prediction(
+/// Quantisation parameters of one macroblock (8.5.8): QP'Y for luma and QP'C
+/// for each chroma plane.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MbQp {
+    pub(crate) luma: u8,
+    pub(crate) cb: u8,
+    pub(crate) cr: u8,
+}
+
+/// The inputs of inter-macroblock reconstruction that are fixed for a slice.
+/// The caller resolves them once per slice.
+pub(crate) struct InterSliceRefs<'a> {
+    pub(crate) wp_mode: WeightedPredMode,
+    pub(crate) ref_pics_l0: &'a [&'a DpbPicture],
+    pub(crate) dequant: &'a DequantTables,
+}
+
+/// Sections 8.4 and 8.5: reconstructs a P macroblock straight into `frame`.
+/// The planes go one at a time (luma, Cb, Cr). Each prediction rectangle is
+/// interpolated into place (8.4.2.2) and, with explicit weighted prediction,
+/// weighted in place (8.4.2.3); then the residual of the coded blocks is
+/// added (8.5.12 to 8.5.14).
+pub(crate) fn reconstruct_p_macroblock(
     slice: &Slice,
+    refs: &InterSliceRefs<'_>,
     mb: &PMb,
     mb_loc: Point,
+    qp: MbQp,
     frame: &mut VideoFrame,
-    residuals: &[Block4x4],
-    residual_nonzero: u16,
-    rects_l0: &PredRects,
-    ref_pics_l0: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
 ) -> Result<(), DecoderError> {
-    let mut y_plane = frame.plane_mut(ColorPlane::Y);
-    let wp_mode = get_weighted_pred_mode(slice);
-
-    let y_stride = y_plane.cfg.stride;
-    let mb_origin = (mb_loc.y as usize) * y_stride + (mb_loc.x as usize);
-    let y_data = y_plane.data_origin_mut();
-    assert!(mb_origin + 15 * y_stride + 16 <= y_data.len());
-
-    let mut pred_buf = [0u8; 256];
-    for rect in rects_l0.as_slice() {
-        let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecoderError::ReferenceNotFound(format!(
-                "ref_idx_l0 {} out of bounds (list length {})",
-                rect.ref_idx,
-                ref_pics_l0.len()
-            ))
-        })?;
-        let ref_plane = ref_pic.picture.frame.plane(ColorPlane::Y);
-        let lx = rect.grid_x as usize * 4;
-        let ly = rect.grid_y as usize * 4;
-        let lw = rect.grid_w as usize * 4;
-        let lh = rect.grid_h as usize * 4;
-        interpolate_luma(
-            ref_plane,
-            mb_loc.x,
-            mb_loc.y,
-            lx as u8,
-            ly as u8,
-            lw as u8,
-            lh as u8,
-            rect.mv,
-            &mut pred_buf[ly * 16 + lx..],
-            16,
-            buffer,
-        );
-    }
-
-    for raster_idx in 0..16 {
-        let (grid_x, grid_y) = (raster_idx % 4, raster_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
-
-        let blk_x = grid_x * 4;
-        let blk_y = grid_y * 4;
-
-        let mut dst = [0u8; 16];
-        for y in 0..4usize {
-            let src_off = (blk_y as usize + y) * 16 + blk_x as usize;
-            dst[y * 4..y * 4 + 4].copy_from_slice(&pred_buf[src_off..src_off + 4]);
-        }
-
-        if wp_mode == WeightedPredMode::Explicit {
-            let wp = get_explicit_luma_weights(slice, partition.ref_idx_l0 as usize, 0);
-            for sample in &mut dst {
-                *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
+    // Every cell of a P macroblock predicts from L0 (its `pred_mode` stays
+    // None), so the rectangles are keyed on (ref_idx_l0, mv_l0) alone.
+    let rects = PredRects::p_l0(&mb.motion);
+    for plane in [ColorPlane::Y, ColorPlane::Cb, ColorPlane::Cr] {
+        let mut samples = frame.plane_mut(plane);
+        let stride = samples.cfg.stride;
+        let origin = mb_origin(plane, mb_loc, stride);
+        let data = samples.data_origin_mut();
+        for rect in rects.as_slice() {
+            let ref_pic = ref_picture(refs.ref_pics_l0, rect.ref_idx, "l0")?;
+            let area = rect.area(plane);
+            let dst = &mut data[origin + area.offset(stride)..];
+            let ref_plane = ref_pic.picture.frame.plane(plane);
+            interpolate_block(ref_plane, plane, mb_loc, area, rect.mv, dst, stride, buffer);
+            if refs.wp_mode == WeightedPredMode::Explicit {
+                let wp = explicit_weights(slice, plane, rect.ref_idx, 0);
+                weight_uni_in_place(dst, stride, area, wp.w0, wp.o0, wp.log_wd);
             }
         }
-
-        let blk_idx =
-            macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
-        // Blocks with no non-zero coefficients have an all-zero residual.
-        if residual_nonzero & (1 << blk_idx) != 0 {
-            if let Some(residual_blk) = residuals.get(blk_idx as usize) {
-                add_residual_4x4(&mut dst, 0, 4, residual_blk);
-            }
-        }
-
-        let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);
-        for y in 0..4 {
-            let row_base = cell_base + y * y_stride;
-            y_data[row_base..row_base + 4].copy_from_slice(&dst[y * 4..y * 4 + 4]);
+        if let Some(residual) = mb.residual.as_deref() {
+            add_plane_residual(residual, plane, qp, refs.dequant, data, origin, stride);
         }
     }
     Ok(())
+}
+
+/// Position and size of a prediction rectangle within its macroblock, in
+/// samples of one plane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Area {
+    x: u8,
+    y: u8,
+    w: u8,
+    h: u8,
+}
+
+impl Area {
+    /// Offset of the rectangle's top-left sample from the macroblock's.
+    fn offset(self, stride: usize) -> usize {
+        usize::from(self.y) * stride + usize::from(self.x)
+    }
+}
+
+/// Index of the macroblock's top-left sample of `plane` in a plane buffer
+/// with row stride `stride`. Chroma is 4:2:0, at half the luma position.
+fn mb_origin(plane: ColorPlane, mb_loc: Point, stride: usize) -> usize {
+    let shift = u32::from(plane != ColorPlane::Y);
+    (mb_loc.y >> shift) as usize * stride + (mb_loc.x >> shift) as usize
+}
+
+/// Section 8.4.2.1: the picture that `ref_idx` selects from a reference
+/// picture list.
+fn ref_picture<'a>(
+    list: &[&'a DpbPicture],
+    ref_idx: u8,
+    list_name: &str,
+) -> Result<&'a DpbPicture, DecoderError> {
+    list.get(usize::from(ref_idx)).copied().ok_or_else(|| {
+        DecoderError::ReferenceNotFound(format!(
+            "ref_idx_{list_name} {ref_idx} out of bounds (list length {})",
+            list.len()
+        ))
+    })
+}
+
+/// Section 8.4.2.2: fractional sample interpolation of one rectangle of
+/// `plane` from `ref_plane`, written to `dst` with row stride `dst_stride`.
+fn interpolate_block(
+    ref_plane: Plane<'_>,
+    plane: ColorPlane,
+    mb_loc: Point,
+    area: Area,
+    mv: MotionVector,
+    dst: &mut [u8],
+    dst_stride: usize,
+    buffer: &mut InterpolationBuffer,
+) {
+    let Area { x, y, w, h } = area;
+    if plane == ColorPlane::Y {
+        interpolate_luma(ref_plane, mb_loc.x, mb_loc.y, x, y, w, h, mv, dst, dst_stride, buffer);
+    } else {
+        // 4:2:0: the chroma macroblock sits at half the luma position.
+        let (mb_x, mb_y) = (mb_loc.x >> 1, mb_loc.y >> 1);
+        interpolate_chroma(ref_plane, mb_x, mb_y, x, y, w, h, mv, dst, dst_stride);
+    }
+}
+
+/// Section 8.4.3: the explicit weights of `plane` for a pair of reference
+/// indices. The index of an unused list misses the weight table and gets the
+/// default weight, which the uni-predicted formulas then ignore.
+fn explicit_weights(
+    slice: &Slice,
+    plane: ColorPlane,
+    ref_idx_l0: u8,
+    ref_idx_l1: u8,
+) -> WeightParams {
+    let (l0, l1) = (usize::from(ref_idx_l0), usize::from(ref_idx_l1));
+    match plane {
+        ColorPlane::Y => get_explicit_luma_weights(slice, l0, l1),
+        ColorPlane::Cb => get_explicit_chroma_weights(slice, l0, l1, 0),
+        ColorPlane::Cr => get_explicit_chroma_weights(slice, l0, l1, 1),
+    }
+}
+
+/// Section 8.4.2.3.2, Eqs. 8-274 and 8-275: explicit weighting of a
+/// uni-predicted rectangle in place. `dst` starts at its top-left sample.
+fn weight_uni_in_place(
+    dst: &mut [u8],
+    stride: usize,
+    area: Area,
+    weight: i32,
+    offset: i32,
+    log_wd: u32,
+) {
+    for row in dst.chunks_mut(stride).take(usize::from(area.h)) {
+        for sample in &mut row[..usize::from(area.w)] {
+            *sample = weighted_uni_pred(*sample, weight, offset, log_wd);
+        }
+    }
+}
+
+/// Sections 8.5.12 to 8.5.14: adds the residual of `plane` to its prediction.
+fn add_plane_residual(
+    residual: &Residual,
+    plane: ColorPlane,
+    qp: MbQp,
+    dequant: &DequantTables,
+    data: &mut [u8],
+    origin: usize,
+    stride: usize,
+) {
+    match plane {
+        ColorPlane::Y => residual.add_luma_to(qp.luma, dequant, data, origin, stride),
+        ColorPlane::Cb => residual.add_chroma_to(plane, qp.cb, dequant, data, origin, stride),
+        ColorPlane::Cr => residual.add_chroma_to(plane, qp.cr, dequant, data, origin, stride),
+    }
 }
 
 /// One rectangular region of a 16x16 macroblock's 4x4 motion partition grid
@@ -838,6 +921,20 @@ struct PartitionRect {
     grid_w: u8,
     ref_idx: u8,
     mv: MotionVector,
+}
+
+impl PartitionRect {
+    /// The rectangle in samples of `plane`: a grid cell covers 4x4 luma
+    /// samples, or 2x2 chroma samples in 4:2:0.
+    fn area(&self, plane: ColorPlane) -> Area {
+        let scale = if plane == ColorPlane::Y { 4 } else { 2 };
+        Area {
+            x: self.grid_x * scale,
+            y: self.grid_y * scale,
+            w: self.grid_w * scale,
+            h: self.grid_h * scale,
+        }
+    }
 }
 
 /// Greedy-rectangle scan of the 4x4 motion partition grid. `classify` returns
@@ -969,103 +1066,6 @@ impl PredRects {
     fn as_slice(&self) -> &[PartitionRect] {
         &self.rects[..self.len]
     }
-}
-
-pub(crate) fn render_chroma_inter_prediction(
-    slice: &Slice,
-    mb: &PMb,
-    mb_loc: Point,
-    plane: ColorPlane,
-    frame: &mut VideoFrame,
-    residuals: &[Block4x4],
-    rects_l0: &PredRects,
-    ref_pics_l0: &[&DpbPicture],
-) -> Result<(), DecoderError> {
-    let mut chroma_plane = frame.plane_mut(plane);
-    let mb_x_chroma = mb_loc.x >> 1;
-    let mb_y_chroma = mb_loc.y >> 1;
-    let wp_mode = get_weighted_pred_mode(slice);
-    let chroma_idx = plane as usize - 1; // Cb=0, Cr=1
-
-    // 1. Prediction. `rects_l0` coalesces the 4x4 motion partition grid into
-    // maximal rectangles sharing the same (ref_idx_l0, mv_l0); call
-    // interpolate_chroma once per rectangle (16x reduction in the common case
-    // of a single 16x16 P partition).
-    let mut pred_buf = [0u8; 64]; // 8x8 chroma block, row-major, stride 8
-    for rect in rects_l0.as_slice() {
-        let ref_pic = *ref_pics_l0.get(rect.ref_idx as usize).ok_or_else(|| {
-            DecoderError::ReferenceNotFound(format!(
-                "ref_idx_l0 {} out of bounds (list length {})",
-                rect.ref_idx,
-                ref_pics_l0.len()
-            ))
-        })?;
-        let ref_plane = ref_pic.picture.frame.plane(plane);
-        let cx = rect.grid_x as usize * 2;
-        let cy = rect.grid_y as usize * 2;
-        let cw = rect.grid_w as usize * 2;
-        let ch = rect.grid_h as usize * 2;
-        interpolate_chroma(
-            ref_plane,
-            mb_x_chroma,
-            mb_y_chroma,
-            cx as u8,
-            cy as u8,
-            cw as u8,
-            ch as u8,
-            rect.mv,
-            &mut pred_buf[cy * 8 + cx..],
-            8,
-        );
-    }
-
-    let chroma_stride = chroma_plane.cfg.stride;
-    let mb_origin = (mb_y_chroma as usize) * chroma_stride + (mb_x_chroma as usize);
-    let chroma_data = chroma_plane.data_origin_mut();
-    // One worst-case bound check for the 8x8 chroma MB; the per-pixel stores
-    // below stay within it and LLVM elides their checks.
-    assert!(mb_origin + 7 * chroma_stride + 8 <= chroma_data.len());
-
-    // Per-2x2-cell weighted prediction and write-back from the staged 8x8 buffer.
-    for blk_idx in 0..16 {
-        let (grid_x, grid_y) = (blk_idx % 4, blk_idx / 4);
-        let partition = mb.motion.partitions[grid_y as usize][grid_x as usize];
-        let ref_idx = partition.ref_idx_l0;
-
-        let blk_x = (grid_x * 4) >> 1;
-        let blk_y = (grid_y * 4) >> 1;
-        let buf_off = blk_y * 8 + blk_x;
-
-        let mut dst = [
-            pred_buf[buf_off],
-            pred_buf[buf_off + 1],
-            pred_buf[buf_off + 8],
-            pred_buf[buf_off + 9],
-        ];
-
-        // Section 8.4.2.3: Apply weighted prediction
-        if wp_mode == WeightedPredMode::Explicit {
-            let wp = get_explicit_chroma_weights(slice, ref_idx as usize, 0, chroma_idx);
-            for sample in &mut dst {
-                *sample = weighted_uni_pred(*sample, wp.w0, wp.o0, wp.log_wd);
-            }
-        }
-
-        let cell_base = mb_origin + blk_y * chroma_stride + blk_x;
-        chroma_data[cell_base] = dst[0];
-        chroma_data[cell_base + 1] = dst[1];
-        chroma_data[cell_base + chroma_stride] = dst[2];
-        chroma_data[cell_base + chroma_stride + 1] = dst[3];
-    }
-
-    // 2. Residuals (Block by block 4x4)
-    for (blk_idx, residual_blk) in residuals.iter().enumerate() {
-        let blk_loc = get_4x4chroma_block_location(blk_idx as u8);
-        let blk_base =
-            mb_origin + (blk_loc.y as usize) * chroma_stride + (blk_loc.x as usize);
-        add_residual_4x4(chroma_data, blk_base, chroma_stride, residual_blk);
-    }
-    Ok(())
 }
 
 pub(crate) fn render_luma_inter_prediction_b(
@@ -1779,5 +1779,37 @@ mod tests {
             rect_list(&PredRects::p_l0(&motion)),
             vec![(0, 0, 3, 4, 0, mv), (3, 0, 1, 3, 0, mv), (3, 3, 1, 1, 1, mv)]
         );
+    }
+
+    #[test]
+    fn test_rect_area_and_origins() {
+        let rect =
+            PartitionRect { grid_y: 2, grid_x: 1, grid_h: 2, grid_w: 3, ..Default::default() };
+        assert_eq!(rect.area(ColorPlane::Y), Area { x: 4, y: 8, w: 12, h: 8 });
+        assert_eq!(rect.area(ColorPlane::Cr), Area { x: 2, y: 4, w: 6, h: 4 });
+        assert_eq!(rect.area(ColorPlane::Y).offset(100), 8 * 100 + 4);
+        let mb_loc = Point { x: 32, y: 48 };
+        assert_eq!(mb_origin(ColorPlane::Y, mb_loc, 200), 48 * 200 + 32);
+        assert_eq!(mb_origin(ColorPlane::Cb, mb_loc, 100), 24 * 100 + 16);
+    }
+
+    #[test]
+    fn test_weight_uni_in_place_matches_per_sample() {
+        let stride = 20;
+        let area = Area { x: 0, y: 0, w: 12, h: 4 };
+        for (weight, offset, log_wd) in [(64, 0, 6), (-3, 10, 2), (5, -20, 0), (200, 127, 7)] {
+            let original: Vec<u8> =
+                (0..stride * 6).map(|i| u8::try_from(i * 37 % 256).expect("fits")).collect();
+            let mut dst = original.clone();
+            // The rectangle starts at row 1, column 3.
+            weight_uni_in_place(&mut dst[stride + 3..], stride, area, weight, offset, log_wd);
+            for (i, (&got, &was)) in dst.iter().zip(&original).enumerate() {
+                let (row, col) = (i / stride, i % stride);
+                let inside = (1..5).contains(&row) && (3..15).contains(&col);
+                let want =
+                    if inside { weighted_uni_pred(was, weight, offset, log_wd) } else { was };
+                assert_eq!(got, want, "sample ({row}, {col}), weight {weight}, log_wd {log_wd}");
+            }
+        }
     }
 }

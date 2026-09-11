@@ -207,17 +207,10 @@ pub(crate) struct CurrentPicture {
     // when boundary detection triggers finalize, the new slice's SPS may differ
     // and the in-progress picture must MMCO-process under its own SPS.
     pub sps: sps::SequenceParameterSet,
-    // PPS active for this picture. Captured at picture start because the
-    // context-resident PPS with the same id can be replaced before finalize
-    // runs (each picture in a stream may carry a fresh PPS update before its
-    // first slice arrives), and the picture-level deblocking pass at finalize
-    // needs this picture's `chroma_qp_index_offset`, not the next picture's.
-    pub pps: pps::PicParameterSet,
 
-    // Picture-wide accumulated state, length = pic_size_in_mbs.
-    // Decoded macroblocks indexed by mb_addr. `None` until the owning slice
-    // has been processed; finalize asserts no `None` remains.
-    pub macroblocks: Vec<Option<Macroblock>>,
+    // Picture-wide accumulated state, length = pic_size_in_mbs. (What the
+    // deblocking pass needs of each macroblock is gathered in the decoder's
+    // `deblock_records` as the slices are decoded.)
     // Slice index (0..slices_seen) that decoded each MB. Used by the
     // picture-level deblocking pass for `disable_deblocking_filter_idc=2`
     // (filter except across slice boundaries). `u16::MAX` means undecoded.
@@ -380,9 +373,10 @@ pub struct Decoder {
     // finalized.
     current_picture: Option<CurrentPicture>,
     residual_pool: super::residual::ResidualPool,
-    mb_pool: macroblock::MacroblockPool,
-    // Storage the picture-level deblocking pass reuses across pictures.
-    deblock_scratch: deblocking::DeblockScratch,
+    // What the picture-level deblocking pass needs of each macroblock of the
+    // picture being decoded, gathered as its slices are decoded. The storage
+    // is reused across pictures.
+    deblock_records: deblocking::DeblockRecords,
     // Reused across slices when the matrix-defining inputs are unchanged.
     dequant_cache: Option<(DequantCacheKey, DequantTables)>,
     // Source of raw frame memory for newly allocated pictures.
@@ -455,8 +449,7 @@ impl Decoder {
             poc_state: PocState::new(),
             current_picture: None,
             residual_pool: super::residual::ResidualPool::default(),
-            mb_pool: macroblock::MacroblockPool::default(),
-            deblock_scratch: deblocking::DeblockScratch::default(),
+            deblock_records: deblocking::DeblockRecords::default(),
             dequant_cache: None,
             allocator,
             pending_opaque: None,
@@ -692,6 +685,12 @@ impl Decoder {
         };
 
         let pic_size = sps.pic_size_in_mbs();
+        // The deblocking pass at finalize needs this picture's
+        // `chroma_qp_index_offset`: take it from the PPS active now, as the
+        // context-resident PPS with the same id can be replaced before
+        // finalize runs (each picture in a stream may carry a fresh PPS
+        // update before its first slice arrives).
+        self.deblock_records.start_picture(pic_size, &slice.pps);
 
         Ok(CurrentPicture {
             dpb_pic,
@@ -707,8 +706,6 @@ impl Decoder {
             delta_pic_order_cnt: header.delta_pic_order_cnt,
             first_slice_header: header.clone(),
             sps: sps.clone(),
-            pps: slice.pps.clone(),
-            macroblocks: self.mb_pool.acquire(pic_size),
             mb_slice_id: vec![u16::MAX; pic_size],
             // Motion-field arrays are only consulted when this picture is later
             // used as a colocated reference for B-slice temporal direct
@@ -807,7 +804,7 @@ impl Decoder {
 
         parser::parse_slice_data(input, slice, &mut self.residual_pool)
             .map_err(DecoderError::MisformedData)?;
-        let pic_size = current.macroblocks.len();
+        let pic_size = current.mb_slice_id.len();
         let mb_count = slice.get_macroblock_count();
         let end_mb = (slice.header.first_mb_in_slice as usize).saturating_add(mb_count);
         if end_mb > pic_size {
@@ -817,6 +814,7 @@ impl Decoder {
             )));
         }
 
+        self.deblock_records.start_slice(current.slices_seen, &slice.ref_pic_list0_pocs, &l1_pocs);
         self.process_slice_into_picture(slice, current)?;
 
         current.slice_deblock.push(SliceDeblockParams {
@@ -842,35 +840,30 @@ impl Decoder {
         // Every MB must have been decoded by some slice. Truncated slices are
         // caught earlier by `parse_slice_data`, but a missing slice (multi-slice
         // picture where one slice never arrived) leaves sentinels behind that
-        // would silently produce a corrupted frame. `macroblocks` and
-        // `mb_slice_id` are written together, so checking either suffices.
+        // would silently produce a corrupted frame. The deblocking records
+        // and `mb_slice_id` are written together, so checking either
+        // suffices.
         if current.mb_slice_id.iter().any(|&id| id == u16::MAX) {
             return Err(DecoderError::MisformedData(
                 "picture has macroblocks with no slice owner at finalize".into(),
             ));
         }
-        debug_assert!(current.macroblocks.iter().all(Option::is_some));
 
         // Section 8.7: deblocking is a picture-level pass. Run it before any
         // DPB mutation so the stored frame reflects the filtered samples.
-        // Use the PPS captured at picture start; the context-resident PPS
-        // with the same id may have been overwritten by the next picture's
-        // PPS update by the time finalize runs.
+        // The records were built with the PPS captured at picture start; the
+        // context-resident PPS with the same id may have been overwritten by
+        // the next picture's PPS update by the time finalize runs.
         let pic_width_in_mbs = current.sps.pic_width_in_mbs();
         let pic_height_in_mbs = (current.sps.pic_height_in_map_units_minus1 + 1) as usize;
         let deblock_input = deblocking::PictureDeblockInput {
-            sps: &current.sps,
-            pps: &current.pps,
-            macroblocks: &current.macroblocks,
-            mb_slice_id: &current.mb_slice_id,
             slice_deblock: &current.slice_deblock,
-            slice_ref_pocs: &current.slice_ref_pocs,
             pic_width_in_mbs,
             pic_height_in_mbs,
         };
         deblocking::filter_picture(
             &deblock_input,
-            &mut self.deblock_scratch,
+            &self.deblock_records,
             Arc::get_mut(&mut current.dpb_pic.picture.frame)
                 .expect("frame uniquely owned during deblocking"),
         );
@@ -898,25 +891,6 @@ impl Decoder {
         // Section C.2.4: Store current picture (with bumping if DPB is full).
         let pictures = self.dpb.store_picture(current.dpb_pic);
         self.output_pictures.extend(pictures);
-
-        // Reclaim per-MB Residual boxes and the macroblock array allocation
-        // before `current` drops. The DPB only keeps the decoded frame and
-        // motion field; the array itself isn't retained, so its capacity
-        // returns to the pool for the next picture.
-        for slot in current.macroblocks.iter_mut() {
-            if let Some(mb) = slot {
-                let residual = match mb {
-                    Macroblock::I(m) => m.residual.take(),
-                    Macroblock::P(m) => m.residual.take(),
-                    Macroblock::B(m) => m.residual.take(),
-                    Macroblock::PCM(_) => None,
-                };
-                if let Some(r) = residual {
-                    self.residual_pool.release(r);
-                }
-            }
-        }
-        self.mb_pool.release(std::mem::take(&mut current.macroblocks));
 
         self.poc_state.update_mmco5_state(
             has_mmco5,
@@ -1159,24 +1133,27 @@ impl Decoder {
         self.dequant_cache = Some((dequant_key, active_dequant));
 
         // Drain decoded macroblocks into picture-wide state consumed at
-        // finalize: `mb_slice_id` drives cross-slice deblocking suppression
-        // and `mb_motion` / `mb_is_intra` feed picture-level motion field
-        // assembly. Nothing reads `slice.macroblocks` after this point.
+        // finalize: `mb_slice_id` drives cross-slice deblocking suppression,
+        // the deblocking records everything else deblocking needs, and
+        // `mb_motion` / `mb_is_intra` feed picture-level motion field
+        // assembly. Nothing reads `slice.macroblocks` after this point, so
+        // the residual boxes go back to the pool here.
         // Motion-field writes are skipped for non-reference pictures; they
         // can never be used as a colocated reference.
         let first_mb_addr = slice.header.first_mb_in_slice as usize;
         let slices_seen = current.slices_seen;
         let needs_motion_field = current.disposition != ReferenceDisposition::NonReference;
-        for (i, mb) in slice.take_macroblocks().into_iter().enumerate() {
+        for (i, mb) in slice.take_macroblocks().iter_mut().enumerate() {
             let mb_addr = first_mb_addr + i;
             if needs_motion_field {
                 current.mb_motion[mb_addr] = mb.get_motion_info();
-                current
-                    .mb_is_intra
-                    .set(mb_addr, matches!(&mb, Macroblock::I(_) | Macroblock::PCM(_)));
+                current.mb_is_intra.set(mb_addr, mb.is_intra());
             }
             current.mb_slice_id[mb_addr] = slices_seen;
-            current.macroblocks[mb_addr] = Some(mb);
+            self.deblock_records.record(mb_addr, mb);
+            if let Some(residual) = take_residual(mb) {
+                self.residual_pool.release(residual);
+            }
         }
 
         Ok(())
@@ -1559,8 +1536,8 @@ impl VideoDecoder for Decoder {
             }
             FlushMode::Discard => {
                 // Wipe per-stream state in place. Pools (residual_pool,
-                // mb_pool, interpolation_buffer, deblock_scratch) and the
-                // allocator stay; callbacks and packaging config stay.
+                // interpolation_buffer, deblock_records) and the allocator
+                // stay; callbacks and packaging config stay.
                 self.context = DecoderContext::default();
                 self.dpb = DecodedPictureBuffer::new();
                 self.output_pictures.clear();
@@ -1613,6 +1590,17 @@ fn mb_qp(slice: &Slice, qp: i32, qp_bd_offset_c: i32) -> MbQp {
     // QP_Y is in 0..=51 for 8-bit video; this is the conversion the intra
     // path uses too.
     MbQp { luma: qp as u8, cb: chroma_qp(ColorPlane::Cb), cr: chroma_qp(ColorPlane::Cr) }
+}
+
+// The residual of a macroblock, taken out so that its box can go back to
+// the pool.
+fn take_residual(mb: &mut Macroblock) -> Option<Box<Residual>> {
+    match mb {
+        Macroblock::I(m) => m.residual.take(),
+        Macroblock::P(m) => m.residual.take(),
+        Macroblock::B(m) => m.residual.take(),
+        Macroblock::PCM(_) => None,
+    }
 }
 
 // Section 8.5: produce restored residual blocks for one plane, or empty if

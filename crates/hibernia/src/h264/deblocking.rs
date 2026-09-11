@@ -3,7 +3,6 @@ use super::macroblock::Macroblock;
 use super::pps::PicParameterSet;
 use super::residual::scan_4x4;
 use super::slice::DeblockingFilterIdc;
-use super::sps::SequenceParameterSet;
 use super::tables::{MB_HEIGHT, MB_WIDTH};
 use super::ColorPlane;
 
@@ -82,17 +81,11 @@ impl FilterThresholds {
     }
 }
 
-/// Picture-wide view consumed by `filter_picture`. Holds references to
-/// `CurrentPicture`'s decoded macroblocks, per-MB slice ownership, and the
-/// per-slice deblocking parameters and reference-list POCs accumulated during
-/// slice processing.
+/// Picture-wide view consumed by `filter_picture`, besides the
+/// `DeblockRecords` gathered while the picture's slices were decoded: the
+/// per-slice deblocking parameters and the picture's size.
 pub struct PictureDeblockInput<'a> {
-    pub sps: &'a SequenceParameterSet,
-    pub pps: &'a PicParameterSet,
-    pub macroblocks: &'a [Option<Macroblock>],
-    pub mb_slice_id: &'a [u16],
     pub slice_deblock: &'a [SliceDeblockParams],
-    pub slice_ref_pocs: &'a [(Vec<i32>, Vec<i32>)],
     pub pic_width_in_mbs: usize,
     pub pic_height_in_mbs: usize,
 }
@@ -147,49 +140,51 @@ struct BlockInfo {
 }
 
 impl MbDeblockInfo {
-    /// Gathers the record of a decoded macroblock of slice `slice_id`, whose
-    /// reference picture lists resolve through `ref_ids`. `chroma_qp_offsets`
-    /// are the PPS chroma QP index offsets of Cb and Cr.
-    fn new(
+    /// Makes this the record of a decoded macroblock of slice `slice_id`,
+    /// whose reference picture lists resolve through `ref_ids`.
+    /// `chroma_qp_offsets` are the PPS chroma QP index offsets of Cb and Cr.
+    /// Writes every field in place: the records live in a picture-sized
+    /// array.
+    fn fill(
+        &mut self,
         mb: &Macroblock,
         slice_id: u16,
         ref_ids: &SliceRefIds,
         chroma_qp_offsets: [i32; 2],
-    ) -> Self {
+    ) {
         let qp = get_qp(mb);
-        let mut info = MbDeblockInfo {
-            qp,
-            // Section 8.7.2.2: for chroma edges qPp / qPq are the QP_C values
-            // of the luma QPs, from Table 8-15.
-            qp_c: chroma_qp_offsets.map(|offset| get_chroma_qp(i32::from(qp), offset, 0)),
-            slice_id,
-            ..MbDeblockInfo::default()
-        };
-        if ref_ids.l1_empty {
-            info.flags |= L1_EMPTY;
-        }
+        self.qp = qp;
+        // Section 8.7.2.2: for chroma edges qPp / qPq are the QP_C values of
+        // the luma QPs, from Table 8-15.
+        self.qp_c = chroma_qp_offsets.map(|offset| get_chroma_qp(i32::from(qp), offset, 0));
+        self.slice_id = slice_id;
+        let mut flags = if ref_ids.l1_empty { L1_EMPTY } else { 0 };
         let (motion, transform_8x8) = match mb {
             Macroblock::I(m) => {
-                info.flags |= INTRA;
+                flags |= INTRA;
                 if m.transform_size_8x8_flag {
-                    info.flags |= TRANSFORM_8X8;
+                    flags |= TRANSFORM_8X8;
                 }
-                return info;
+                self.flags = flags;
+                self.blocks = BlockInfo::default();
+                return;
             }
             Macroblock::PCM(_) => {
-                info.flags |= INTRA;
-                return info;
+                self.flags = flags | INTRA;
+                self.blocks = BlockInfo::default();
+                return;
             }
             Macroblock::P(m) => (&m.motion, m.transform_size_8x8_flag),
             Macroblock::B(m) => (&m.motion, m.transform_size_8x8_flag),
         };
         if transform_8x8 {
-            info.flags |= TRANSFORM_8X8;
+            flags |= TRANSFORM_8X8;
         }
         if has_no_internal_edges(mb) {
-            info.flags |= NO_INTERNAL_EDGES;
+            flags |= NO_INTERNAL_EDGES;
         }
-        let blocks = &mut info.blocks;
+        self.flags = flags;
+        let blocks = &mut self.blocks;
         blocks.nz = nonzero_blocks(mb);
         for (blk, part) in motion.partitions.as_flattened().iter().enumerate() {
             blocks.ref_l0[blk] = ref_ids.l0[usize::from(part.ref_idx_l0)];
@@ -197,7 +192,6 @@ impl MbDeblockInfo {
             blocks.mv_l0[blk] = [part.mv_l0.x, part.mv_l0.y];
             blocks.mv_l1[blk] = [part.mv_l1.x, part.mv_l1.y];
         }
-        info
     }
 
     fn is(&self, flag: u8) -> bool {
@@ -207,51 +201,18 @@ impl MbDeblockInfo {
 
 /// Section 8.7.2.1 compares the reference *pictures* two blocks use, and the
 /// blocks may belong to slices with different reference picture lists. Each
-/// slice's lists were resolved to POCs at slice-decode time; this numbers the
-/// distinct POCs of all lists of the picture from 1 and gives every list entry
-/// its picture's number, so the comparison is a byte compare that doesn't
-/// depend on either slice's lists. 0 stands for "no picture". Two ids are equal
-/// exactly when the POCs they stand for (or their absence) are.
+/// slice's lists are resolved to POCs at slice-decode time; this numbers the
+/// distinct POCs of all lists of the picture from 1, so that the comparison
+/// is a byte compare that doesn't depend on either slice's lists. 0 stands
+/// for "no picture". Two ids are equal exactly when the POCs they stand for
+/// (or their absence) are.
 #[derive(Default)]
 struct RefPictureIds {
     /// Distinct POCs; the picture id of `pocs[i]` is `i + 1`.
     pocs: Vec<i32>,
-    /// The picture ids of every slice's list 0 and then list 1 entries.
-    ids: Vec<u8>,
-    /// Per slice: where its list 0 and list 1 ids start in `ids`, and where
-    /// its list 1 ids end.
-    slices: Vec<[usize; 3]>,
 }
 
 impl RefPictureIds {
-    #[cfg(test)]
-    fn new(slice_ref_pocs: &[(Vec<i32>, Vec<i32>)]) -> Self {
-        let mut table = RefPictureIds::default();
-        table.rebuild(slice_ref_pocs);
-        table
-    }
-
-    /// Numbers the pictures of a picture's slices' lists, reusing the
-    /// storage of the previous picture's.
-    fn rebuild(&mut self, slice_ref_pocs: &[(Vec<i32>, Vec<i32>)]) {
-        self.pocs.clear();
-        self.ids.clear();
-        self.slices.clear();
-        for (l0, l1) in slice_ref_pocs {
-            let l0_start = self.ids.len();
-            for &poc in l0 {
-                let id = self.id_of(poc);
-                self.ids.push(id);
-            }
-            let l1_start = self.ids.len();
-            for &poc in l1 {
-                let id = self.id_of(poc);
-                self.ids.push(id);
-            }
-            self.slices.push([l0_start, l1_start, self.ids.len()]);
-        }
-    }
-
     fn id_of(&mut self, poc: i32) -> u8 {
         let index = self.pocs.iter().position(|&p| p == poc).unwrap_or_else(|| {
             self.pocs.push(poc);
@@ -263,19 +224,13 @@ impl RefPictureIds {
         debug_assert!(index < usize::from(u8::MAX), "more than 255 reference pictures");
         u8::try_from(index + 1).unwrap_or(u8::MAX)
     }
-
-    /// The picture ids of slice `slice_id`'s list 0 and list 1.
-    fn lists(&self, slice_id: u16) -> (&[u8], &[u8]) {
-        let [l0_start, l1_start, end] = self.slices[usize::from(slice_id)];
-        (&self.ids[l0_start..l1_start], &self.ids[l1_start..end])
-    }
 }
 
 /// One slice's picture ids, indexed by reference index. Every `u8` index is
 /// in range, so the lookup needs no branch: entries past the end of a list
 /// are 0, which also covers `u8::MAX`, the marker of an unused list.
 struct SliceRefIds {
-    slice_id: Option<u16>,
+    slice_id: u16,
     l0: [u8; 256],
     l1: [u8; 256],
     /// Entries of `l0` / `l1` that may be non-zero.
@@ -285,10 +240,10 @@ struct SliceRefIds {
     l1_empty: bool,
 }
 
-impl SliceRefIds {
-    fn new() -> Self {
+impl Default for SliceRefIds {
+    fn default() -> Self {
         SliceRefIds {
-            slice_id: None,
+            slice_id: 0,
             l0: [0; 256],
             l1: [0; 256],
             l0_len: 0,
@@ -296,54 +251,73 @@ impl SliceRefIds {
             l1_empty: true,
         }
     }
+}
 
-    /// Switches the tables to slice `slice_id`.
-    fn load(&mut self, ref_ids: &RefPictureIds, slice_id: u16) {
-        fn fill(table: &mut [u8; 256], len: &mut usize, ids: &[u8]) {
+impl SliceRefIds {
+    /// Switches the tables to slice `slice_id`, whose lists hold the
+    /// pictures with POCs `l0_pocs` and `l1_pocs`.
+    fn load(
+        &mut self,
+        ref_ids: &mut RefPictureIds,
+        slice_id: u16,
+        l0_pocs: &[i32],
+        l1_pocs: &[i32],
+    ) {
+        let mut fill = |table: &mut [u8; 256], len: &mut usize, pocs: &[i32]| {
             table[..*len].fill(0);
-            *len = ids.len().min(table.len());
-            table[..*len].copy_from_slice(&ids[..*len]);
-        }
-        let (l0_ids, l1_ids) = ref_ids.lists(slice_id);
-        fill(&mut self.l0, &mut self.l0_len, l0_ids);
-        fill(&mut self.l1, &mut self.l1_len, l1_ids);
-        self.l1_empty = l1_ids.is_empty();
-        self.slice_id = Some(slice_id);
+            *len = pocs.len().min(table.len());
+            for (id, &poc) in table.iter_mut().zip(pocs) {
+                *id = ref_ids.id_of(poc);
+            }
+        };
+        fill(&mut self.l0, &mut self.l0_len, l0_pocs);
+        fill(&mut self.l1, &mut self.l1_len, l1_pocs);
+        self.l1_empty = l1_pocs.is_empty();
+        self.slice_id = slice_id;
     }
 }
 
-/// Storage that `filter_picture` reuses from one picture to the next: the
-/// per-macroblock records of a 1080p picture take 1.4 MB.
+/// The `MbDeblockInfo` of every macroblock of the picture being decoded, in
+/// raster order, gathered as its slices are decoded; and the storage to
+/// gather them, reused from one picture to the next. The records of a 1080p
+/// picture take 1.4 MB.
 #[derive(Default)]
-pub struct DeblockScratch {
+pub struct DeblockRecords {
     records: Vec<MbDeblockInfo>,
     ref_ids: RefPictureIds,
+    slice: SliceRefIds,
+    /// The PPS chroma QP index offsets of Cb and Cr.
+    chroma_qp_offsets: [i32; 2],
 }
 
-impl DeblockScratch {
-    /// Builds the `MbDeblockInfo` of every macroblock of the picture, in
-    /// raster order.
-    fn build_records(&mut self, input: &PictureDeblockInput) -> &[MbDeblockInfo] {
-        self.ref_ids.rebuild(input.slice_ref_pocs);
-        let ref_ids = &self.ref_ids;
-        let mut slice_ref_ids = SliceRefIds::new();
-        let chroma_qp_offsets = [ColorPlane::Cb, ColorPlane::Cr]
-            .map(|plane| input.pps.get_chroma_qp_index_offset(plane));
-        let total_mbs = input.pic_width_in_mbs * input.pic_height_in_mbs;
+impl DeblockRecords {
+    /// Starts the records of a picture of `pic_size_in_mbs` macroblocks whose
+    /// picture parameter set is `pps`. Macroblocks count as not decoded until
+    /// they are recorded.
+    pub fn start_picture(&mut self, pic_size_in_mbs: usize, pps: &PicParameterSet) {
         self.records.clear();
-        self.records.extend((0..total_mbs).map(|mb_addr| {
-            match input.macroblocks.get(mb_addr).and_then(Option::as_ref) {
-                Some(mb) => {
-                    let slice_id = input.mb_slice_id[mb_addr];
-                    if slice_ref_ids.slice_id != Some(slice_id) {
-                        slice_ref_ids.load(ref_ids, slice_id);
-                    }
-                    MbDeblockInfo::new(mb, slice_id, &slice_ref_ids, chroma_qp_offsets)
-                }
-                None => MbDeblockInfo { flags: NOT_DECODED, ..MbDeblockInfo::default() },
-            }
-        }));
-        &self.records
+        self.records.resize(
+            pic_size_in_mbs,
+            MbDeblockInfo { flags: NOT_DECODED, ..MbDeblockInfo::default() },
+        );
+        self.ref_ids.pocs.clear();
+        self.chroma_qp_offsets =
+            [ColorPlane::Cb, ColorPlane::Cr].map(|plane| pps.get_chroma_qp_index_offset(plane));
+    }
+
+    /// Starts slice `slice_id` of the picture, whose reference picture
+    /// lists hold the pictures with POCs `l0_pocs` and `l1_pocs`, as
+    /// resolved at slice-decode time.
+    pub fn start_slice(&mut self, slice_id: u16, l0_pocs: &[i32], l1_pocs: &[i32]) {
+        self.slice.load(&mut self.ref_ids, slice_id, l0_pocs, l1_pocs);
+    }
+
+    /// Records decoded macroblock `mb` of the slice last started, whose
+    /// address is `mb_addr`.
+    pub fn record(&mut self, mb_addr: usize, mb: &Macroblock) {
+        if let Some(record) = self.records.get_mut(mb_addr) {
+            record.fill(mb, self.slice.slice_id, &self.slice, self.chroma_qp_offsets);
+        }
     }
 }
 
@@ -353,7 +327,7 @@ impl DeblockScratch {
 /// and for boundary-strength reference comparisons across slice boundaries.
 pub fn filter_picture(
     input: &PictureDeblockInput,
-    scratch: &mut DeblockScratch,
+    records: &DeblockRecords,
     frame: &mut VideoFrame,
 ) {
     // disable_deblocking_filter_idc = 1 in every slice leaves every edge of
@@ -361,7 +335,7 @@ pub fn filter_picture(
     if input.slice_deblock.iter().all(|params| params.idc == DeblockingFilterIdc::Off) {
         return;
     }
-    let records = scratch.build_records(input);
+    let records = records.records.as_slice();
     let width = input.pic_width_in_mbs;
     for mb_y in 0..input.pic_height_in_mbs {
         for mb_x in 0..width {
@@ -1073,20 +1047,58 @@ mod tests {
         SliceDeblockParams { idc, alpha_c0_offset_div2: 0, beta_offset_div2: 0 }
     }
 
-    fn build_records(input: &PictureDeblockInput) -> Vec<MbDeblockInfo> {
-        DeblockScratch::default().build_records(input).to_vec()
-    }
-
-    fn make_input<'a>(
-        sps: &'a SequenceParameterSet,
+    /// A decoded picture as the decoder holds it while its slices arrive.
+    struct TestPicture<'a> {
         pps: &'a PicParameterSet,
         macroblocks: &'a [Option<Macroblock>],
         mb_slice_id: &'a [u16],
         slice_deblock: &'a [SliceDeblockParams],
         slice_ref_pocs: &'a [(Vec<i32>, Vec<i32>)],
-    ) -> PictureDeblockInput<'a> {
-        PictureDeblockInput {
-            sps,
+        pic_width_in_mbs: usize,
+        pic_height_in_mbs: usize,
+    }
+
+    impl TestPicture<'_> {
+        fn deblock_input(&self) -> PictureDeblockInput<'_> {
+            PictureDeblockInput {
+                slice_deblock: self.slice_deblock,
+                pic_width_in_mbs: self.pic_width_in_mbs,
+                pic_height_in_mbs: self.pic_height_in_mbs,
+            }
+        }
+    }
+
+    /// Gathers the records of `picture` into `records` as the decoder does:
+    /// macroblocks in raster order, the slice started when it changes.
+    fn gather(picture: &TestPicture, records: &mut DeblockRecords) -> Vec<MbDeblockInfo> {
+        let pic_size = picture.pic_width_in_mbs * picture.pic_height_in_mbs;
+        records.start_picture(pic_size, picture.pps);
+        let mut slice = None;
+        for (mb_addr, mb) in picture.macroblocks.iter().enumerate().take(pic_size) {
+            let Some(mb) = mb else { continue };
+            let slice_id = picture.mb_slice_id[mb_addr];
+            if slice != Some(slice_id) {
+                let (l0, l1) = &picture.slice_ref_pocs[usize::from(slice_id)];
+                records.start_slice(slice_id, l0, l1);
+                slice = Some(slice_id);
+            }
+            records.record(mb_addr, mb);
+        }
+        records.records.clone()
+    }
+
+    fn build_records(picture: &TestPicture) -> Vec<MbDeblockInfo> {
+        gather(picture, &mut DeblockRecords::default())
+    }
+
+    fn make_input<'a>(
+        pps: &'a PicParameterSet,
+        macroblocks: &'a [Option<Macroblock>],
+        mb_slice_id: &'a [u16],
+        slice_deblock: &'a [SliceDeblockParams],
+        slice_ref_pocs: &'a [(Vec<i32>, Vec<i32>)],
+    ) -> TestPicture<'a> {
+        TestPicture {
             pps,
             macroblocks,
             mb_slice_id,
@@ -1100,11 +1112,7 @@ mod tests {
     /// Whether `filter_picture` filters the left (A) or top (B) edge of
     /// macroblock `mb_addr`: the neighbour lookup and `should_filter_edge`,
     /// as `filter_picture` and `filter_macroblock` apply them.
-    fn edge_filtered(
-        input: &PictureDeblockInput,
-        mb_addr: usize,
-        neighbor: MbNeighborName,
-    ) -> bool {
+    fn edge_filtered(input: &TestPicture, mb_addr: usize, neighbor: MbNeighborName) -> bool {
         let records = build_records(input);
         let width = input.pic_width_in_mbs;
         let (left, top) = mb_neighbors(&records, width, mb_addr % width, mb_addr / width);
@@ -1120,14 +1128,12 @@ mod tests {
 
     #[test]
     fn picture_boundary_edges_never_filtered() {
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
         let mb_slice_id = vec![0u16; W * H];
         let slice_deblock = [deblock(DeblockingFilterIdc::On)];
         let slice_ref_pocs = [(vec![], vec![])];
-        let input =
-            make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // MB 0 is at the top-left corner -- both A (left) and B (top) are out of picture.
         assert!(!edge_filtered(&input, 0, MbNeighborName::A));
@@ -1140,14 +1146,12 @@ mod tests {
 
     #[test]
     fn single_slice_idc_on_filters_internal_edges() {
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
         let mb_slice_id = vec![0u16; W * H];
         let slice_deblock = [deblock(DeblockingFilterIdc::On)];
         let slice_ref_pocs = [(vec![], vec![])];
-        let input =
-            make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // MB 5 has both an A (MB 4) and B (MB 1) neighbor inside the picture.
         assert!(edge_filtered(&input, 5, MbNeighborName::A));
@@ -1156,14 +1160,12 @@ mod tests {
 
     #[test]
     fn single_slice_idc_off_filters_nothing() {
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
         let mb_slice_id = vec![0u16; W * H];
         let slice_deblock = [deblock(DeblockingFilterIdc::Off)];
         let slice_ref_pocs = [(vec![], vec![])];
-        let input =
-            make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         assert!(!edge_filtered(&input, 5, MbNeighborName::A));
         assert!(!edge_filtered(&input, 5, MbNeighborName::B));
@@ -1173,14 +1175,12 @@ mod tests {
     fn single_slice_idc_2_behaves_like_idc_on() {
         // OnExceptSliceBounds with one slice has no slice boundaries to skip,
         // so it should filter every internal edge identically to On.
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
         let mb_slice_id = vec![0u16; W * H];
         let slice_deblock = [deblock(DeblockingFilterIdc::OnExceptSliceBounds)];
         let slice_ref_pocs = [(vec![], vec![])];
-        let input =
-            make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         assert!(edge_filtered(&input, 5, MbNeighborName::A));
         assert!(edge_filtered(&input, 5, MbNeighborName::B));
@@ -1189,7 +1189,6 @@ mod tests {
     #[test]
     fn two_slices_idc_on_still_filters_cross_slice_edges() {
         // disable_deblocking_filter_idc=0 (On): cross-slice edges DO filter.
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
         // Top row -> slice 0, bottom row -> slice 1.
@@ -1199,8 +1198,7 @@ mod tests {
             deblock(DeblockingFilterIdc::On),
         ];
         let slice_ref_pocs = [(vec![], vec![]), (vec![], vec![])];
-        let input =
-            make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // MB 5 is in slice 1; its B neighbor is MB 1 (slice 0) -- cross-slice.
         // Still filtered because idc=On disregards slice boundaries.
@@ -1213,7 +1211,6 @@ mod tests {
     fn two_slices_idc_2_suppresses_cross_slice_edges() {
         // disable_deblocking_filter_idc=2: cross-slice edges suppressed,
         // intra-slice edges filtered.
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
         let mb_slice_id = vec![0, 0, 0, 0, 1, 1, 1, 1];
@@ -1222,8 +1219,7 @@ mod tests {
             deblock(DeblockingFilterIdc::OnExceptSliceBounds),
         ];
         let slice_ref_pocs = [(vec![], vec![]), (vec![], vec![])];
-        let input =
-            make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // MB 4: B neighbor is MB 0 (slice 0) -- cross-slice -> suppressed.
         assert!(!edge_filtered(&input, 4, MbNeighborName::B));
@@ -1241,7 +1237,6 @@ mod tests {
         // containing the q-block (lower/right MB). Verify by giving slice 0
         // idc=Off and slice 1 idc=On, then checking edges where the q is in
         // slice 1.
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mbs = dummy_mbs();
         let mb_slice_id = vec![0, 0, 0, 0, 1, 1, 1, 1];
@@ -1250,8 +1245,7 @@ mod tests {
             deblock(DeblockingFilterIdc::On),
         ];
         let slice_ref_pocs = [(vec![], vec![]), (vec![], vec![])];
-        let input =
-            make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         // q = MB 5 (slice 1, idc=On) -> edges filter regardless of p's slice.
         assert!(edge_filtered(&input, 5, MbNeighborName::A));
@@ -1262,14 +1256,13 @@ mod tests {
 
     #[test]
     fn edges_next_to_undecoded_macroblocks_are_not_filtered() {
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         let mut mbs = dummy_mbs();
         mbs[4] = None;
         let mb_slice_id = vec![0, 0, 0, 0, u16::MAX, 0, 0, 0];
         let slice_deblock = [deblock(DeblockingFilterIdc::On)];
         let slice_ref_pocs = [(vec![], vec![])];
-        let input = make_input(&sps, &pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
+        let input = make_input(&pps, &mbs, &mb_slice_id, &slice_deblock, &slice_ref_pocs);
 
         assert!(build_records(&input)[4].is(NOT_DECODED));
         // MB 5's left neighbour was never decoded.
@@ -1282,13 +1275,12 @@ mod tests {
     /// residual and per-slice POC lists for every edge segment. Kept as the
     /// reference that the record-based derivation must match exactly.
     mod reference {
-        use crate::h264::deblocking::{
-            PictureDeblockInput, BS_CODED, BS_INTRA, BS_MOTION, BS_NONE, BS_STRONG,
-        };
+        use super::TestPicture;
+        use crate::h264::deblocking::{BS_CODED, BS_INTRA, BS_MOTION, BS_NONE, BS_STRONG};
         use crate::h264::macroblock::Macroblock;
 
         pub(super) fn compute_bs_arrays(
-            input: &PictureDeblockInput,
+            input: &TestPicture,
             mb: &Macroblock,
             q_slice_id: u16,
             left: Option<(&Macroblock, u16)>,
@@ -1723,7 +1715,7 @@ mod tests {
     /// `input`, side by side or one above the other, against the reference,
     /// fast paths included. Returns those of the second one.
     fn check_bs_arrays(
-        input: &PictureDeblockInput,
+        input: &TestPicture,
         records: &[MbDeblockInfo],
     ) -> ([[u8; 4]; 4], [[u8; 4]; 4]) {
         let [Some(p_mb), Some(q_mb)] = input.macroblocks else { unreachable!("two macroblocks") };
@@ -1750,7 +1742,6 @@ mod tests {
     /// inter blocks, and the bS arrays of the reference `compute_bs_arrays`.
     #[test]
     fn record_bs_matches_reference_get_bs() {
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         // POC 4 appears twice in slice 0's list 0 and in both slices; slice
         // 1 has no list 1, as a P slice.
@@ -1766,8 +1757,7 @@ mod tests {
                 // MB 1 is right of MB 0 when their shared edge is vertical,
                 // below it otherwise.
                 let (width, height) = if vertical_edge { (2, 1) } else { (1, 2) };
-                let input = PictureDeblockInput {
-                    sps: &sps,
+                let input = TestPicture {
                     pps: &pps,
                     macroblocks: &mbs,
                     mb_slice_id: &mb_slice_id,
@@ -1855,15 +1845,20 @@ mod tests {
     }
 
     /// The record of `mb` as a macroblock of slice `slice_id` of a picture
-    /// whose slices have the reference lists `slice_ref_pocs`.
+    /// whose slices have the reference lists `slice_ref_pocs`, the slices
+    /// before it decoded first.
     fn record(
         mb: &Macroblock,
         slice_ref_pocs: &[(Vec<i32>, Vec<i32>)],
         slice_id: u16,
     ) -> MbDeblockInfo {
-        let mut ref_ids = SliceRefIds::new();
-        ref_ids.load(&RefPictureIds::new(slice_ref_pocs), slice_id);
-        MbDeblockInfo::new(mb, slice_id, &ref_ids, [0, 0])
+        let mut records = DeblockRecords::default();
+        records.start_picture(1, &PicParameterSet::default());
+        for (id, (l0, l1)) in (0..=slice_id).zip(slice_ref_pocs) {
+            records.start_slice(id, l0, l1);
+        }
+        records.record(0, mb);
+        records.records[0]
     }
 
     #[test]
@@ -1911,12 +1906,16 @@ mod tests {
     #[test]
     fn record_resolves_reference_indices_to_picture_ids() {
         let slice_ref_pocs = [(vec![7, 3], vec![3, 9]), (vec![9, 7, 7], vec![])];
-        let ids = RefPictureIds::new(&slice_ref_pocs);
-        let (l0_a, l1_a) = ids.lists(0);
-        let (l0_b, l1_b) = ids.lists(1);
         // One id per POC, whichever slice and list it appears in.
-        assert_eq!((l0_a, l1_a), (&[1, 2][..], &[2, 3][..]));
-        assert_eq!((l0_b, l1_b), (&[3, 1, 1][..], &[][..]));
+        let mut records = DeblockRecords::default();
+        records.start_picture(1, &PicParameterSet::default());
+        records.start_slice(0, &slice_ref_pocs[0].0, &slice_ref_pocs[0].1);
+        assert_eq!(
+            (&records.slice.l0[..3], &records.slice.l1[..3]),
+            (&[1, 2, 0][..], &[2, 3, 0][..])
+        );
+        records.start_slice(1, &slice_ref_pocs[1].0, &slice_ref_pocs[1].1);
+        assert_eq!((&records.slice.l0[..4], &records.slice.l1[..1]), (&[3, 1, 1, 0][..], &[0][..]));
 
         let mut motion = MbMotion::default();
         let parts = motion.partitions.as_flattened_mut();
@@ -1948,12 +1947,12 @@ mod tests {
 
     #[test]
     fn slice_ref_ids_clear_the_previous_slice() {
-        let ids = RefPictureIds::new(&[(vec![7, 3, 9], vec![5]), (vec![9], vec![])]);
-        let mut tables = SliceRefIds::new();
-        tables.load(&ids, 0);
+        let mut ids = RefPictureIds::default();
+        let mut tables = SliceRefIds::default();
+        tables.load(&mut ids, 0, &[7, 3, 9], &[5]);
         assert_eq!((&tables.l0[..4], &tables.l1[..2]), (&[1, 2, 3, 0][..], &[4, 0][..]));
         assert!(!tables.l1_empty);
-        tables.load(&ids, 1);
+        tables.load(&mut ids, 1, &[9], &[]);
         assert_eq!((&tables.l0[..4], &tables.l1[..2]), (&[3, 0, 0, 0][..], &[0, 0][..]));
         assert!(tables.l1_empty);
         assert!(tables.l0.iter().chain(&tables.l1).skip(1).all(|&id| id == 0));
@@ -1967,7 +1966,6 @@ mod tests {
             second_chroma_qp_index_offset: 7,
             ..PicParameterSet::default()
         };
-        let sps = SequenceParameterSet::default();
         let mbs = [
             Some(Macroblock::P(PMb {
                 mb_type: PMbType::P_L0_16x16,
@@ -1979,8 +1977,7 @@ mod tests {
             Some(Macroblock::PCM(PcmMb::default())),
             Some(Macroblock::I(IMb { qp: 51, ..IMb::default() })),
         ];
-        let input = PictureDeblockInput {
-            sps: &sps,
+        let input = TestPicture {
             pps: &pps,
             macroblocks: &mbs,
             mb_slice_id: &[0, 0, 1, 1],
@@ -2026,7 +2023,6 @@ mod tests {
 
     #[test]
     fn filter_off_in_every_slice_leaves_the_picture_alone() {
-        let sps = SequenceParameterSet::default();
         let pps = PicParameterSet::default();
         // 2x2 intra macroblocks, the top row in slice 0 and the bottom row
         // in slice 1, with a step of 10 between the left and right columns
@@ -2046,8 +2042,7 @@ mod tests {
                 }
             }
             let before = visible_samples(&frame);
-            let input = PictureDeblockInput {
-                sps: &sps,
+            let picture = TestPicture {
                 pps: &pps,
                 macroblocks: &mbs,
                 mb_slice_id: &[0, 0, 1, 1],
@@ -2056,7 +2051,9 @@ mod tests {
                 pic_width_in_mbs: 2,
                 pic_height_in_mbs: 2,
             };
-            filter_picture(&input, &mut DeblockScratch::default(), &mut frame);
+            let mut records = DeblockRecords::default();
+            gather(&picture, &mut records);
+            filter_picture(&picture.deblock_input(), &records, &mut frame);
             (before, visible_samples(&frame))
         };
 
@@ -2071,8 +2068,7 @@ mod tests {
     }
 
     #[test]
-    fn deblock_scratch_is_reused_without_leftovers() {
-        let sps = SequenceParameterSet::default();
+    fn deblock_records_are_reused_without_leftovers() {
         let pps = PicParameterSet::default();
         let mut rng = Rng(0x5C4A_7C11_0000_0003);
         let pictures = [
@@ -2090,8 +2086,7 @@ mod tests {
         let slice_deblock = [DeblockingFilterIdc::On; 3].map(deblock);
         let inputs: Vec<_> = pictures
             .iter()
-            .map(|(macroblocks, mb_slice_id, slice_ref_pocs)| PictureDeblockInput {
-                sps: &sps,
+            .map(|(macroblocks, mb_slice_id, slice_ref_pocs)| TestPicture {
                 pps: &pps,
                 macroblocks,
                 mb_slice_id,
@@ -2102,9 +2097,9 @@ mod tests {
             })
             .collect();
 
-        let mut scratch = DeblockScratch::default();
+        let mut records = DeblockRecords::default();
         for input in [&inputs[0], &inputs[1], &inputs[0]] {
-            assert_eq!(scratch.build_records(input), build_records(input));
+            assert_eq!(gather(input, &mut records), build_records(input));
         }
     }
 }

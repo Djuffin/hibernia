@@ -5,7 +5,7 @@ use super::residual::scan_4x4;
 use super::slice::DeblockingFilterIdc;
 use super::sps::SequenceParameterSet;
 use super::tables::{MB_HEIGHT, MB_WIDTH};
-use super::{ColorPlane, Point};
+use super::ColorPlane;
 
 // Boundary Strength (bS) values
 const BS_STRONG: u8 = 4;
@@ -335,11 +335,7 @@ pub fn filter_picture(input: &PictureDeblockInput, frame: &mut VideoFrame) {
         for mb_x in 0..width {
             let Some(q) = records.get(mb_y * width + mb_x) else { continue };
             let (left, top) = mb_neighbors(&records, width, mb_x, mb_y);
-            let mb_xy = Point {
-                x: u32::try_from(mb_x * MB_WIDTH).unwrap_or(u32::MAX),
-                y: u32::try_from(mb_y * MB_HEIGHT).unwrap_or(u32::MAX),
-            };
-            filter_macroblock(input, frame, mb_xy, q, left, top);
+            filter_macroblock(input, frame, mb_x, mb_y, q, left, top);
         }
     }
 }
@@ -359,15 +355,16 @@ fn mb_neighbors(
     (left, top)
 }
 
-/// Section 8.7, steps 1-3 -- Filter all edges of a single macroblock.
-/// BS values are precomputed once per MB and reused across luma and chroma
-/// to avoid redundant derivation (Section 8.7.2.1). `left` and `top` are the
-/// neighbours across the macroblock's left and top edges, `None` on the
-/// picture boundary.
+/// Section 8.7, steps 1-3 -- Filter all edges of the macroblock at
+/// (`mb_x`, `mb_y`). BS values are precomputed once per MB and reused across
+/// luma and chroma to avoid redundant derivation (Section 8.7.2.1). `left`
+/// and `top` are the neighbours across the macroblock's left and top edges,
+/// `None` on the picture boundary.
 fn filter_macroblock(
     input: &PictureDeblockInput,
     frame: &mut VideoFrame,
-    mb_xy: Point,
+    mb_x: usize,
+    mb_y: usize,
     q: &MbDeblockInfo,
     left: Option<&MbDeblockInfo>,
     top: Option<&MbDeblockInfo>,
@@ -385,175 +382,88 @@ fn filter_macroblock(
     }
     let alpha_offset = q_params.alpha_c0_offset_div2 * 2;
     let beta_offset = q_params.beta_offset_div2 * 2;
+    // Section 8.7.2.2: the thresholds of an edge between macroblocks whose
+    // QPs are `p_qp` and `q_qp`.
+    let thresholds =
+        |p_qp: u8, q_qp: u8| FilterThresholds::from_qp(p_qp, q_qp, alpha_offset, beta_offset);
 
     // Section 8.7, step 2.c / 2.d -- determine filterLeftMbEdgeFlag / filterTopMbEdgeFlag
     let left = left.filter(|p| should_filter_edge(q_params.idc, q, p));
     let top = top.filter(|p| should_filter_edge(q_params.idc, q, p));
 
-    let transform_8x8 = q.is(TRANSFORM_8X8);
-    let q_qp = q.qp;
-
     let (bs_vert, bs_horz) = compute_bs_arrays(q, left, top);
-
     let has_nonzero_bs = |bs: &[u8; 4]| bs[0] | bs[1] | bs[2] | bs[3] != 0;
 
-    // Section 8.7, step 3.a/3.b -- luma vertical edges
-    if let Some(p) = left {
-        if has_nonzero_bs(&bs_vert[0]) {
-            filter_luma_edge(
-                frame,
-                mb_xy,
-                0,
-                true,
-                &bs_vert[0],
-                p.qp,
-                q_qp,
-                alpha_offset,
-                beta_offset,
-            );
+    // Luma. With the 8x8 transform only internal edge 2 is filtered.
+    {
+        let mut plane = frame.plane_mut(ColorPlane::Y);
+        let stride = plane.cfg.stride;
+        let data = plane.data_origin_mut();
+        let (x, y) = (mb_x * MB_WIDTH, mb_y * MB_HEIGHT);
+        let internal_edges: &[usize] = if q.is(TRANSFORM_8X8) { &[2] } else { &[1, 2, 3] };
+        let internal = thresholds(q.qp, q.qp);
+
+        // Section 8.7, step 3.a/3.b -- luma vertical edges, left to right
+        if let Some(p) = left {
+            if has_nonzero_bs(&bs_vert[0]) {
+                let edge = thresholds(p.qp, q.qp);
+                filter_luma_edge::<true>(data, stride, x, y, &bs_vert[0], &edge);
+            }
         }
-    }
-    if !transform_8x8 {
-        for edge in 1..4 {
+        for &edge in internal_edges {
             if has_nonzero_bs(&bs_vert[edge]) {
-                filter_luma_edge(
-                    frame,
-                    mb_xy,
-                    edge,
-                    true,
-                    &bs_vert[edge],
-                    q_qp,
-                    q_qp,
-                    alpha_offset,
-                    beta_offset,
-                );
+                filter_luma_edge::<true>(data, stride, x + 4 * edge, y, &bs_vert[edge], &internal);
             }
         }
-    } else if has_nonzero_bs(&bs_vert[2]) {
-        filter_luma_edge(
-            frame,
-            mb_xy,
-            2,
-            true,
-            &bs_vert[2],
-            q_qp,
-            q_qp,
-            alpha_offset,
-            beta_offset,
-        );
-    }
 
-    // Section 8.7, step 3.c/3.d -- luma horizontal edges
-    if let Some(p) = top {
-        if has_nonzero_bs(&bs_horz[0]) {
-            filter_luma_edge(
-                frame,
-                mb_xy,
-                0,
-                false,
-                &bs_horz[0],
-                p.qp,
-                q_qp,
-                alpha_offset,
-                beta_offset,
-            );
+        // Section 8.7, step 3.c/3.d -- luma horizontal edges, top to bottom
+        if let Some(p) = top {
+            if has_nonzero_bs(&bs_horz[0]) {
+                let edge = thresholds(p.qp, q.qp);
+                filter_luma_edge::<false>(data, stride, x, y, &bs_horz[0], &edge);
+            }
         }
-    }
-    if !transform_8x8 {
-        for edge in 1..4 {
+        for &edge in internal_edges {
             if has_nonzero_bs(&bs_horz[edge]) {
-                filter_luma_edge(
-                    frame,
-                    mb_xy,
-                    edge,
-                    false,
-                    &bs_horz[edge],
-                    q_qp,
-                    q_qp,
-                    alpha_offset,
-                    beta_offset,
-                );
+                filter_luma_edge::<false>(data, stride, x, y + 4 * edge, &bs_horz[edge], &internal);
             }
         }
-    } else if has_nonzero_bs(&bs_horz[2]) {
-        filter_luma_edge(
-            frame,
-            mb_xy,
-            2,
-            false,
-            &bs_horz[2],
-            q_qp,
-            q_qp,
-            alpha_offset,
-            beta_offset,
-        );
     }
 
-    // Section 8.7, step 3 for chroma (4:2:0)
+    // Section 8.7, step 3 for chroma (4:2:0), each plane on its own.
     // Chroma edge 0 reuses luma edge 0 BS, chroma edge 1 reuses luma edge 2 BS
-    if let Some(p) = left {
-        if has_nonzero_bs(&bs_vert[0]) {
-            filter_chroma_edge(
-                frame,
-                mb_xy,
-                0,
-                true,
-                &bs_vert[0],
-                p.qp_c,
-                q.qp_c,
-                alpha_offset,
-                beta_offset,
-            );
+    for (i, plane) in [ColorPlane::Cb, ColorPlane::Cr].into_iter().enumerate() {
+        let mut plane = frame.plane_mut(plane);
+        let stride = plane.cfg.stride;
+        let data = plane.data_origin_mut();
+        let (x, y) = (mb_x * MB_WIDTH / 2, mb_y * MB_HEIGHT / 2);
+        let internal = thresholds(q.qp_c[i], q.qp_c[i]);
+
+        if let Some(p) = left {
+            if has_nonzero_bs(&bs_vert[0]) {
+                let edge = thresholds(p.qp_c[i], q.qp_c[i]);
+                filter_chroma_edge::<true>(data, stride, x, y, &bs_vert[0], &edge);
+            }
         }
-    }
-    if has_nonzero_bs(&bs_vert[2]) {
-        filter_chroma_edge(
-            frame,
-            mb_xy,
-            1,
-            true,
-            &bs_vert[2],
-            q.qp_c,
-            q.qp_c,
-            alpha_offset,
-            beta_offset,
-        );
-    }
-    if let Some(p) = top {
-        if has_nonzero_bs(&bs_horz[0]) {
-            filter_chroma_edge(
-                frame,
-                mb_xy,
-                0,
-                false,
-                &bs_horz[0],
-                p.qp_c,
-                q.qp_c,
-                alpha_offset,
-                beta_offset,
-            );
+        if has_nonzero_bs(&bs_vert[2]) {
+            filter_chroma_edge::<true>(data, stride, x + 4, y, &bs_vert[2], &internal);
         }
-    }
-    if has_nonzero_bs(&bs_horz[2]) {
-        filter_chroma_edge(
-            frame,
-            mb_xy,
-            1,
-            false,
-            &bs_horz[2],
-            q.qp_c,
-            q.qp_c,
-            alpha_offset,
-            beta_offset,
-        );
+        if let Some(p) = top {
+            if has_nonzero_bs(&bs_horz[0]) {
+                let edge = thresholds(p.qp_c[i], q.qp_c[i]);
+                filter_chroma_edge::<false>(data, stride, x, y, &bs_horz[0], &edge);
+            }
+        }
+        if has_nonzero_bs(&bs_horz[2]) {
+            filter_chroma_edge::<false>(data, stride, x, y + 4, &bs_horz[2], &internal);
+        }
     }
 }
 
 /// Section 8.7, steps 2.c/2.d -- whether the macroblock edge between `q` and
 /// its left or top neighbour `p` is filtered (`filterLeftMbEdgeFlag` /
 /// `filterTopMbEdgeFlag`). `idc` is `disable_deblocking_filter_idc` of q's
-/// slice.
-/// Edges on the picture boundary have no `p` and are never filtered.
+/// slice. Edges on the picture boundary have no `p` and are never filtered.
 fn should_filter_edge(idc: DeblockingFilterIdc, q: &MbDeblockInfo, p: &MbDeblockInfo) -> bool {
     if p.is(NOT_DECODED) {
         return false;
@@ -565,260 +475,287 @@ fn should_filter_edge(idc: DeblockingFilterIdc, q: &MbDeblockInfo, p: &MbDeblock
     }
 }
 
-/// Sections 8.7.1/8.7.2 -- Filtering process for a single luma block edge.
-fn filter_luma_edge(
-    frame: &mut VideoFrame,
-    mb_xy: Point,
-    edge_idx: usize,
-    is_vertical: bool,
+/// Sections 8.7.1/8.7.2 -- Filtering process for a single luma block edge:
+/// the vertical (`VERTICAL`) edge left of column `x` along the 16 rows from
+/// row `y`, or the horizontal edge above row `y` along the 16 columns from
+/// column `x`. `data` is the plane from its visible origin, with rows `stride`
+/// apart; `bs_array` holds the bS of each 4-sample segment.
+fn filter_luma_edge<const VERTICAL: bool>(
+    data: &mut [u8],
+    stride: usize,
+    x: usize,
+    y: usize,
     bs_array: &[u8; 4],
-    p_qp: u8,
-    q_qp: u8,
-    alpha_offset: i32,
-    beta_offset: i32,
+    thresh: &FilterThresholds,
 ) {
-    let mut plane = frame.plane_mut(ColorPlane::Y);
-    let stride = plane.cfg.stride;
-    let data = plane.data_origin_mut();
-
-    let thresh = FilterThresholds::from_qp(p_qp, q_qp, alpha_offset, beta_offset);
-    let alpha = thresh.alpha;
-    let beta = thresh.beta;
-    let index_a = thresh.index_a;
-
     // ALPHA_TABLE[0..=15] and BETA_TABLE[0..=15] are zero (Table 8-16). When
     // either threshold is zero, every Eq 8-460 comparison `.abs() < threshold`
     // is unconditionally false, so no pixel on this edge can be filtered.
-    if alpha == 0 || beta == 0 {
+    if thresh.alpha == 0 || thresh.beta == 0 {
         return;
     }
+    // The bS < 4 filter's tc0 (Table 8-17) for a segment with bS `bs`.
+    let tc0 = |bs: u8| i32::from(TC0_TABLE[usize::from(bs - 1)][thresh.index_a]);
 
-    // edge_step: distance between consecutive samples along the edge
-    // perp_step: distance from q0 toward p0 (perpendicular to the edge)
-    let (edge_step, perp_step, base_idx) = if is_vertical {
-        (stride, 1usize, mb_xy.y as usize * stride + mb_xy.x as usize + edge_idx * 4)
-    } else {
-        (1, stride, (mb_xy.y as usize + edge_idx * 4) * stride + mb_xy.x as usize)
-    };
-
-    // Pre-compute perpendicular step multiples. The 8-sample perpendicular
-    // window for one pixel covers offsets [0..=7*perp_step] -- laid out as
-    // p3, p2, p1, p0, q0, q1, q2, q3 at strides perp_step apart.
-    let s1 = perp_step;
-    let s2 = perp_step * 2;
-    let s3 = perp_step * 3;
-    let s4 = perp_step * 4;
-
-    let mut q0_idx = base_idx;
-
-    // Outer loop walks 4 4-pixel blocks: bs lookup, tc0 derivation, and the
-    // weak/strong dispatch are hoisted out of the per-pixel inner loop.
-    for blk in 0..4 {
-        let bs = bs_array[blk];
-        if bs == BS_NONE {
-            q0_idx += 4 * edge_step;
-            continue;
-        }
-
-        let strong = bs >= BS_STRONG;
-        let tc0 = if !strong {
-            TC0_TABLE[(bs - 1) as usize][index_a] as i32 // Table 8-17
-        } else {
-            0
-        };
-
-        for _ in 0..4 {
-            // One 8-sample perpendicular slice per pixel: the single bounds
-            // check on `win` dominates the constant-stride accesses below, so
-            // LLVM elides per-access checks.
-            let win = &mut data[q0_idx - s4..q0_idx + s3 + 1];
-
-            // Layout within `win`:
-            //   off=0      -> p3        off=s4     -> q0
-            //   off=s1     -> p2        off=s4+s1  -> q1
-            //   off=s2     -> p1        off=s4+s2  -> q2
-            //   off=s3     -> p0        off=s4+s3  -> q3
-            let p0 = win[s3] as i32;
-            let q0 = win[s4] as i32;
-            let p1 = win[s2] as i32;
-            let q1 = win[s4 + s1] as i32;
-
-            // Equation 8-460: filter condition
-            if (p0 - q0).abs() < alpha
-                && (p1 - p0).abs() < beta
-                && (q1 - q0).abs() < beta
-            {
-                let p2 = win[s1] as i32;
-                let q2 = win[s4 + s2] as i32;
-                let ap = (p2 - p0).abs();
-                let aq = (q2 - q0).abs();
-                let ap_lt_beta = ap < beta;
-                let aq_lt_beta = aq < beta;
-
-                if !strong {
-                    // Section 8.7.2.3 -- weak filter (bS < 4)
-                    let tc = tc0 + ap_lt_beta as i32 + aq_lt_beta as i32; // Eq 8-465
-
-                    let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3; // Eq 8-467
-                    let delta_c = delta.clamp(-tc, tc);
-
-                    win[s3] = (p0 + delta_c).clamp(0, 255) as u8; // Eq 8-468: p0'
-                    win[s4] = (q0 - delta_c).clamp(0, 255) as u8; // Eq 8-469: q0'
-
-                    if ap_lt_beta {
-                        // Eq 8-470: p1'
-                        let d = (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1;
-                        win[s2] = (p1 + d.clamp(-tc0, tc0)).clamp(0, 255) as u8;
-                    }
-                    if aq_lt_beta {
-                        // Eq 8-472: q1'
-                        let d = (q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1;
-                        win[s4 + s1] = (q1 + d.clamp(-tc0, tc0)).clamp(0, 255) as u8;
-                    }
-                } else {
-                    // Section 8.7.2.4 -- strong filter (bS == 4)
-                    let small_diff = (p0 - q0).abs() < ((alpha >> 2) + 2); // Eq 8-476
-
-                    // p-side: Equations 8-477..8-479 (strong) or 8-480 (weak fallback)
-                    if ap_lt_beta && small_diff {
-                        let p3 = win[0] as i32;
-                        win[s3] = ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3)
-                            .clamp(0, 255) as u8;
-                        win[s2] = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(0, 255) as u8;
-                        win[s1] = ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3)
-                            .clamp(0, 255) as u8;
-                    } else {
-                        win[s3] = ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8;
-                    }
-
-                    // q-side: Equations 8-484..8-486 (strong) or 8-487 (weak fallback)
-                    if aq_lt_beta && small_diff {
-                        let q3 = win[s4 + s3] as i32;
-                        win[s4] = ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3)
-                            .clamp(0, 255) as u8;
-                        win[s4 + s1] =
-                            ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(0, 255) as u8;
-                        win[s4 + s2] = ((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3)
-                            .clamp(0, 255) as u8;
-                    } else {
-                        win[s4] = ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8;
-                    }
-                }
+    if VERTICAL {
+        // Per row, the samples p3..q3 are the 8 around column `x`.
+        let Some(start) = (y * stride + x).checked_sub(4) else { return };
+        let Some(region) = data.get_mut(start..) else { return };
+        let mut rows = region.chunks_mut(stride);
+        // One 4-row segment per bS: its tc0 and the weak/strong dispatch are
+        // hoisted out of the per-row loop.
+        for &bs in bs_array {
+            if bs == BS_NONE {
+                rows.nth(3);
+                continue;
             }
-
-            q0_idx += edge_step;
+            let strong = bs >= BS_STRONG;
+            let tc0 = if strong { 0 } else { tc0(bs) };
+            for row in rows.by_ref().take(4) {
+                let Some(samples) = row.first_chunk_mut::<8>() else { return };
+                filter_luma_samples(samples, strong, tc0, thresh);
+            }
+        }
+    } else {
+        // Rows p3..q3 of the 16 columns: the samples are a column of them.
+        let Some(start) = (y * stride + x).checked_sub(4 * stride) else { return };
+        let Some(mut rows) = luma_rows(data, start, stride) else { return };
+        for (segment, &bs) in bs_array.iter().enumerate() {
+            if bs == BS_NONE {
+                continue;
+            }
+            let strong = bs >= BS_STRONG;
+            let tc0 = if strong { 0 } else { tc0(bs) };
+            for col in 4 * segment..4 * segment + 4 {
+                filter_luma_samples(&mut Column { rows: &mut rows, col }, strong, tc0, thresh);
+            }
         }
     }
 }
 
-/// Sections 8.7.1/8.7.2 -- Filtering process for a single chroma block edge (4:2:0).
-/// `p_qp_c` and `q_qp_c` are the Cb and Cr QPs of the two macroblocks.
-#[allow(clippy::too_many_arguments)]
-fn filter_chroma_edge(
-    frame: &mut VideoFrame,
-    mb_xy: Point,
-    edge_idx: usize,
-    is_vertical: bool,
+/// Sections 8.7.1/8.7.2 -- Filtering process for a single chroma block edge
+/// (4:2:0): the vertical (`VERTICAL`) edge left of column `x` along the 8
+/// rows from row `y`, or the horizontal edge above row `y` along the 8
+/// columns from column `x`; see `filter_luma_edge`. Each bS of `bs_array`
+/// covers 2 chroma samples (4 luma samples).
+fn filter_chroma_edge<const VERTICAL: bool>(
+    data: &mut [u8],
+    stride: usize,
+    x: usize,
+    y: usize,
     bs_array: &[u8; 4],
-    p_qp_c: [u8; 2],
-    q_qp_c: [u8; 2],
-    alpha_offset: i32,
-    beta_offset: i32,
+    thresh: &FilterThresholds,
 ) {
-    let chroma_shift_x = 1u32; // 4:2:0
-    let chroma_shift_y = 1u32;
+    // See filter_luma_edge: zero threshold makes Eq 8-460 always false.
+    if thresh.alpha == 0 || thresh.beta == 0 {
+        return;
+    }
+    // Section 8.7.2.3 with chromaEdgeFlag = 1.
+    // Equation 8-466: tc = tc0 + 1 for chroma.
+    let tc = |bs: u8| i32::from(TC0_TABLE[usize::from(bs - 1)][thresh.index_a]) + 1;
 
-    // Section 8.7.2.2 -- chroma threshold derivation using QPc from Table 8-15
-    let chroma_thresh =
-        [0, 1].map(|i| FilterThresholds::from_qp(p_qp_c[i], q_qp_c[i], alpha_offset, beta_offset));
-
-    for (pidx, &plane_idx) in [ColorPlane::Cb, ColorPlane::Cr].iter().enumerate() {
-        let alpha = chroma_thresh[pidx].alpha;
-        let beta = chroma_thresh[pidx].beta;
-        let index_a = chroma_thresh[pidx].index_a;
-
-        // See filter_luma_edge: zero threshold makes Eq 8-460 always false.
-        if alpha == 0 || beta == 0 {
-            continue;
-        }
-
-        let mut plane = frame.plane_mut(plane_idx);
-        let stride = plane.cfg.stride;
-        let data = plane.data_origin_mut();
-
-        let (edge_step, perp_step, base_idx) = if is_vertical {
-            let abs_x = (mb_xy.x >> chroma_shift_x) as usize + edge_idx * 4;
-            let abs_y = (mb_xy.y >> chroma_shift_y) as usize;
-            (stride, 1usize, abs_y * stride + abs_x)
-        } else {
-            let abs_x = (mb_xy.x >> chroma_shift_x) as usize;
-            let abs_y = (mb_xy.y >> chroma_shift_y) as usize + edge_idx * 4;
-            (1, stride, abs_y * stride + abs_x)
-        };
-
-        let s1 = perp_step;
-        let s2 = perp_step * 2;
-
-        let mut q0_idx = base_idx;
-
-        // Restructure as 4 2-pixel blocks. Each chroma 4:2:0 edge has 8 samples
-        // and the bs array has 4 entries (one per 2 chroma samples = 4 luma).
-        for blk in 0..4 {
-            let bs = bs_array[blk];
+    if VERTICAL {
+        // Per row, the samples p1, p0, q0, q1 are the 4 around column `x`.
+        let Some(start) = (y * stride + x).checked_sub(2) else { return };
+        let Some(region) = data.get_mut(start..) else { return };
+        let mut rows = region.chunks_mut(stride);
+        for &bs in bs_array {
             if bs == BS_NONE {
-                q0_idx += 2 * edge_step;
+                rows.nth(1);
                 continue;
             }
-
             let strong = bs >= BS_STRONG;
-            // Section 8.7.2.3 with chromaEdgeFlag = 1.
-            // Equation 8-466: tc = tc0 + 1 for chroma.
-            let tc = if !strong {
-                TC0_TABLE[(bs - 1) as usize][index_a] as i32 + 1
-            } else {
-                0
-            };
-
-            for _ in 0..2 {
-                // 4-sample perpendicular window p1..q1 at strides perp_step.
-                // The single slice bound dominates the accesses below.
-                let win = &mut data[q0_idx - s2..q0_idx + s1 + 1];
-                // Layout: win[0]=p1, win[s1]=p0, win[s2]=q0, win[s2+s1]=q1
-                let p0 = win[s1] as i32;
-                let q0 = win[s2] as i32;
-                let p1 = win[0] as i32;
-                let q1 = win[s2 + s1] as i32;
-
-                // Equation 8-460: filter condition
-                if (p0 - q0).abs() < alpha
-                    && (p1 - p0).abs() < beta
-                    && (q1 - q0).abs() < beta
-                {
-                    let (p0_new, q0_new) = if !strong {
-                        // Equation 8-467: delta
-                        let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3;
-                        let delta_c = delta.clamp(-tc, tc);
-                        // Equations 8-468, 8-469: p0', q0'
-                        (
-                            (p0 + delta_c).clamp(0, 255) as u8,
-                            (q0 - delta_c).clamp(0, 255) as u8,
-                        )
-                    } else {
-                        // Section 8.7.2.4 with chromaStyleFilteringFlag = 1.
-                        // Equations 8-480, 8-487: p0', q0'
-                        (
-                            ((2 * p1 + p0 + q1 + 2) >> 2).clamp(0, 255) as u8,
-                            ((2 * q1 + q0 + p1 + 2) >> 2).clamp(0, 255) as u8,
-                        )
-                    };
-
-                    win[s1] = p0_new;
-                    win[s2] = q0_new;
-                }
-
-                q0_idx += edge_step;
+            let tc = if strong { 0 } else { tc(bs) };
+            for row in rows.by_ref().take(2) {
+                let Some(samples) = row.first_chunk_mut::<4>() else { return };
+                filter_chroma_samples(samples, strong, tc, thresh);
             }
         }
+    } else {
+        // Rows p1..q1 of the 8 columns: the samples are a column of them.
+        let Some(start) = (y * stride + x).checked_sub(2 * stride) else { return };
+        let Some(mut rows) = chroma_rows(data, start, stride) else { return };
+        for (segment, &bs) in bs_array.iter().enumerate() {
+            if bs == BS_NONE {
+                continue;
+            }
+            let strong = bs >= BS_STRONG;
+            let tc = if strong { 0 } else { tc(bs) };
+            for col in 2 * segment..2 * segment + 2 {
+                filter_chroma_samples(&mut Column { rows: &mut rows, col }, strong, tc, thresh);
+            }
+        }
+    }
+}
+
+/// The samples of one line across an edge, p side first: p3, p2, p1, p0,
+/// q0, q1, q2, q3 for luma, p1, p0, q0, q1 for chroma. `get` and `set` take
+/// the index of a sample in that order.
+trait EdgeSamples {
+    fn get(&self, k: usize) -> i32;
+    fn set(&mut self, k: usize, value: u8);
+}
+
+/// Across a vertical edge the samples of a line are consecutive in a row.
+impl<const N: usize> EdgeSamples for [u8; N] {
+    #[inline]
+    fn get(&self, k: usize) -> i32 {
+        i32::from(self[k])
+    }
+
+    #[inline]
+    fn set(&mut self, k: usize, value: u8) {
+        self[k] = value;
+    }
+}
+
+/// Across a horizontal edge the samples of a line are a column of the rows
+/// on both sides of the edge.
+struct Column<'r, 'a, const N: usize, const W: usize> {
+    rows: &'r mut [&'a mut [u8; W]; N],
+    col: usize,
+}
+
+impl<const N: usize, const W: usize> EdgeSamples for Column<'_, '_, N, W> {
+    #[inline]
+    fn get(&self, k: usize) -> i32 {
+        i32::from(self.rows[k][self.col])
+    }
+
+    #[inline]
+    fn set(&mut self, k: usize, value: u8) {
+        self.rows[k][self.col] = value;
+    }
+}
+
+/// The 16 samples from `start` of the 8 rows p3..q3 around a horizontal
+/// luma edge, rows `stride` apart; `None` if they are not all in `data`.
+fn luma_rows(data: &mut [u8], start: usize, stride: usize) -> Option<[&mut [u8; 16]; 8]> {
+    let mut rows = data.get_mut(start..)?.chunks_mut(stride);
+    let mut next = || rows.next().and_then(|row| row.first_chunk_mut::<16>());
+    Some([next()?, next()?, next()?, next()?, next()?, next()?, next()?, next()?])
+}
+
+/// The 8 samples from `start` of the 4 rows p1..q1 around a horizontal
+/// chroma edge; see `luma_rows`.
+fn chroma_rows(data: &mut [u8], start: usize, stride: usize) -> Option<[&mut [u8; 8]; 4]> {
+    let mut rows = data.get_mut(start..)?.chunks_mut(stride);
+    let mut next = || rows.next().and_then(|row| row.first_chunk_mut::<8>());
+    Some([next()?, next()?, next()?, next()?])
+}
+
+/// Clip1 of Section 5.7 for 8-bit samples.
+#[inline]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn clip1(value: i32) -> u8 {
+    // In 0..=255 after the clamp.
+    value.clamp(0, 255) as u8
+}
+
+/// Sections 8.7.2.3 / 8.7.2.4 -- filters one line of luma samples across an
+/// edge whose segment has bS < 4 with `tc0` (Table 8-17), or bS = 4
+/// (`strong`).
+#[inline]
+fn filter_luma_samples(
+    samples: &mut impl EdgeSamples,
+    strong: bool,
+    tc0: i32,
+    thresh: &FilterThresholds,
+) {
+    let (alpha, beta) = (thresh.alpha, thresh.beta);
+    let p0 = samples.get(3);
+    let q0 = samples.get(4);
+    let p1 = samples.get(2);
+    let q1 = samples.get(5);
+
+    // Equation 8-460: filter condition
+    if (p0 - q0).abs() < alpha && (p1 - p0).abs() < beta && (q1 - q0).abs() < beta {
+        let p2 = samples.get(1);
+        let q2 = samples.get(6);
+        let ap = (p2 - p0).abs();
+        let aq = (q2 - q0).abs();
+        let ap_lt_beta = ap < beta;
+        let aq_lt_beta = aq < beta;
+
+        if strong {
+            // Section 8.7.2.4 -- strong filter (bS == 4)
+            let small_diff = (p0 - q0).abs() < ((alpha >> 2) + 2); // Eq 8-476
+
+            // p-side: Equations 8-477..8-479 (strong) or 8-480 (weak fallback)
+            if ap_lt_beta && small_diff {
+                let p3 = samples.get(0);
+                samples.set(3, clip1((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3));
+                samples.set(2, clip1((p2 + p1 + p0 + q0 + 2) >> 2));
+                samples.set(1, clip1((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3));
+            } else {
+                samples.set(3, clip1((2 * p1 + p0 + q1 + 2) >> 2));
+            }
+
+            // q-side: Equations 8-484..8-486 (strong) or 8-487 (weak fallback)
+            if aq_lt_beta && small_diff {
+                let q3 = samples.get(7);
+                samples.set(4, clip1((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3));
+                samples.set(5, clip1((p0 + q0 + q1 + q2 + 2) >> 2));
+                samples.set(6, clip1((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3));
+            } else {
+                samples.set(4, clip1((2 * q1 + q0 + p1 + 2) >> 2));
+            }
+        } else {
+            // Section 8.7.2.3 -- weak filter (bS < 4)
+            let tc = tc0 + i32::from(ap_lt_beta) + i32::from(aq_lt_beta); // Eq 8-465
+
+            let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3; // Eq 8-467
+            let delta_c = delta.clamp(-tc, tc);
+
+            samples.set(3, clip1(p0 + delta_c)); // Eq 8-468: p0'
+            samples.set(4, clip1(q0 - delta_c)); // Eq 8-469: q0'
+
+            if ap_lt_beta {
+                // Eq 8-470: p1'
+                let d = (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1;
+                samples.set(2, clip1(p1 + d.clamp(-tc0, tc0)));
+            }
+            if aq_lt_beta {
+                // Eq 8-472: q1'
+                let d = (q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1;
+                samples.set(5, clip1(q1 + d.clamp(-tc0, tc0)));
+            }
+        }
+    }
+}
+
+/// Sections 8.7.2.3 / 8.7.2.4 with chromaEdgeFlag = 1 -- filters one line of
+/// chroma samples across an edge whose segment has bS < 4 with `tc`
+/// (Eq. 8-466), or bS = 4 (`strong`).
+#[inline]
+fn filter_chroma_samples(
+    samples: &mut impl EdgeSamples,
+    strong: bool,
+    tc: i32,
+    thresh: &FilterThresholds,
+) {
+    let (alpha, beta) = (thresh.alpha, thresh.beta);
+    let p1 = samples.get(0);
+    let p0 = samples.get(1);
+    let q0 = samples.get(2);
+    let q1 = samples.get(3);
+
+    // Equation 8-460: filter condition
+    if (p0 - q0).abs() < alpha && (p1 - p0).abs() < beta && (q1 - q0).abs() < beta {
+        let (p0_new, q0_new) = if strong {
+            // Section 8.7.2.4 with chromaStyleFilteringFlag = 1.
+            // Equations 8-480, 8-487: p0', q0'
+            (clip1((2 * p1 + p0 + q1 + 2) >> 2), clip1((2 * q1 + q0 + p1 + 2) >> 2))
+        } else {
+            // Equation 8-467: delta
+            let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3;
+            let delta_c = delta.clamp(-tc, tc);
+            // Equations 8-468, 8-469: p0', q0'
+            (clip1(p0 + delta_c), clip1(q0 - delta_c))
+        };
+
+        samples.set(1, p0_new);
+        samples.set(2, q0_new);
     }
 }
 
@@ -1746,6 +1683,31 @@ mod tests {
         }
     }
 
+    /// Checks the whole-macroblock bS arrays of the two macroblocks of
+    /// `input`, side by side or one above the other, against the reference,
+    /// fast paths included. Returns those of the second one.
+    fn check_bs_arrays(
+        input: &PictureDeblockInput,
+        records: &[MbDeblockInfo],
+    ) -> ([[u8; 4]; 4], [[u8; 4]; 4]) {
+        let [Some(p_mb), Some(q_mb)] = input.macroblocks else { unreachable!("two macroblocks") };
+        let (width, height) = (input.pic_width_in_mbs, input.pic_height_in_mbs);
+        let neighbour = Some((p_mb, input.mb_slice_id[0]));
+        let (left, top) = if width == 2 { (neighbour, None) } else { (None, neighbour) };
+        let q_slice_id = input.mb_slice_id[1];
+        let expected =
+            reference::compute_bs_arrays(input, q_mb, q_slice_id, left, top, transform_8x8(q_mb));
+        let (left, top) = mb_neighbors(records, width, width - 1, height - 1);
+        let actual = compute_bs_arrays(&records[1], left, top);
+        assert_eq!(actual, expected, "{p_mb:?} | {q_mb:?}");
+
+        let p_slice_id = input.mb_slice_id[0];
+        let expected =
+            reference::compute_bs_arrays(input, p_mb, p_slice_id, None, None, transform_8x8(p_mb));
+        assert_eq!(compute_bs_arrays(&records[0], None, None), expected, "{p_mb:?}");
+        actual
+    }
+
     /// Two macroblocks, side by side or one above the other, with random
     /// types, residuals, motion and slices: the record-based derivation must
     /// give the bS of the reference `get_bs` on every edge segment between
@@ -1842,31 +1804,10 @@ mod tests {
 
                 // Whole-macroblock arrays, including the intra and other fast
                 // paths.
-                let neighbour = Some((p_mb, mb_slice_id[0]));
-                let (left, top) = if vertical_edge { (neighbour, None) } else { (None, neighbour) };
-                let expected = reference::compute_bs_arrays(
-                    &input,
-                    q_mb,
-                    mb_slice_id[1],
-                    left,
-                    top,
-                    transform_8x8(q_mb),
-                );
-                let (left, top) = mb_neighbors(&records, width, width - 1, height - 1);
-                let actual = compute_bs_arrays(&records[1], left, top);
-                assert_eq!(actual, expected, "{p_mb:?} | {q_mb:?}");
-                for bs in actual.0.as_flattened().iter().chain(actual.1.as_flattened()) {
+                let (bs_vert, bs_horz) = check_bs_arrays(&input, &records);
+                for bs in bs_vert.as_flattened().iter().chain(bs_horz.as_flattened()) {
                     by_bs[usize::from(*bs)] += 1;
                 }
-                let expected = reference::compute_bs_arrays(
-                    &input,
-                    p_mb,
-                    mb_slice_id[0],
-                    None,
-                    None,
-                    transform_8x8(p_mb),
-                );
-                assert_eq!(compute_bs_arrays(&records[0], None, None), expected, "{p_mb:?}");
             }
         }
         // Every outcome is exercised, each many times.

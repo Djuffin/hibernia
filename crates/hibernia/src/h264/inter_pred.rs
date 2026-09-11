@@ -444,132 +444,152 @@ pub fn interpolate_chroma(
 
     let plane_width = ref_plane.cfg.width as i32;
     let plane_height = ref_plane.cfg.height as i32;
-    if x_int >= 0
-        && x_int + (width as i32) < plane_width
-        && y_int >= 0
-        && y_int + (height as i32) < plane_height
+    // Eq. 8-270 gives the sample right of (below) each block sample weight 0
+    // when the horizontal (vertical) fraction is 0, and the fast path then
+    // doesn't read it; so that column (row) only has to be inside the picture
+    // when its fraction is non-zero.
+    let reach_x = i32::from(width) + i32::from(x_frac != 0);
+    let reach_y = i32::from(height) + i32::from(y_frac != 0);
+    if x_int >= 0 && x_int + reach_x <= plane_width && y_int >= 0 && y_int + reach_y <= plane_height
     {
         let stride = ref_plane.cfg.stride;
-        let data = ref_plane.data_origin();
         let base = (y_int as usize) * stride + (x_int as usize);
-        // Worst case is the (_, _) bilinear arm, which reads up through row
-        // (y_int + height) at column (x_int + width) inclusive -- slice end
-        // = base + height*stride + width + 1.
-        assert!(base + (height as usize) * stride + (width as usize) + 1 <= data.len());
-        if height > 0 {
-            assert!(
-                (height as usize - 1) * dst_stride + (width as usize) <= dst.len()
-            );
-        }
-
-        macro_rules! interpolate_chroma_impl {
-            ($w:expr) => {
-                match (x_frac, y_frac) {
-                    (0, 0) => {
-                        for y in 0..height as usize {
-                            let off = base + y * stride;
-                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-                            d.copy_from_slice(&data[off..off + $w]);
-                        }
-                    }
-                    (_, 0) => {
-                        let w00 = 8 - x_frac;
-                        let w10 = x_frac;
-                        for y in 0..height as usize {
-                            let off = base + y * stride;
-                            let src = &data[off..off + $w + 1];
-                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-                            for x in 0..$w {
-                                let val_a = src[x] as i16;
-                                let val_b = src[x + 1] as i16;
-                                d[x] = ((w00 * val_a + w10 * val_b + 4) >> 3) as u8;
-                            }
-                        }
-                    }
-                    (0, _) => {
-                        let w00 = 8 - y_frac;
-                        let w01 = y_frac;
-                        for y in 0..height as usize {
-                            let off0 = base + y * stride;
-                            let off1 = off0 + stride;
-                            let src0 = &data[off0..off0 + $w];
-                            let src1 = &data[off1..off1 + $w];
-                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-                            for x in 0..$w {
-                                let val_a = src0[x] as i16;
-                                let val_c = src1[x] as i16;
-                                d[x] = ((w00 * val_a + w01 * val_c + 4) >> 3) as u8;
-                            }
-                        }
-                    }
-                    _ => {
-                        // Equation 8-270: Bilinear interpolation
-                        // The weights (8-xFrac) and xFrac are used for linear interpolation.
-                        let w00 = (8 - x_frac) * (8 - y_frac);
-                        let w10 = x_frac * (8 - y_frac);
-                        let w01 = (8 - x_frac) * y_frac;
-                        let w11 = x_frac * y_frac;
-
-                        for y in 0..height as usize {
-                            let off0 = base + y * stride;
-                            let off1 = off0 + stride;
-                            let src0 = &data[off0..off0 + $w + 1];
-                            let src1 = &data[off1..off1 + $w + 1];
-                            let d = &mut dst[y * dst_stride..y * dst_stride + $w];
-
-                            for x in 0..$w {
-                                let val_a = src0[x] as i16;
-                                let val_b = src0[x + 1] as i16;
-                                let val_c = src1[x] as i16;
-                                let val_d = src1[x + 1] as i16;
-
-                                // Equation 8-270:
-                                // predPartLXC[x, y] = ( (8-xFrac)*(8-yFrac)*A + xFrac*(8-yFrac)*B + ... + 32 ) >> 6
-                                let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
-                                d[x] = prediction as u8;
-                            }
-                        }
-                    }
-                }
-            };
-        }
-
-        match width {
-            2 => interpolate_chroma_impl!(2),
-            4 => interpolate_chroma_impl!(4),
-            8 => interpolate_chroma_impl!(8),
-            _ => interpolate_chroma_impl!(width as usize),
+        let src = &ref_plane.data_origin()[base..];
+        let (xf, yf) = (x_frac.unsigned_abs(), y_frac.unsigned_abs());
+        // A compile-time block size lets LLVM unroll and vectorize each case.
+        match (width, height) {
+            (8, 8) => chroma_block::<8, 8>(src, stride, xf, yf, dst, dst_stride),
+            (8, 6) => chroma_block::<8, 6>(src, stride, xf, yf, dst, dst_stride),
+            (8, 4) => chroma_block::<8, 4>(src, stride, xf, yf, dst, dst_stride),
+            (8, 2) => chroma_block::<8, 2>(src, stride, xf, yf, dst, dst_stride),
+            (6, 8) => chroma_block::<6, 8>(src, stride, xf, yf, dst, dst_stride),
+            (6, 6) => chroma_block::<6, 6>(src, stride, xf, yf, dst, dst_stride),
+            (6, 4) => chroma_block::<6, 4>(src, stride, xf, yf, dst, dst_stride),
+            (6, 2) => chroma_block::<6, 2>(src, stride, xf, yf, dst, dst_stride),
+            (4, 8) => chroma_block::<4, 8>(src, stride, xf, yf, dst, dst_stride),
+            (4, 6) => chroma_block::<4, 6>(src, stride, xf, yf, dst, dst_stride),
+            (4, 4) => chroma_block::<4, 4>(src, stride, xf, yf, dst, dst_stride),
+            (4, 2) => chroma_block::<4, 2>(src, stride, xf, yf, dst, dst_stride),
+            (2, 8) => chroma_block::<2, 8>(src, stride, xf, yf, dst, dst_stride),
+            (2, 6) => chroma_block::<2, 6>(src, stride, xf, yf, dst, dst_stride),
+            (2, 4) => chroma_block::<2, 4>(src, stride, xf, yf, dst, dst_stride),
+            (2, 2) => chroma_block::<2, 2>(src, stride, xf, yf, dst, dst_stride),
+            _ => interpolate_chroma_clamped(
+                ref_plane, x_int, y_int, x_frac, y_frac, width, height, dst, dst_stride,
+            ),
         }
     } else {
-        // Handle boundary conditions by clamping sample coordinates
-        let w00 = (8 - x_frac) * (8 - y_frac);
-        let w10 = x_frac * (8 - y_frac);
-        let w01 = (8 - x_frac) * y_frac;
-        let w11 = x_frac * y_frac;
+        interpolate_chroma_clamped(
+            ref_plane, x_int, y_int, x_frac, y_frac, width, height, dst, dst_stride,
+        );
+    }
+}
 
-        for y in 0..height as usize {
-            let cy = (y_int + y as i32).clamp(0, plane_height - 1);
-            let cy1 = (y_int + y as i32 + 1).clamp(0, plane_height - 1);
-            let row = ref_plane.row(cy as isize);
-            let row1 = ref_plane.row(cy1 as isize);
-
-            let cx_start = x_int.clamp(0, plane_width - 1);
-            let mut val_a = row[cx_start as usize] as i16;
-            let mut val_c = row1[cx_start as usize] as i16;
-
-            for x in 0..width as usize {
-                let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
-
-                let val_b = row[cx1 as usize] as i16;
-                let val_d = row1[cx1 as usize] as i16;
-
-                let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
-
-                dst[y * dst_stride + x] = prediction as u8;
-
-                val_a = val_b;
-                val_c = val_d;
+/// Section 8.4.2.2.2, Eq. 8-270: bilinear interpolation of a `W`x`H` chroma
+/// block whose samples, and the neighbours that its non-zero fractions
+/// weight, all lie inside the reference picture. `src` starts at the block's
+/// top-left integer sample; `x_frac` and `y_frac` are in eighths.
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn chroma_block<const W: usize, const H: usize>(
+    src: &[u8],
+    stride: usize,
+    x_frac: u16,
+    y_frac: u16,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
+    match (x_frac, y_frac) {
+        (0, 0) => {
+            for y in 0..H {
+                dst[y * dst_stride..][..W].copy_from_slice(&src[y * stride..][..W]);
             }
+        }
+        (_, 0) => {
+            let (wa, wb) = (8 - x_frac, x_frac);
+            for y in 0..H {
+                let s = &src[y * stride..][..=W];
+                for (x, d) in dst[y * dst_stride..][..W].iter_mut().enumerate() {
+                    *d = low_byte((wa * u16::from(s[x]) + wb * u16::from(s[x + 1]) + 4) >> 3);
+                }
+            }
+        }
+        (0, _) => {
+            let (wa, wc) = (8 - y_frac, y_frac);
+            for y in 0..H {
+                let (s0, s1) = (&src[y * stride..][..W], &src[(y + 1) * stride..][..W]);
+                for (x, d) in dst[y * dst_stride..][..W].iter_mut().enumerate() {
+                    *d = low_byte((wa * u16::from(s0[x]) + wc * u16::from(s1[x]) + 4) >> 3);
+                }
+            }
+        }
+        _ => {
+            let (xa, xb, ya, yb) = (8 - x_frac, x_frac, 8 - y_frac, y_frac);
+            let (w00, w10, w01, w11) = (xa * ya, xb * ya, xa * yb, xb * yb);
+            for y in 0..H {
+                let (s0, s1) = (&src[y * stride..][..=W], &src[(y + 1) * stride..][..=W]);
+                for (x, d) in dst[y * dst_stride..][..W].iter_mut().enumerate() {
+                    let top = w00 * u16::from(s0[x]) + w10 * u16::from(s0[x + 1]);
+                    let bottom = w01 * u16::from(s1[x]) + w11 * u16::from(s1[x + 1]);
+                    *d = low_byte((top + bottom + 32) >> 6);
+                }
+            }
+        }
+    }
+}
+
+/// A weighted average of 8-bit samples, which always fits in 8 bits.
+#[inline(always)]
+#[allow(clippy::inline_always)]
+fn low_byte(value: u16) -> u8 {
+    u8::try_from(value).unwrap_or(u8::MAX)
+}
+
+/// Section 8.4.2.2.2: chroma interpolation for blocks that reach outside the
+/// reference picture. Every sample coordinate is clamped into the picture
+/// before Eq. 8-270 is applied.
+#[allow(clippy::too_many_arguments)]
+fn interpolate_chroma_clamped(
+    ref_plane: Plane<'_>,
+    x_int: i32,
+    y_int: i32,
+    x_frac: i16,
+    y_frac: i16,
+    width: u8,
+    height: u8,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
+    let plane_width = i32::try_from(ref_plane.cfg.width).unwrap_or(i32::MAX);
+    let plane_height = i32::try_from(ref_plane.cfg.height).unwrap_or(i32::MAX);
+    // Handle boundary conditions by clamping sample coordinates
+    let w00 = (8 - x_frac) * (8 - y_frac);
+    let w10 = x_frac * (8 - y_frac);
+    let w01 = (8 - x_frac) * y_frac;
+    let w11 = x_frac * y_frac;
+
+    for y in 0..height as usize {
+        let cy = (y_int + y as i32).clamp(0, plane_height - 1);
+        let cy1 = (y_int + y as i32 + 1).clamp(0, plane_height - 1);
+        let row = ref_plane.row(cy as isize);
+        let row1 = ref_plane.row(cy1 as isize);
+
+        let cx_start = x_int.clamp(0, plane_width - 1);
+        let mut val_a = row[cx_start as usize] as i16;
+        let mut val_c = row1[cx_start as usize] as i16;
+
+        for x in 0..width as usize {
+            let cx1 = (x_int + x as i32 + 1).clamp(0, plane_width - 1);
+
+            let val_b = row[cx1 as usize] as i16;
+            let val_d = row1[cx1 as usize] as i16;
+
+            let prediction = (w00 * val_a + w10 * val_b + w01 * val_c + w11 * val_d + 32) >> 6;
+
+            dst[y * dst_stride + x] = prediction as u8;
+
+            val_a = val_b;
+            val_c = val_d;
         }
     }
 }
@@ -1724,6 +1744,58 @@ mod tests {
                 let want =
                     if inside { weighted_uni_pred(was, weight, offset, log_wd) } else { was };
                 assert_eq!(got, want, "sample ({row}, {col}), weight {weight}, log_wd {log_wd}");
+            }
+        }
+    }
+
+    /// `interpolate_chroma` against the clamped reference, for one block.
+    fn check_chroma_block(
+        buf: &[u8],
+        cfg: PlaneConfig,
+        (w, h): (u8, u8),
+        (x_int, y_int): (i32, i32),
+        (x_frac, y_frac): (i16, i16),
+    ) {
+        let mv = MotionVector {
+            x: i16::try_from(x_int * 8).expect("fits") + x_frac,
+            y: i16::try_from(y_int * 8).expect("fits") + y_frac,
+        };
+        let (mut fast, mut clamped) = ([0u8; 64], [0u8; 64]);
+        interpolate_chroma(Plane { data: buf, cfg }, 0, 0, 0, 0, w, h, mv, &mut fast, 8);
+        let plane = Plane { data: buf, cfg };
+        interpolate_chroma_clamped(plane, x_int, y_int, x_frac, y_frac, w, h, &mut clamped, 8);
+        assert_eq!(fast, clamped, "{w}x{h} at ({x_int}, {y_int}), fraction ({x_frac}, {y_frac})");
+    }
+
+    #[test]
+    fn test_chroma_fast_path_matches_clamped() {
+        // Every block size and fraction, at positions inside, on and beyond
+        // each edge of a 24x16 plane: wherever interpolate_chroma takes its
+        // fast path, it must match the clamped reference exactly.
+        let cfg = test_plane_cfg(24, 16);
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let buf: Vec<u8> = (0..cfg.total_bytes())
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state.to_be_bytes()[0]
+            })
+            .collect();
+        let positions = |len: i32, size: u8| {
+            let size = i32::from(size);
+            [-3, -1, 0, 1, 5, len - size - 1, len - size, len - size + 1, len - 1]
+        };
+        for (w, h) in [2u8, 4, 6, 8].iter().flat_map(|&w| [2u8, 4, 6, 8].map(move |h| (w, h))) {
+            for x_int in positions(24, w) {
+                for y_int in positions(16, h) {
+                    for x_frac in 0..8 {
+                        for y_frac in 0..8 {
+                            let (int, frac) = ((x_int, y_int), (x_frac, y_frac));
+                            check_chroma_block(&buf, cfg, (w, h), int, frac);
+                        }
+                    }
+                }
             }
         }
     }

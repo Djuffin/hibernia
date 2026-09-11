@@ -52,6 +52,11 @@ pub trait FrameBuffer: Send + Sync {
     /// Sized fat pointer to the `plane`'s allocation, sized and
     /// aligned per the matching `PlaneAllocation` the decoder
     /// requested. `None` for planes not present in the request.
+    ///
+    /// Must return the same pointer on every call for as long as the
+    /// `FrameBuffer` lives, and the memory must stay valid until the
+    /// `FrameBuffer` is dropped: the decoder calls this once per plane
+    /// right after `VideoFrameAllocator::alloc_frame` and keeps the pointer.
     fn plane_ptr(&self, plane: VideoPlane) -> Option<NonNull<[u8]>>;
 }
 

@@ -143,24 +143,10 @@ fn rbsp_trailing_bits(input: &mut BitReader) -> ParseResult<()> {
     Ok(())
 }
 
-// Section 7.2
+// Section 7.2. O(1): the reader locates the last set bit (the
+// rbsp_stop_one_bit) once, when it is created.
 pub(super) fn more_rbsp_data(input: &mut BitReader) -> bool {
-    let mut tmp_reader = input.clone();
-    if tmp_reader.remaining() == 0 {
-        return false;
-    }
-
-    if rbsp_trailing_bits(&mut tmp_reader).is_err() {
-        return true;
-    }
-
-    loop {
-        match tmp_reader.u(8) {
-            Ok(value) if value > 0 => return true,
-            Ok(_) => {}
-            Err(_) => return false,
-        }
-    }
+    input.more_rbsp_data()
 }
 
 // Section E.1.2 hrd_parameters() -- read and discard. The decoder doesn't model

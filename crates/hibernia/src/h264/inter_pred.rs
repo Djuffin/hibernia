@@ -2,7 +2,7 @@ use crate::api::DecoderError;
 
 use super::decoder::VideoFrame;
 use super::dpb::DpbPicture;
-use super::macroblock::{self, BMb, MbPredictionMode, MotionVector, PMb, PartitionInfo};
+use super::macroblock::{self, BMb, MbPredictionMode, MotionVector, PMb, PMbType, PartitionInfo};
 use super::plane::Plane;
 use super::residual::{DequantTables, Residual};
 use super::slice::{Slice, SliceType};
@@ -788,7 +788,7 @@ pub(crate) fn reconstruct_p_macroblock(
     frame: &mut VideoFrame,
     buffer: &mut InterpolationBuffer,
 ) -> Result<(), DecoderError> {
-    let rects = PredRects::for_p(&mb.motion);
+    let rects = PredRects::for_p(mb);
     let residual = mb.residual.as_deref();
     reconstruct_inter_macroblock(slice, refs, &rects, residual, mb_loc, qp, frame, buffer)
 }
@@ -1284,9 +1284,43 @@ struct PredRects {
 }
 
 impl PredRects {
-    /// The rectangles of a P macroblock, all predicted from L0.
-    fn for_p(motion: &macroblock::MbMotion) -> Self {
-        // Merging on the small (ref_idx_l0, mv_l0) key keeps the scan cheap.
+    /// The rectangles of a P macroblock, all predicted from L0. Partitions
+    /// other than 8x8 come straight from `mb_type` (Table 7-13), whose cells
+    /// the parser fills with one `PartitionInfo` each. The sub-macroblock
+    /// types of `P_8x8` aren't kept, so those macroblocks scan the grid.
+    fn for_p(mb: &PMb) -> Self {
+        let cells = &mb.motion.partitions;
+        let part = |grid_y: u8, grid_x: u8, grid_h: u8, grid_w: u8| PartitionRect {
+            grid_y,
+            grid_x,
+            grid_h,
+            grid_w,
+            key: PredKey::p(&cells[usize::from(grid_y)][usize::from(grid_x)]),
+        };
+        let mut rects = [PartitionRect::default(); 16];
+        let len = match mb.mb_type {
+            PMbType::P_Skip | PMbType::P_L0_16x16 => {
+                rects[0] = part(0, 0, 4, 4);
+                1
+            }
+            PMbType::P_L0_L0_16x8 => {
+                rects[0] = part(0, 0, 2, 4);
+                rects[1] = part(2, 0, 2, 4);
+                2
+            }
+            PMbType::P_L0_L0_8x16 => {
+                rects[0] = part(0, 0, 4, 2);
+                rects[1] = part(0, 2, 4, 2);
+                2
+            }
+            PMbType::P_8x8 | PMbType::P_8x8ref0 => return Self::scan_p(&mb.motion),
+        };
+        Self { rects, len }
+    }
+
+    /// The rectangles of a P macroblock from a scan of its 4x4 motion grid.
+    /// Merging on the small `(ref_idx_l0, mv_l0)` key keeps the scan cheap.
+    fn scan_p(motion: &macroblock::MbMotion) -> Self {
         let mut rects = [PartitionRect::default(); 16];
         let merge_key = |p: &PartitionInfo| (p.ref_idx_l0, p.mv_l0);
         let len = collect_pred_rects(&motion.partitions, merge_key, PredKey::p, &mut rects);
@@ -1559,12 +1593,19 @@ mod tests {
         }
     }
 
+    /// `PredRects::for_p` of a P macroblock with the given type and motion.
+    fn p_rects(mb_type: PMbType, motion: macroblock::MbMotion) -> Vec<(u8, u8, u8, u8, PredKey)> {
+        rect_list(&PredRects::for_p(&PMb { mb_type, motion, ..Default::default() }))
+    }
+
     #[test]
     fn test_pred_rects_p_16x16_is_one_rect() {
         let mv = MotionVector { x: 3, y: -2 };
         let motion =
             uniform_motion(PartitionInfo { ref_idx_l0: 1, mv_l0: mv, ..Default::default() });
-        assert_eq!(rect_list(&PredRects::for_p(&motion)), vec![(0, 0, 4, 4, l0_key(1, mv))]);
+        for mb_type in [PMbType::P_Skip, PMbType::P_L0_16x16] {
+            assert_eq!(p_rects(mb_type, motion.clone()), vec![(0, 0, 4, 4, l0_key(1, mv))]);
+        }
     }
 
     #[test]
@@ -1579,7 +1620,7 @@ mod tests {
             }
         }
         assert_eq!(
-            rect_list(&PredRects::for_p(&motion)),
+            p_rects(PMbType::P_L0_L0_16x8, motion),
             vec![(0, 0, 2, 4, l0_key(0, top_mv)), (2, 0, 2, 4, l0_key(0, bottom_mv))]
         );
 
@@ -1593,7 +1634,7 @@ mod tests {
         }
         let mv = MotionVector::default();
         assert_eq!(
-            rect_list(&PredRects::for_p(&motion)),
+            p_rects(PMbType::P_8x8, motion),
             vec![
                 (0, 0, 2, 2, l0_key(0, mv)),
                 (0, 2, 2, 2, l0_key(1, mv)),
@@ -1611,7 +1652,7 @@ mod tests {
         motion.partitions[1][2].ref_idx_l1 = 7;
         motion.partitions[3][0].mvd_l0 = MotionVector { x: 5, y: 5 };
         let mv = MotionVector::default();
-        assert_eq!(rect_list(&PredRects::for_p(&motion)), vec![(0, 0, 4, 4, l0_key(2, mv))]);
+        assert_eq!(p_rects(PMbType::P_8x8, motion), vec![(0, 0, 4, 4, l0_key(2, mv))]);
     }
 
     #[test]
@@ -1665,12 +1706,35 @@ mod tests {
         motion.partitions[3][3].ref_idx_l0 = 1;
         let mv = MotionVector::default();
         assert_eq!(
-            rect_list(&PredRects::for_p(&motion)),
+            p_rects(PMbType::P_8x8, motion),
             vec![
                 (0, 0, 3, 4, l0_key(0, mv)),
                 (3, 0, 1, 3, l0_key(0, mv)),
                 (3, 3, 1, 1, l0_key(1, mv))
             ]
+        );
+    }
+
+    #[test]
+    fn test_pred_rects_p_from_mb_type() {
+        // 8x16: left and right halves with different motion.
+        let (left, right) = (MotionVector { x: 1, y: 2 }, MotionVector { x: -3, y: 0 });
+        let mut motion = uniform_motion(PartitionInfo { mv_l0: left, ..Default::default() });
+        for row in &mut motion.partitions {
+            row[2..].fill(PartitionInfo { mv_l0: right, ..Default::default() });
+        }
+        assert_eq!(
+            p_rects(PMbType::P_L0_L0_8x16, motion),
+            vec![(0, 0, 4, 2, l0_key(0, left)), (0, 2, 4, 2, l0_key(0, right))]
+        );
+
+        // The partitions come from mb_type, so two 16x8 halves with the same
+        // motion stay two rectangles, where the grid scan would merge them.
+        // Either way the prediction is the same.
+        let motion = uniform_motion(PartitionInfo { mv_l0: left, ..Default::default() });
+        assert_eq!(
+            p_rects(PMbType::P_L0_L0_16x8, motion),
+            vec![(0, 0, 2, 4, l0_key(0, left)), (2, 0, 2, 4, l0_key(0, left))]
         );
     }
 

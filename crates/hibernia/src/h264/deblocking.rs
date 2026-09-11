@@ -224,22 +224,32 @@ struct RefPictureIds {
 }
 
 impl RefPictureIds {
+    #[cfg(test)]
     fn new(slice_ref_pocs: &[(Vec<i32>, Vec<i32>)]) -> Self {
         let mut table = RefPictureIds::default();
-        for (l0, l1) in slice_ref_pocs {
-            let l0_start = table.ids.len();
-            for &poc in l0 {
-                let id = table.id_of(poc);
-                table.ids.push(id);
-            }
-            let l1_start = table.ids.len();
-            for &poc in l1 {
-                let id = table.id_of(poc);
-                table.ids.push(id);
-            }
-            table.slices.push([l0_start, l1_start, table.ids.len()]);
-        }
+        table.rebuild(slice_ref_pocs);
         table
+    }
+
+    /// Numbers the pictures of a picture's slices' lists, reusing the
+    /// storage of the previous picture's.
+    fn rebuild(&mut self, slice_ref_pocs: &[(Vec<i32>, Vec<i32>)]) {
+        self.pocs.clear();
+        self.ids.clear();
+        self.slices.clear();
+        for (l0, l1) in slice_ref_pocs {
+            let l0_start = self.ids.len();
+            for &poc in l0 {
+                let id = self.id_of(poc);
+                self.ids.push(id);
+            }
+            let l1_start = self.ids.len();
+            for &poc in l1 {
+                let id = self.id_of(poc);
+                self.ids.push(id);
+            }
+            self.slices.push([l0_start, l1_start, self.ids.len()]);
+        }
     }
 
     fn id_of(&mut self, poc: i32) -> u8 {
@@ -302,39 +312,61 @@ impl SliceRefIds {
     }
 }
 
-/// Builds the `MbDeblockInfo` of every macroblock of the picture, in raster
-/// order.
-fn build_records(input: &PictureDeblockInput) -> Vec<MbDeblockInfo> {
-    let ref_ids = RefPictureIds::new(input.slice_ref_pocs);
-    let mut slice_ref_ids = SliceRefIds::new();
-    let chroma_qp_offsets =
-        [ColorPlane::Cb, ColorPlane::Cr].map(|plane| input.pps.get_chroma_qp_index_offset(plane));
-    let total_mbs = input.pic_width_in_mbs * input.pic_height_in_mbs;
-    (0..total_mbs)
-        .map(|mb_addr| match input.macroblocks.get(mb_addr).and_then(Option::as_ref) {
-            Some(mb) => {
-                let slice_id = input.mb_slice_id[mb_addr];
-                if slice_ref_ids.slice_id != Some(slice_id) {
-                    slice_ref_ids.load(&ref_ids, slice_id);
+/// Storage that `filter_picture` reuses from one picture to the next: the
+/// per-macroblock records of a 1080p picture take 1.4 MB.
+#[derive(Default)]
+pub struct DeblockScratch {
+    records: Vec<MbDeblockInfo>,
+    ref_ids: RefPictureIds,
+}
+
+impl DeblockScratch {
+    /// Builds the `MbDeblockInfo` of every macroblock of the picture, in
+    /// raster order.
+    fn build_records(&mut self, input: &PictureDeblockInput) -> &[MbDeblockInfo] {
+        self.ref_ids.rebuild(input.slice_ref_pocs);
+        let ref_ids = &self.ref_ids;
+        let mut slice_ref_ids = SliceRefIds::new();
+        let chroma_qp_offsets = [ColorPlane::Cb, ColorPlane::Cr]
+            .map(|plane| input.pps.get_chroma_qp_index_offset(plane));
+        let total_mbs = input.pic_width_in_mbs * input.pic_height_in_mbs;
+        self.records.clear();
+        self.records.extend((0..total_mbs).map(|mb_addr| {
+            match input.macroblocks.get(mb_addr).and_then(Option::as_ref) {
+                Some(mb) => {
+                    let slice_id = input.mb_slice_id[mb_addr];
+                    if slice_ref_ids.slice_id != Some(slice_id) {
+                        slice_ref_ids.load(ref_ids, slice_id);
+                    }
+                    MbDeblockInfo::new(mb, slice_id, &slice_ref_ids, chroma_qp_offsets)
                 }
-                MbDeblockInfo::new(mb, slice_id, &slice_ref_ids, chroma_qp_offsets)
+                None => MbDeblockInfo { flags: NOT_DECODED, ..MbDeblockInfo::default() },
             }
-            None => MbDeblockInfo { flags: NOT_DECODED, ..MbDeblockInfo::default() },
-        })
-        .collect()
+        }));
+        &self.records
+    }
 }
 
 /// Section 8.7 -- picture-level deblocking pass. Replaces the per-slice
 /// `filter_slice` so a multi-slice picture is filtered as one frame and
 /// per-MB slice ownership is honoured for `disable_deblocking_filter_idc=2`
 /// and for boundary-strength reference comparisons across slice boundaries.
-pub fn filter_picture(input: &PictureDeblockInput, frame: &mut VideoFrame) {
-    let records = build_records(input);
+pub fn filter_picture(
+    input: &PictureDeblockInput,
+    scratch: &mut DeblockScratch,
+    frame: &mut VideoFrame,
+) {
+    // disable_deblocking_filter_idc = 1 in every slice leaves every edge of
+    // the picture unfiltered.
+    if input.slice_deblock.iter().all(|params| params.idc == DeblockingFilterIdc::Off) {
+        return;
+    }
+    let records = scratch.build_records(input);
     let width = input.pic_width_in_mbs;
     for mb_y in 0..input.pic_height_in_mbs {
         for mb_x in 0..width {
             let Some(q) = records.get(mb_y * width + mb_x) else { continue };
-            let (left, top) = mb_neighbors(&records, width, mb_x, mb_y);
+            let (left, top) = mb_neighbors(records, width, mb_x, mb_y);
             filter_macroblock(input, frame, mb_x, mb_y, q, left, top);
         }
     }
@@ -1039,6 +1071,10 @@ mod tests {
 
     fn deblock(idc: DeblockingFilterIdc) -> SliceDeblockParams {
         SliceDeblockParams { idc, alpha_c0_offset_div2: 0, beta_offset_div2: 0 }
+    }
+
+    fn build_records(input: &PictureDeblockInput) -> Vec<MbDeblockInfo> {
+        DeblockScratch::default().build_records(input).to_vec()
     }
 
     fn make_input<'a>(
@@ -1973,5 +2009,102 @@ mod tests {
                 (INTRA | L1_EMPTY, 1),
             ]
         );
+    }
+
+    /// The visible samples of the three planes of `frame`, row by row.
+    fn visible_samples(frame: &VideoFrame) -> Vec<u8> {
+        let mut samples = Vec::new();
+        for plane in [ColorPlane::Y, ColorPlane::Cb, ColorPlane::Cr] {
+            let plane = frame.plane(plane);
+            let (width, height, stride) = (plane.cfg.width, plane.cfg.height, plane.cfg.stride);
+            for row in plane.data_origin().chunks(stride).take(height) {
+                samples.extend_from_slice(&row[..width]);
+            }
+        }
+        samples
+    }
+
+    #[test]
+    fn filter_off_in_every_slice_leaves_the_picture_alone() {
+        let sps = SequenceParameterSet::default();
+        let pps = PicParameterSet::default();
+        // 2x2 intra macroblocks, the top row in slice 0 and the bottom row
+        // in slice 1, with a step of 10 between the left and right columns
+        // of macroblocks: every edge between them has bS 4.
+        let mbs: Vec<_> =
+            (0..4).map(|_| Some(Macroblock::I(IMb { qp: 40, ..IMb::default() }))).collect();
+        let deblocked = |idc: [DeblockingFilterIdc; 2]| {
+            let mut frame =
+                VideoFrame::alloc_4_2_0(&crate::api::DefaultAllocator, 32, 32).expect("alloc");
+            for plane in [ColorPlane::Y, ColorPlane::Cb, ColorPlane::Cr] {
+                let mut plane = frame.plane_mut(plane);
+                let (width, stride) = (plane.cfg.width, plane.cfg.stride);
+                for row in plane.data_origin_mut().chunks_mut(stride) {
+                    for (x, sample) in row.iter_mut().take(width).enumerate() {
+                        *sample = if x < width / 2 { 60 } else { 70 };
+                    }
+                }
+            }
+            let before = visible_samples(&frame);
+            let input = PictureDeblockInput {
+                sps: &sps,
+                pps: &pps,
+                macroblocks: &mbs,
+                mb_slice_id: &[0, 0, 1, 1],
+                slice_deblock: &idc.map(deblock),
+                slice_ref_pocs: &[(vec![], vec![]), (vec![], vec![])],
+                pic_width_in_mbs: 2,
+                pic_height_in_mbs: 2,
+            };
+            filter_picture(&input, &mut DeblockScratch::default(), &mut frame);
+            (before, visible_samples(&frame))
+        };
+
+        let (before, after) = deblocked([DeblockingFilterIdc::Off, DeblockingFilterIdc::Off]);
+        assert_eq!(after, before);
+        let (before, after) = deblocked([DeblockingFilterIdc::Off, DeblockingFilterIdc::On]);
+        assert_ne!(after, before);
+        // Only the edges of slice 1, the bottom row of macroblocks, are
+        // filtered; across its top edge that reaches 3 rows up (p2).
+        assert_eq!(after[..32 * 13], before[..32 * 13]);
+        assert_ne!(after[..32 * 16], before[..32 * 16]);
+    }
+
+    #[test]
+    fn deblock_scratch_is_reused_without_leftovers() {
+        let sps = SequenceParameterSet::default();
+        let pps = PicParameterSet::default();
+        let mut rng = Rng(0x5C4A_7C11_0000_0003);
+        let pictures = [
+            (
+                (0..8).map(|_| Some(random_mb(&mut rng))).collect::<Vec<_>>(),
+                vec![0u16, 0, 0, 1, 1, 1, 2, 2],
+                vec![(vec![3, 9, 1], vec![7, 3]), (vec![1], vec![]), (vec![5, 3], vec![3])],
+            ),
+            (
+                (0..2).map(|_| Some(random_mb(&mut rng))).collect(),
+                vec![0, 0],
+                vec![(vec![2], vec![11])],
+            ),
+        ];
+        let slice_deblock = [DeblockingFilterIdc::On; 3].map(deblock);
+        let inputs: Vec<_> = pictures
+            .iter()
+            .map(|(macroblocks, mb_slice_id, slice_ref_pocs)| PictureDeblockInput {
+                sps: &sps,
+                pps: &pps,
+                macroblocks,
+                mb_slice_id,
+                slice_deblock: &slice_deblock,
+                slice_ref_pocs,
+                pic_width_in_mbs: macroblocks.len() / 2,
+                pic_height_in_mbs: 2,
+            })
+            .collect();
+
+        let mut scratch = DeblockScratch::default();
+        for input in [&inputs[0], &inputs[1], &inputs[0]] {
+            assert_eq!(scratch.build_records(input), build_records(input));
+        }
     }
 }

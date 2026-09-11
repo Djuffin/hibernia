@@ -381,6 +381,8 @@ pub struct Decoder {
     current_picture: Option<CurrentPicture>,
     residual_pool: super::residual::ResidualPool,
     mb_pool: macroblock::MacroblockPool,
+    // Storage the picture-level deblocking pass reuses across pictures.
+    deblock_scratch: deblocking::DeblockScratch,
     // Reused across slices when the matrix-defining inputs are unchanged.
     dequant_cache: Option<(DequantCacheKey, DequantTables)>,
     // Source of raw frame memory for newly allocated pictures.
@@ -454,6 +456,7 @@ impl Decoder {
             current_picture: None,
             residual_pool: super::residual::ResidualPool::default(),
             mb_pool: macroblock::MacroblockPool::default(),
+            deblock_scratch: deblocking::DeblockScratch::default(),
             dequant_cache: None,
             allocator,
             pending_opaque: None,
@@ -867,6 +870,7 @@ impl Decoder {
         };
         deblocking::filter_picture(
             &deblock_input,
+            &mut self.deblock_scratch,
             Arc::get_mut(&mut current.dpb_pic.picture.frame)
                 .expect("frame uniquely owned during deblocking"),
         );
@@ -1555,8 +1559,8 @@ impl VideoDecoder for Decoder {
             }
             FlushMode::Discard => {
                 // Wipe per-stream state in place. Pools (residual_pool,
-                // mb_pool, interpolation_buffer) and the allocator
-                // stay; callbacks and packaging config stay.
+                // mb_pool, interpolation_buffer, deblock_scratch) and the
+                // allocator stay; callbacks and packaging config stay.
                 self.context = DecoderContext::default();
                 self.dpb = DecodedPictureBuffer::new();
                 self.output_pictures.clear();

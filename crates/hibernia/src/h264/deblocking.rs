@@ -526,17 +526,120 @@ fn filter_luma_edge<const VERTICAL: bool>(
         // Rows p3..q3 of the 16 columns: the samples are a column of them.
         let Some(start) = (y * stride + x).checked_sub(4 * stride) else { return };
         let Some(mut rows) = luma_rows(data, start, stride) else { return };
-        for (segment, &bs) in bs_array.iter().enumerate() {
-            if bs == BS_NONE {
-                continue;
-            }
-            let strong = bs >= BS_STRONG;
-            let tc0 = if strong { 0 } else { tc0(bs) };
-            for col in 4 * segment..4 * segment + 4 {
-                filter_luma_samples(&mut Column { rows: &mut rows, col }, strong, tc0, thresh);
-            }
+        filter_luma_columns(&mut rows, *bs_array, thresh);
+    }
+}
+
+/// Sections 8.7.2.3 / 8.7.2.4 -- filters the 16 lines of luma samples across
+/// a horizontal edge, the columns of `rows` (p3..q3), with the arithmetic of
+/// `filter_luma_samples`. All 16 columns are filtered together: each gets the
+/// bS < 4 and the bS = 4 results, and keeps the one its segment calls for,
+/// or its samples unchanged, so that the loop has no branches and
+/// vectorises. Every intermediate value lies within +-2044, so i16 lanes
+/// give the results of the i32 arithmetic.
+// Kept out of line: inlined into its caller the loop is no longer
+// vectorised. The p / q names follow the spec's.
+#[inline(never)]
+#[allow(clippy::similar_names)]
+fn filter_luma_columns(
+    rows: &mut [&mut [u8; 16]; 8],
+    bs_array: [u8; 4],
+    thresh: &FilterThresholds,
+) {
+    // Table 8-16 values are at most 255.
+    let alpha = i16::try_from(thresh.alpha).unwrap_or(i16::MAX);
+    let beta = i16::try_from(thresh.beta).unwrap_or(i16::MAX);
+    // Per column: its segment's bS and, for bS < 4, tc0 (Table 8-17).
+    let bs: [u8; 16] = std::array::from_fn(|col| bs_array[col / 4]);
+    let tc0: [i16; 16] = std::array::from_fn(|col| match bs[col] {
+        BS_NONE | BS_STRONG.. => 0,
+        bs => i16::from(TC0_TABLE[usize::from(bs - 1)][thresh.index_a]),
+    });
+
+    let samples: [[u8; 16]; 8] = std::array::from_fn(|k| *rows[k]);
+    // p2', p1', p0', q0', q1', q2'
+    let mut filtered = [[0u8; 16]; 6];
+    for col in 0..16 {
+        let [p3, p2, p1, p0, q0, q1, q2, q3] = std::array::from_fn(|k| i16::from(samples[k][col]));
+        let tc0 = tc0[col];
+
+        // Equation 8-460: filter condition
+        let filter = (bs[col] != BS_NONE)
+            & ((p0 - q0).abs() < alpha)
+            & ((p1 - p0).abs() < beta)
+            & ((q1 - q0).abs() < beta);
+        let ap_lt_beta = (p2 - p0).abs() < beta;
+        let aq_lt_beta = (q2 - q0).abs() < beta;
+
+        // Section 8.7.2.3 -- weak filter (bS < 4)
+        let tc = tc0 + i16::from(ap_lt_beta) + i16::from(aq_lt_beta); // Eq 8-465
+        let delta = (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3; // Eq 8-467
+                                                             // Clip3(-tc, tc, delta) as max and min: tc >= 0, and unlike clamp they
+                                                             // don't assert that, which would keep the loop from vectorising.
+        let delta_c = delta.max(-tc).min(tc);
+        let weak_p0 = clip1_i16(p0 + delta_c); // Eq 8-468: p0'
+        let weak_q0 = clip1_i16(q0 - delta_c); // Eq 8-469: q0'
+        let weak_p1 = if ap_lt_beta {
+            // Eq 8-470: p1'
+            let d = (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1;
+            clip1_i16(p1 + d.max(-tc0).min(tc0))
+        } else {
+            clip1_i16(p1)
+        };
+        let weak_q1 = if aq_lt_beta {
+            // Eq 8-472: q1'
+            let d = (q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1;
+            clip1_i16(q1 + d.max(-tc0).min(tc0))
+        } else {
+            clip1_i16(q1)
+        };
+
+        // Section 8.7.2.4 -- strong filter (bS == 4)
+        let small_diff = (p0 - q0).abs() < ((alpha >> 2) + 2); // Eq 8-476
+                                                               // p-side: Equations 8-477..8-479 (strong) or 8-480 (weak fallback)
+        let (strong_p0, strong_p1, strong_p2) = if ap_lt_beta && small_diff {
+            (
+                clip1_i16((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3),
+                clip1_i16((p2 + p1 + p0 + q0 + 2) >> 2),
+                clip1_i16((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3),
+            )
+        } else {
+            (clip1_i16((2 * p1 + p0 + q1 + 2) >> 2), clip1_i16(p1), clip1_i16(p2))
+        };
+        // q-side: Equations 8-484..8-486 (strong) or 8-487 (weak fallback)
+        let (strong_q0, strong_q1, strong_q2) = if aq_lt_beta && small_diff {
+            (
+                clip1_i16((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3),
+                clip1_i16((p0 + q0 + q1 + q2 + 2) >> 2),
+                clip1_i16((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3),
+            )
+        } else {
+            (clip1_i16((2 * q1 + q0 + p1 + 2) >> 2), clip1_i16(q1), clip1_i16(q2))
+        };
+
+        let unchanged = [p2, p1, p0, q0, q1, q2].map(clip1_i16);
+        let new = if !filter {
+            unchanged
+        } else if bs[col] >= BS_STRONG {
+            [strong_p2, strong_p1, strong_p0, strong_q0, strong_q1, strong_q2]
+        } else {
+            [unchanged[0], weak_p1, weak_p0, weak_q0, weak_q1, unchanged[5]]
+        };
+        for (row, value) in filtered.iter_mut().zip(new) {
+            row[col] = value;
         }
     }
+    for (row, filtered) in rows[1..7].iter_mut().zip(filtered) {
+        **row = filtered;
+    }
+}
+
+/// Clip1 of Section 5.7 for 8-bit samples, for `filter_luma_columns`.
+#[inline]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn clip1_i16(value: i16) -> u8 {
+    // In 0..=255 after the clamp.
+    value.clamp(0, 255) as u8
 }
 
 /// Sections 8.7.1/8.7.2 -- Filtering process for a single chroma block edge
@@ -2101,5 +2204,56 @@ mod tests {
         for input in [&inputs[0], &inputs[1], &inputs[0]] {
             assert_eq!(gather(input, &mut records), build_records(input));
         }
+    }
+    #[test]
+    fn luma_columns_match_the_line_filter() {
+        let mut rng = Rng(0x4C55_4D41_0000_0005);
+        let (mut filtered, mut tested) = (0usize, 0usize);
+        while tested < 20_000 {
+            let (p_qp, q_qp) = (rng.below::<u8>(52), rng.below::<u8>(52));
+            let offset = |rng: &mut Rng| 2 * rng.below::<i32>(13) - 12;
+            let (alpha_offset, beta_offset) = (offset(&mut rng), offset(&mut rng));
+            let thresh = FilterThresholds::from_qp(p_qp, q_qp, alpha_offset, beta_offset);
+            // filter_luma_edge doesn't get this far with a zero threshold.
+            if thresh.alpha == 0 || thresh.beta == 0 {
+                continue;
+            }
+            tested += 1;
+            let bs_array: [u8; 4] = std::array::from_fn(|_| rng.below(5));
+            // Around a random level, steps from small to any, so that lines
+            // pass and fail each condition, and results clip at 0 and 255.
+            let level = rng.below::<i16>(256);
+            let spread = rng.pick(&[2u8, 6, 20, 60, 255]);
+            let mut rows: [[u8; 16]; 8] = std::array::from_fn(|_| {
+                std::array::from_fn(|_| {
+                    let step = rng.below::<i16>(2 * u64::from(spread) + 1) - i16::from(spread);
+                    clip1_i16(level + step)
+                })
+            });
+            let original = rows;
+
+            let mut expected = rows;
+            let mut expected_rows = expected.each_mut();
+            for (segment, &bs) in bs_array.iter().enumerate() {
+                if bs == BS_NONE {
+                    continue;
+                }
+                let strong = bs >= BS_STRONG;
+                let tc0 = if strong {
+                    0
+                } else {
+                    i32::from(TC0_TABLE[usize::from(bs - 1)][thresh.index_a])
+                };
+                for col in 4 * segment..4 * segment + 4 {
+                    let mut line = Column { rows: &mut expected_rows, col };
+                    filter_luma_samples(&mut line, strong, tc0, &thresh);
+                }
+            }
+
+            filter_luma_columns(&mut rows.each_mut(), bs_array, &thresh);
+            assert_eq!(rows, expected, "bS {bs_array:?}, {original:?}");
+            filtered += usize::from(rows != original);
+        }
+        assert!(filtered > 5_000, "only {filtered} of {tested} blocks changed");
     }
 }

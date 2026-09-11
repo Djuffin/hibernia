@@ -1122,6 +1122,8 @@ impl Decoder {
                         // Merge the 4x4 motion grid into prediction rectangles
                         // once; luma and both chroma planes share them.
                         let rects_l0 = PredRects::p_l0(&block.motion);
+                        let luma_nonzero =
+                            block.residual.as_deref().map_or(0, Residual::luma_nonzero_mask);
 
                         render_luma_inter_prediction(
                             slice,
@@ -1129,6 +1131,7 @@ impl Decoder {
                             mb_loc,
                             frame,
                             &residuals,
+                            luma_nonzero,
                             &rects_l0,
                             &ref_pics_l0,
                             &mut self.interpolation_buffer,
@@ -1167,6 +1170,8 @@ impl Decoder {
                         // once per direction; luma and both chroma planes share them.
                         let rects_l0 = PredRects::b_l0(&block.motion);
                         let rects_l1 = PredRects::b_l1(&block.motion);
+                        let luma_nonzero =
+                            block.residual.as_deref().map_or(0, Residual::luma_nonzero_mask);
 
                         render_luma_inter_prediction_b(
                             slice,
@@ -1175,6 +1180,7 @@ impl Decoder {
                             frame,
                             &implicit_weights,
                             &residuals,
+                            luma_nonzero,
                             &rects_l0,
                             &rects_l1,
                             &ref_pics_l0,

@@ -194,6 +194,43 @@ impl Residual {
         }
     }
 
+    /// Mask of the luma 4x4 blocks that may hold a non-zero residual: bit `i`
+    /// stands for `luma4x4BlkIdx` `i`, the order `restore` returns them in.
+    /// A clear bit guarantees an all-zero block. For the 4x4 transform the
+    /// mask comes from the per-block coefficient counts; for the 8x8 transform
+    /// from `CodedBlockPatternLuma` (7.4.5), because CABAC doesn't record
+    /// per-4x4 counts there.
+    #[must_use]
+    pub fn luma_nonzero_mask(&self) -> u16 {
+        match &self.luma {
+            LumaResidual::Empty => 0,
+            // Intra_16x16 codes a DC for every block regardless of the CBP.
+            LumaResidual::Intra16x16 { .. } => 0xFFFF,
+            LumaResidual::Block4x4 { nc, .. } => {
+                let mut mask = 0;
+                for (blk_idx, &n) in nc.iter().enumerate() {
+                    if n != 0 {
+                        mask |= 1 << blk_idx;
+                    }
+                }
+                mask
+            }
+            LumaResidual::Block8x8 { .. } => {
+                let cbp_luma = self.coded_block_pattern.luma();
+                let mut mask = 0;
+                for i8x8 in 0..4 {
+                    if cbp_luma & (1 << i8x8) != 0 {
+                        mask |= 0xF << (4 * i8x8);
+                    }
+                }
+                mask
+            }
+        }
+    }
+
+    /// Section 8.5: the restored residual blocks of `plane`, in block-index
+    /// order. Returns no blocks when the plane has no coded coefficients
+    /// (7.4.5); callers treat a missing block as all zero.
     pub fn restore(
         &self,
         plane: ColorPlane,
@@ -205,6 +242,15 @@ impl Residual {
         let m = (qp % 6) as usize;
 
         if plane == ColorPlane::Y {
+            // Section 7.4.5: CodedBlockPatternLuma == 0 means no luma
+            // coefficients are coded, so every block is zero. Intra_16x16 is
+            // the exception: its DC is coded regardless, and
+            // CodedBlockPatternLuma covers only its AC.
+            if self.coded_block_pattern.luma() == 0
+                && self.prediction_mode != MbPredictionMode::Intra_16x16
+            {
+                return result;
+            }
             let dequant_4x4 = dequant.list_4x4(is_inter, ColorPlane::Y);
             let scale_factors_4x4 = &dequant_4x4[m];
             match &self.luma {
@@ -294,6 +340,11 @@ impl Residual {
                 }
             }
         } else {
+            // Section 7.4.5: CodedBlockPatternChroma == 0 means no chroma DC or
+            // AC coefficients are coded, so every block is zero.
+            if self.coded_block_pattern.chroma() == 0 {
+                return result;
+            }
             // Section 8.5.8, 8.5.11 Specification of transform decoding process for chroma samples
             let dequant_4x4 = dequant.list_4x4(is_inter, plane);
             let scale_factors_4x4 = &dequant_4x4[m];
@@ -1192,5 +1243,78 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn flat_dequant() -> DequantTables {
+        DequantTables::from_scaling_matrix(&ResolvedScalingMatrix::default())
+    }
+
+    #[test]
+    pub fn test_luma_nonzero_mask() {
+        let mut r = Residual::default();
+        assert_eq!(r.luma_nonzero_mask(), 0);
+
+        // 4x4 transform: one bit per block with coded coefficients.
+        r.luma.init_4x4();
+        if let LumaResidual::Block4x4 { nc, .. } = &mut r.luma {
+            nc[0] = 1;
+            nc[5] = 3;
+            nc[15] = 16;
+        }
+        assert_eq!(r.luma_nonzero_mask(), 0x8021);
+
+        // 8x8 transform: four bits per coded 8x8 block, taken from the CBP.
+        r.luma.init_8x8();
+        r.coded_block_pattern = CodedBlockPattern::new(0, 0b1010);
+        assert_eq!(r.luma_nonzero_mask(), 0xF0F0);
+
+        // Intra_16x16: every block carries a DC.
+        r.luma.init_intra_16x16();
+        assert_eq!(r.luma_nonzero_mask(), 0xFFFF);
+    }
+
+    #[test]
+    pub fn test_restore_skips_planes_without_coded_coefficients() {
+        let dequant = flat_dequant();
+
+        // Inter MB with only chroma coded: no luma blocks.
+        let mut r = Residual {
+            prediction_mode: MbPredictionMode::Pred_L0,
+            coded_block_pattern: CodedBlockPattern::new(2, 0),
+            ..Default::default()
+        };
+        r.luma.init_4x4();
+        r.chroma_cb_dc_level[0] = 5;
+        assert!(r.restore(ColorPlane::Y, 28, &dequant).is_empty());
+        assert_eq!(r.restore(ColorPlane::Cb, 28, &dequant).len(), 4);
+
+        // Luma coded, chroma not: no chroma blocks, the full luma layout.
+        r.coded_block_pattern = CodedBlockPattern::new(0, 1);
+        r.chroma_cb_dc_level[0] = 0;
+        assert_eq!(r.restore(ColorPlane::Y, 28, &dequant).len(), 16);
+        assert!(r.restore(ColorPlane::Cb, 28, &dequant).is_empty());
+        assert!(r.restore(ColorPlane::Cr, 28, &dequant).is_empty());
+
+        // Intra_8x8 with CodedBlockPatternLuma == 0: no luma blocks.
+        let mut r = Residual {
+            prediction_mode: MbPredictionMode::Intra_8x8,
+            transform_size_8x8_flag: true,
+            ..Default::default()
+        };
+        r.luma.init_8x8();
+        assert!(r.restore(ColorPlane::Y, 28, &dequant).is_empty());
+    }
+
+    #[test]
+    pub fn test_restore_intra_16x16_dc_without_luma_cbp() {
+        // Intra_16x16 codes its DC even when CodedBlockPatternLuma is 0 (7.4.5).
+        let dequant = flat_dequant();
+        let mut r =
+            Residual { prediction_mode: MbPredictionMode::Intra_16x16, ..Default::default() };
+        r.luma.init_intra_16x16();
+        r.get_dc_levels_for(ColorPlane::Y)[0] = 64;
+        let blocks = r.restore(ColorPlane::Y, 28, &dequant);
+        assert_eq!(blocks.len(), 16);
+        assert!(blocks.iter().all(|b| *b != Block4x4::default()));
     }
 }

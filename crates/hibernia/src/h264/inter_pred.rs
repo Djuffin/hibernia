@@ -747,6 +747,7 @@ pub(crate) fn render_luma_inter_prediction(
     mb_loc: Point,
     frame: &mut VideoFrame,
     residuals: &[Block4x4],
+    residual_nonzero: u16,
     rects_l0: &PredRects,
     ref_pics_l0: &[&DpbPicture],
     buffer: &mut InterpolationBuffer,
@@ -810,8 +811,11 @@ pub(crate) fn render_luma_inter_prediction(
 
         let blk_idx =
             macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
-        if let Some(residual_blk) = residuals.get(blk_idx as usize) {
-            add_residual_4x4(&mut dst, 0, 4, residual_blk);
+        // Blocks with no non-zero coefficients have an all-zero residual.
+        if residual_nonzero & (1 << blk_idx) != 0 {
+            if let Some(residual_blk) = residuals.get(blk_idx as usize) {
+                add_residual_4x4(&mut dst, 0, 4, residual_blk);
+            }
         }
 
         let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);
@@ -1071,6 +1075,7 @@ pub(crate) fn render_luma_inter_prediction_b(
     frame: &mut VideoFrame,
     implicit_weights: &ImplicitWeightTable,
     residuals: &[Block4x4],
+    residual_nonzero: u16,
     rects_l0: &PredRects,
     rects_l1: &PredRects,
     ref_pics_l0: &[&DpbPicture],
@@ -1224,8 +1229,11 @@ pub(crate) fn render_luma_inter_prediction_b(
 
         let blk_idx =
             macroblock::get_4x4luma_block_index(Point { x: blk_x as u32, y: blk_y as u32 });
-        if let Some(residual_blk) = residuals.get(blk_idx as usize) {
-            add_residual_4x4(&mut dst, 0, 4, residual_blk);
+        // Blocks with no non-zero coefficients have an all-zero residual.
+        if residual_nonzero & (1 << blk_idx) != 0 {
+            if let Some(residual_blk) = residuals.get(blk_idx as usize) {
+                add_residual_4x4(&mut dst, 0, 4, residual_blk);
+            }
         }
 
         let cell_base = mb_origin + (blk_y as usize) * y_stride + (blk_x as usize);

@@ -2,9 +2,12 @@ use smallvec::SmallVec;
 use wide::i32x4;
 
 use super::{
-    macroblock::{CodedBlockPattern, MbPredictionMode},
+    macroblock::{
+        get_4x4chroma_block_location, get_4x4luma_block_location, get_8x8luma_block_location,
+        CodedBlockPattern, MbPredictionMode,
+    },
     scaling_list::{weight_scale_8x8_2d, ResolvedScalingMatrix},
-    ColorPlane,
+    ColorPlane, Point,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -385,6 +388,176 @@ impl Residual {
         }
 
         result
+    }
+
+    /// Sections 8.5.12 to 8.5.14: reconstructs the luma residual and adds it
+    /// to the prediction already in `dst`, clipping each sample to 0..=255.
+    /// `origin` indexes the macroblock's top-left luma sample in `dst` and
+    /// `stride` is the row stride. Only coded blocks are transformed: a 4x4
+    /// block with no coefficients (`nc == 0`), or an 8x8 block whose
+    /// `CodedBlockPatternLuma` bit is clear, keeps its prediction. The result
+    /// is exactly that of `restore` followed by `add_residual_4x4`.
+    pub fn add_luma_to(
+        &self,
+        qp: u8,
+        dequant: &DequantTables,
+        dst: &mut [u8],
+        origin: usize,
+        stride: usize,
+    ) {
+        let cbp_luma = self.coded_block_pattern.luma();
+        let is_inter = self.prediction_mode.is_inter();
+        let m = usize::from(qp % 6);
+        match &self.luma {
+            LumaResidual::Empty => {}
+            LumaResidual::Intra16x16 { .. } => {
+                // Every Intra_16x16 block carries a DC (7.4.5), which needs
+                // the Hadamard pass of 8.5.2; `restore` does that.
+                let blocks = self.restore(ColorPlane::Y, qp, dequant);
+                for (blk_idx, block) in (0..16u8).zip(blocks.iter()) {
+                    let base = block_origin(origin, stride, get_4x4luma_block_location(blk_idx));
+                    add_block_4x4(dst, base, stride, block);
+                }
+            }
+            LumaResidual::Block4x4 { levels, nc } => {
+                // Section 7.4.5: CodedBlockPatternLuma == 0 means nothing is coded.
+                if cbp_luma == 0 {
+                    return;
+                }
+                let scale = &dequant.list_4x4(is_inter, ColorPlane::Y)[m];
+                for (blk_idx, (block_levels, &count)) in (0..16u8).zip(levels.iter().zip(nc)) {
+                    // nc == 0 means all 16 coefficients are zero (parser invariant).
+                    if count == 0 {
+                        continue;
+                    }
+                    let mut coeffs = *block_levels;
+                    level_scale_4x4_block(&mut coeffs, scale, false, qp);
+                    let mut block = unzip_block_4x4(&coeffs);
+                    transform_4x4(&mut block);
+                    let base = block_origin(origin, stride, get_4x4luma_block_location(blk_idx));
+                    add_block_4x4(dst, base, stride, &block);
+                }
+            }
+            LumaResidual::Block8x8 { levels, .. } => {
+                // Section 8.5.13. A clear CodedBlockPatternLuma bit means the
+                // 8x8 block has no coefficients (7.4.5). CABAC doesn't record
+                // per-4x4 counts for the 8x8 transform, so the CBP decides.
+                let scale = &dequant.list_8x8(is_inter, ColorPlane::Y)[m];
+                for (i8x8, block_levels) in (0..4u8).zip(levels) {
+                    if cbp_luma & (1 << i8x8) == 0 {
+                        continue;
+                    }
+                    let mut block = unzip_block_8x8(&block_levels.0);
+                    level_scale_8x8_block(&mut block, scale, qp);
+                    transform_8x8(&mut block);
+                    let base = block_origin(origin, stride, get_8x8luma_block_location(i8x8));
+                    add_block_8x8(dst, base, stride, &block);
+                }
+            }
+        }
+    }
+
+    /// Sections 8.5.11, 8.5.12 and 8.5.14: reconstructs the residual of the
+    /// chroma `plane` (Cb or Cr) and adds it to the prediction already in
+    /// `dst`, with the same `origin` and `stride` conventions as
+    /// `add_luma_to`. A block with only its DC coded adds the uniform value
+    /// `(dc + 32) >> 6`, and is skipped when that value is 0. The result is
+    /// exactly that of `restore` followed by `add_residual_4x4`.
+    pub fn add_chroma_to(
+        &self,
+        plane: ColorPlane,
+        qp: u8,
+        dequant: &DequantTables,
+        dst: &mut [u8],
+        origin: usize,
+        stride: usize,
+    ) {
+        // Section 7.4.5: CodedBlockPatternChroma == 0 means no chroma DC or AC.
+        if self.coded_block_pattern.chroma() == 0 {
+            return;
+        }
+        let (dcs, acs, ac_nc) = match plane {
+            ColorPlane::Cb => {
+                (&self.chroma_cb_dc_level, &self.chroma_cb_ac_level, &self.chroma_cb_level4x4_nc)
+            }
+            ColorPlane::Cr => {
+                (&self.chroma_cr_dc_level, &self.chroma_cr_ac_level, &self.chroma_cr_level4x4_nc)
+            }
+            ColorPlane::Y => unreachable!("add_chroma_to requires a chroma plane"),
+        };
+        let is_inter = self.prediction_mode.is_inter();
+        let scale = &dequant.list_4x4(is_inter, plane)[usize::from(qp % 6)];
+        // Sections 8.5.11.1 and 8.5.11.2: 2x2 DC transform, then DC scaling.
+        let mut dc =
+            transform_chroma_dc(&Block2x2 { samples: [[dcs[0], dcs[1]], [dcs[2], dcs[3]]] });
+        dc_scale_2x2_block(&mut dc, scale[0], qp);
+        for blk_idx in 0..4u8 {
+            let i = usize::from(blk_idx);
+            let (dc_row, dc_col) = unscan_2x2(i);
+            let scaled_dc = dc.samples[dc_row][dc_col];
+            let base = block_origin(origin, stride, get_4x4chroma_block_location(blk_idx));
+            if ac_nc[i] == 0 {
+                // No AC: the 4x4 inverse transform is the uniform (dc + 32) >> 6.
+                let value = (scaled_dc + 32) >> 6;
+                if value != 0 {
+                    add_dc_4x4(dst, base, stride, value);
+                }
+                continue;
+            }
+            let mut coeffs = [0i32; 16];
+            coeffs[0] = scaled_dc;
+            coeffs[1..].copy_from_slice(&acs[i]);
+            level_scale_4x4_block(&mut coeffs, scale, true, qp);
+            let mut block = unzip_block_4x4(&coeffs);
+            transform_4x4(&mut block);
+            add_block_4x4(dst, base, stride, &block);
+        }
+    }
+}
+
+/// Index of the top-left sample of the block at `loc` inside the macroblock
+/// whose top-left sample is at `origin`.
+#[inline]
+fn block_origin(origin: usize, stride: usize, loc: Point) -> usize {
+    origin + loc.y as usize * stride + loc.x as usize
+}
+
+/// `Clip1` for 8-bit samples (5.7): clamps to 0..=255.
+#[inline]
+fn clip_u8(value: i32) -> u8 {
+    u8::try_from(value.clamp(0, 255)).unwrap_or(u8::MAX)
+}
+
+/// Section 8.5.14: adds a 4x4 block of residual samples at `base` and clips.
+#[inline]
+fn add_block_4x4(dst: &mut [u8], base: usize, stride: usize, block: &Block4x4) {
+    for (y, residual_row) in block.samples.iter().enumerate() {
+        let row = &mut dst[base + y * stride..][..4];
+        for (sample, &r) in row.iter_mut().zip(residual_row) {
+            *sample = clip_u8(i32::from(*sample) + r);
+        }
+    }
+}
+
+/// Section 8.5.14: adds an 8x8 block of residual samples at `base` and clips.
+#[inline]
+fn add_block_8x8(dst: &mut [u8], base: usize, stride: usize, block: &Block8x8) {
+    for (y, residual_row) in block.samples.iter().enumerate() {
+        let row = &mut dst[base + y * stride..][..8];
+        for (sample, &r) in row.iter_mut().zip(residual_row) {
+            *sample = clip_u8(i32::from(*sample) + r);
+        }
+    }
+}
+
+/// Section 8.5.14: adds `value` to every sample of the 4x4 block at `base`
+/// and clips.
+#[inline]
+fn add_dc_4x4(dst: &mut [u8], base: usize, stride: usize, value: i32) {
+    for y in 0..4 {
+        for sample in &mut dst[base + y * stride..][..4] {
+            *sample = clip_u8(i32::from(*sample) + value);
+        }
     }
 }
 
@@ -1316,5 +1489,252 @@ mod tests {
         let blocks = r.restore(ColorPlane::Y, 28, &dequant);
         assert_eq!(blocks.len(), 16);
         assert!(blocks.iter().all(|b| *b != Block4x4::default()));
+    }
+
+    /// Deterministic xorshift64 generator for the differential tests.
+    struct TestRng(u64);
+
+    impl TestRng {
+        fn next_u64(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// Uniform in `0..n`.
+        fn index(&mut self, n: usize) -> usize {
+            let n = u64::try_from(n).expect("n fits in u64");
+            usize::try_from(self.next_u64() % n).expect("index fits in usize")
+        }
+
+        fn chance(&mut self, percent: usize) -> bool {
+            self.index(100) < percent
+        }
+
+        /// A prediction sample that hits the clipping bounds often.
+        fn sample(&mut self) -> u8 {
+            match self.index(8) {
+                0 => 0,
+                1 => 255,
+                _ => self.next_u64().to_be_bytes()[0],
+            }
+        }
+
+        /// A non-zero level with |level| <= 2048, mostly small.
+        fn level(&mut self) -> i32 {
+            let bound = if self.chance(80) { 8 } else { 2048 };
+            let magnitude = i32::try_from(self.index(bound) + 1).expect("level fits in i32");
+            if self.chance(50) {
+                magnitude
+            } else {
+                -magnitude
+            }
+        }
+
+        /// Sets each coefficient to a random non-zero level with probability
+        /// `percent`, else 0, and returns how many are non-zero (the `nc`).
+        fn sparse(&mut self, coeffs: &mut [i32], percent: usize) -> u8 {
+            let mut count = 0;
+            for c in coeffs.iter_mut() {
+                *c = 0;
+                if self.chance(percent) {
+                    *c = self.level();
+                    count += 1;
+                }
+            }
+            count
+        }
+    }
+
+    const STRIDE: usize = 40;
+    const ORIGIN: usize = 3 * STRIDE + 5;
+
+    /// A random prediction around one macroblock, with margins on every side
+    /// so that writes outside the macroblock show up as mismatches.
+    fn prediction(rng: &mut TestRng) -> Vec<u8> {
+        (0..STRIDE * 22).map(|_| rng.sample()).collect()
+    }
+
+    /// Dequantization tables from a random scaling matrix, so the intra and
+    /// inter lists differ and the `is_inter` selection matters.
+    fn random_dequant(rng: &mut TestRng) -> DequantTables {
+        let mut matrix = ResolvedScalingMatrix::default();
+        let mut weight = || u8::try_from(4 + rng.index(29)).expect("weight fits in u8");
+        for list in &mut matrix.lists_4x4 {
+            list.fill_with(&mut weight);
+        }
+        for list in &mut matrix.lists_8x8 {
+            list.fill_with(&mut weight);
+        }
+        DequantTables::from_scaling_matrix(&matrix)
+    }
+
+    /// The pre-fusion path: `restore`, then `add_residual_4x4` at each
+    /// block's position, as the renderers do.
+    fn restore_then_add(
+        residual: &Residual,
+        plane: ColorPlane,
+        qp: u8,
+        dequant: &DequantTables,
+        buf: &mut [u8],
+    ) {
+        let blocks = residual.restore(plane, qp, dequant);
+        for (blk_idx, block) in (0..16u8).zip(blocks.iter()) {
+            let loc = if plane == ColorPlane::Y {
+                get_4x4luma_block_location(blk_idx)
+            } else {
+                get_4x4chroma_block_location(blk_idx)
+            };
+            add_residual_4x4(buf, block_origin(ORIGIN, STRIDE, loc), STRIDE, block);
+        }
+    }
+
+    fn assert_fused_matches(
+        rng: &mut TestRng,
+        residual: &Residual,
+        plane: ColorPlane,
+        qp: u8,
+        dequant: &DequantTables,
+    ) {
+        let mut expected = prediction(rng);
+        let mut actual = expected.clone();
+        restore_then_add(residual, plane, qp, dequant, &mut expected);
+        if plane == ColorPlane::Y {
+            residual.add_luma_to(qp, dequant, &mut actual, ORIGIN, STRIDE);
+        } else {
+            residual.add_chroma_to(plane, qp, dequant, &mut actual, ORIGIN, STRIDE);
+        }
+        if let Some(i) = actual.iter().zip(&expected).position(|(a, e)| a != e) {
+            panic!(
+                "plane {} qp {qp} {:?}: sample {i} is {}, restore + add gives {}",
+                plane as usize, residual.prediction_mode, actual[i], expected[i]
+            );
+        }
+    }
+
+    fn inter_or(is_inter: bool, intra: MbPredictionMode) -> MbPredictionMode {
+        if is_inter {
+            MbPredictionMode::Pred_L0
+        } else {
+            intra
+        }
+    }
+
+    fn check_luma_4x4(rng: &mut TestRng, qp: u8, is_inter: bool, dequant: &DequantTables) {
+        let mut residual = Residual {
+            prediction_mode: inter_or(is_inter, MbPredictionMode::Intra_4x4),
+            ..Default::default()
+        };
+        residual.luma.init_4x4();
+        let percent = 5 + rng.index(60);
+        let mut cbp_luma = 0u8;
+        if let LumaResidual::Block4x4 { levels, nc } = &mut residual.luma {
+            for (blk_idx, (block, count)) in levels.iter_mut().zip(nc.iter_mut()).enumerate() {
+                if rng.chance(60) {
+                    *count = rng.sparse(block, percent);
+                }
+                if *count != 0 {
+                    cbp_luma |= 1 << (blk_idx / 4);
+                }
+            }
+        }
+        // A set CodedBlockPatternLuma bit may still cover only zero blocks.
+        if rng.chance(20) {
+            cbp_luma |= 1 << rng.index(4);
+        }
+        residual.coded_block_pattern = CodedBlockPattern::new(0, cbp_luma);
+        assert_fused_matches(rng, &residual, ColorPlane::Y, qp, dequant);
+    }
+
+    fn check_luma_8x8(rng: &mut TestRng, qp: u8, is_inter: bool, dequant: &DequantTables) {
+        let mut residual = Residual {
+            prediction_mode: inter_or(is_inter, MbPredictionMode::Intra_8x8),
+            transform_size_8x8_flag: true,
+            ..Default::default()
+        };
+        residual.luma.init_8x8();
+        let percent = 3 + rng.index(30);
+        let mut cbp_luma = 0u8;
+        if let LumaResidual::Block8x8 { levels, .. } = &mut residual.luma {
+            for (i8x8, block) in levels.iter_mut().enumerate() {
+                // A clear CBP bit means an all-zero block; a set bit may still
+                // cover one. nc stays 0, as it does with CABAC.
+                if rng.chance(70) {
+                    cbp_luma |= 1 << i8x8;
+                    rng.sparse(&mut block.0, percent);
+                }
+            }
+        }
+        residual.coded_block_pattern = CodedBlockPattern::new(0, cbp_luma);
+        assert_fused_matches(rng, &residual, ColorPlane::Y, qp, dequant);
+    }
+
+    fn check_intra_16x16(rng: &mut TestRng, qp: u8, dequant: &DequantTables) {
+        let mut residual =
+            Residual { prediction_mode: MbPredictionMode::Intra_16x16, ..Default::default() };
+        residual.luma.init_intra_16x16();
+        let coded_ac = rng.chance(50);
+        if let LumaResidual::Intra16x16 { dc, ac, ac_nc } = &mut residual.luma {
+            rng.sparse(dc, 30);
+            if coded_ac {
+                for (block, count) in ac.iter_mut().zip(ac_nc.iter_mut()) {
+                    *count = rng.sparse(block, 10);
+                }
+            }
+        }
+        residual.coded_block_pattern = CodedBlockPattern::new(0, if coded_ac { 15 } else { 0 });
+        assert_fused_matches(rng, &residual, ColorPlane::Y, qp, dequant);
+    }
+
+    /// `cbp_chroma`: 0 = nothing coded, 1 = DC only, 2 = DC and AC.
+    fn check_chroma(
+        rng: &mut TestRng,
+        qp: u8,
+        is_inter: bool,
+        dequant: &DequantTables,
+        cbp_chroma: u8,
+    ) {
+        let mut residual = Residual {
+            prediction_mode: inter_or(is_inter, MbPredictionMode::Intra_4x4),
+            coded_block_pattern: CodedBlockPattern::new(cbp_chroma, 0),
+            ..Default::default()
+        };
+        if cbp_chroma != 0 {
+            rng.sparse(&mut residual.chroma_cb_dc_level, 60);
+            rng.sparse(&mut residual.chroma_cr_dc_level, 60);
+        }
+        if cbp_chroma == 2 {
+            let percent = 5 + rng.index(40);
+            for blk in 0..4 {
+                residual.chroma_cb_level4x4_nc[blk] =
+                    rng.sparse(&mut residual.chroma_cb_ac_level[blk], percent);
+                residual.chroma_cr_level4x4_nc[blk] =
+                    rng.sparse(&mut residual.chroma_cr_ac_level[blk], percent);
+            }
+        }
+        assert_fused_matches(rng, &residual, ColorPlane::Cb, qp, dequant);
+        assert_fused_matches(rng, &residual, ColorPlane::Cr, qp, dequant);
+    }
+
+    #[test]
+    pub fn test_fused_residual_add_matches_restore_then_add() {
+        let mut rng = TestRng(0x2545_F491_4F6C_DD1D);
+        let flat = flat_dequant();
+        let random = random_dequant(&mut rng);
+        for dequant in [&flat, &random] {
+            for qp in 0..=51 {
+                for is_inter in [false, true] {
+                    for _ in 0..6 {
+                        check_luma_4x4(&mut rng, qp, is_inter, dequant);
+                        check_luma_8x8(&mut rng, qp, is_inter, dequant);
+                        for cbp_chroma in 0..=2 {
+                            check_chroma(&mut rng, qp, is_inter, dequant, cbp_chroma);
+                        }
+                    }
+                }
+                check_intra_16x16(&mut rng, qp, dequant);
+            }
+        }
     }
 }
